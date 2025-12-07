@@ -31,6 +31,15 @@ type BookLite = {
   code?: string | null;
 };
 
+type SchoolBreakup = {
+  school_id: number;
+  school_name: string;
+  school_city?: string | null;
+  school_code?: string | null;
+  total_required_copies: number;
+  allocated_qty: number;
+};
+
 type PublisherOrderItem = {
   id: number;
   publisher_order_id: number;
@@ -41,6 +50,8 @@ type PublisherOrderItem = {
   unit_price?: number | null;
   total_amount?: number | null;
   book?: BookLite | null;
+  // ✅ NEW: school-wise breakup for this item
+  school_breakup?: SchoolBreakup[] | null;
 };
 
 type PublisherOrder = {
@@ -243,16 +254,33 @@ const PublisherOrdersPageClient: React.FC = () => {
   const statusChipClass = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-emerald-50 text-emerald-700 border border-emerald-200";
+        return "bg-emerald-100 text-emerald-800 border border-emerald-300";
       case "partial_received":
-        return "bg-amber-50 text-amber-700 border border-amber-200";
+        return "bg-amber-100 text-amber-800 border border-amber-300";
       case "cancelled":
-        return "bg-red-50 text-red-700 border border-red-200";
+        return "bg-red-100 text-red-800 border border-red-300";
       case "sent":
-        return "bg-blue-50 text-blue-700 border border-blue-200";
+        return "bg-blue-100 text-blue-800 border border-blue-300";
       case "draft":
       default:
-        return "bg-slate-50 text-slate-600 border border-slate-200";
+        return "bg-slate-100 text-slate-700 border border-slate-300";
+    }
+  };
+
+  const statusRowClass = (status: string) => {
+    switch (status) {
+      case "completed":
+        return "bg-emerald-100";
+      case "partial_received":
+        return "bg-amber-100";
+      case "sent":
+        return "bg-blue-100";
+      case "draft":
+        return "bg-slate-100";
+      case "cancelled":
+        return "bg-red-100";
+      default:
+        return "";
     }
   };
 
@@ -394,6 +422,21 @@ const PublisherOrdersPageClient: React.FC = () => {
     return ok;
   });
 
+  // 🔁 Grouping: sort orders by publisher name, then date
+  const sortedOrders: PublisherOrder[] = [...visibleOrders].sort((a, b) => {
+    const nameA = a.publisher?.name?.toLowerCase() || "";
+    const nameB = b.publisher?.name?.toLowerCase() || "";
+    if (nameA && nameB && nameA !== nameB) {
+      return nameA.localeCompare(nameB);
+    }
+    if (nameA && !nameB) return -1;
+    if (!nameA && nameB) return 1;
+
+    const dateA = (a.order_date || a.createdAt || "") as string;
+    const dateB = (b.order_date || b.createdAt || "") as string;
+    return dateA.localeCompare(dateB);
+  });
+
   // 🔢 Aggregate totals for visibleOrders (for cards)
   const { orderedTotal, receivedTotal, pendingTotal } = (() => {
     let orderedTotal = 0;
@@ -425,10 +468,10 @@ const PublisherOrdersPageClient: React.FC = () => {
         <div className="font-bold flex items-center gap-3">
           <Link
             href="/"
-            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
+            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors text-base"
           >
             <ChevronLeft className="w-5 h-5" />
-            <span className="text-sm">Back to Dashboard</span>
+            <span>Back to Dashboard</span>
           </Link>
         </div>
 
@@ -437,10 +480,10 @@ const PublisherOrdersPageClient: React.FC = () => {
             <Package className="w-5 h-5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-base sm:text-lg tracking-tight">
+            <span className="text-xl sm:text-2xl tracking-tight">
               Publisher Orders
             </span>
-            <span className="text-xs text-slate-500 font-medium">
+            <span className="text-sm text-slate-500 font-medium">
               Generate, Email & Receive Stock
             </span>
           </div>
@@ -448,11 +491,11 @@ const PublisherOrdersPageClient: React.FC = () => {
 
         <div className="flex items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800">
+            <span className="font-semibold text-slate-800 text-base">
               {user?.name || "User"}
             </span>
             {user?.role && (
-              <span className="text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
+              <span className="mt-0.5 text-sm rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
                 {user.role}
               </span>
             )}
@@ -474,14 +517,17 @@ const PublisherOrdersPageClient: React.FC = () => {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md">
                 <Sparkles className="w-4 h-4" />
               </div>
-              <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
+              <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
                 Publisher Purchase Orders
               </h1>
             </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Aggregate <span className="font-semibold">confirmed school requirements</span> by
-              publisher, generate <span className="font-semibold">one consolidated PO per publisher</span>,
-              send emails directly, and track <span className="font-semibold">received vs pending</span> stock.
+            <p className="text-base text-slate-600 leading-relaxed">
+              Aggregate{" "}
+              <span className="font-semibold">confirmed school requirements</span>{" "}
+              by publisher, generate{" "}
+              <span className="font-semibold">one consolidated PO per publisher</span>,
+              send emails directly, and track{" "}
+              <span className="font-semibold">received vs pending</span> stock.
             </p>
           </div>
 
@@ -490,13 +536,13 @@ const PublisherOrdersPageClient: React.FC = () => {
             className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-5 py-4 flex flex-col sm:flex-row sm:items-end gap-4 min-w-[260px]"
           >
             <div className="flex-1">
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">
+              <label className="block text-sm font-medium text-slate-600 mb-1.5">
                 Academic Session
               </label>
               <select
                 value={academicSession}
                 onChange={(e) => setAcademicSession(e.target.value)}
-                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               >
                 {SESSION_OPTIONS.map((session) => (
                   <option key={session} value={session}>
@@ -510,7 +556,7 @@ const PublisherOrdersPageClient: React.FC = () => {
               <button
                 type="submit"
                 disabled={generating}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {generating ? (
                   <>
@@ -529,7 +575,7 @@ const PublisherOrdersPageClient: React.FC = () => {
                 type="button"
                 onClick={fetchOrders}
                 disabled={loading}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
               >
                 <RefreshCcw className="w-3.5 h-3.5" />
                 Refresh
@@ -542,7 +588,7 @@ const PublisherOrdersPageClient: React.FC = () => {
         {(error || info) && (
           <div className="space-y-3">
             {error && (
-              <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs text-red-700 flex items-center gap-2">
+              <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-sm text-red-700 flex items-center gap-2">
                 <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
                   !
                 </div>
@@ -550,7 +596,7 @@ const PublisherOrdersPageClient: React.FC = () => {
               </div>
             )}
             {info && (
-              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm text-xs text-emerald-700 flex items-center gap-2">
+              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm text-sm text-emerald-700 flex items-center gap-2">
                 <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
                   ✓
                 </div>
@@ -561,15 +607,15 @@ const PublisherOrdersPageClient: React.FC = () => {
         )}
 
         {/* Filters */}
-        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg p-4 flex flex-wrap items-center gap-4 text-xs">
+        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg p-4 flex flex-wrap items-center gap-4 text-sm">
           <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+            <label className="block text-sm font-medium text-slate-600 mb-1">
               Filter by Session
             </label>
             <select
               value={filterSession}
               onChange={(e) => setFilterSession(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[140px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[140px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             >
               <option value="">All sessions</option>
               {SESSION_OPTIONS.map((session) => (
@@ -581,13 +627,13 @@ const PublisherOrdersPageClient: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+            <label className="block text-sm font-medium text-slate-600 mb-1">
               Filter by Publisher
             </label>
             <select
               value={filterPublisherId}
               onChange={(e) => setFilterPublisherId(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[200px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[200px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             >
               <option value="">All publishers</option>
               {publishers.map((p) => (
@@ -599,13 +645,13 @@ const PublisherOrdersPageClient: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
+            <label className="block text-sm font-medium text-slate-600 mb-1">
               Filter by Status / Receive
             </label>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[220px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[220px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
             >
               <option value="">All statuses</option>
               <option value="not_received">Not Received (0 received)</option>
@@ -619,39 +665,39 @@ const PublisherOrdersPageClient: React.FC = () => {
         </section>
 
         {/* Summary Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-base">
           <div className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-slate-500">
+            <span className="text-sm text-slate-500">
               Total Books Ordered (Qty)
             </span>
-            <span className="mt-1 text-xl font-bold text-slate-900">
+            <span className="mt-1 text-3xl font-bold text-slate-900">
               {orderedTotal}
             </span>
-            <span className="mt-1 text-[11px] text-slate-400">
+            <span className="mt-1 text-sm text-slate-400">
               Across {visibleOrders.length} order(s)
             </span>
           </div>
 
           <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-emerald-700">
+            <span className="text-sm text-emerald-700">
               Total Books Received (Qty)
             </span>
-            <span className="mt-1 text-xl font-bold text-emerald-800">
+            <span className="mt-1 text-3xl font-bold text-emerald-800">
               {receivedTotal}
             </span>
-            <span className="mt-1 text-[11px] text-emerald-600">
+            <span className="mt-1 text-sm text-emerald-600">
               Updated from receive entries
             </span>
           </div>
 
           <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-amber-700">
+            <span className="text-sm text-amber-700">
               Pending to Receive (Qty)
             </span>
-            <span className="mt-1 text-xl font-bold text-amber-800">
+            <span className="mt-1 text-3xl font-bold text-amber-800">
               {pendingTotal}
             </span>
-            <span className="mt-1 text-[11px] text-amber-600">
+            <span className="mt-1 text-sm text-amber-600">
               Ordered – Received (current filters)
             </span>
           </div>
@@ -660,131 +706,152 @@ const PublisherOrdersPageClient: React.FC = () => {
         {/* Orders List */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/60 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold flex items-center gap-2 text-slate-800">
+            <h2 className="text-base font-semibold flex items-center gap-2 text-slate-800">
               <BookOpen className="w-4 h-4 text-indigo-500" />
               <span>Existing Publisher Orders</span>
             </h2>
-            <span className="text-[11px] text-slate-500">
-              Total Orders: {visibleOrders.length}
+            <span className="text-sm text-slate-500">
+              Total Orders: {sortedOrders.length}
             </span>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-10 text-sm text-slate-500">
+            <div className="flex items-center justify-center py-10 text-base text-slate-500">
               <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
               Loading orders...
             </div>
-          ) : visibleOrders.length === 0 ? (
-            <div className="text-sm text-slate-500 py-10 text-center">
+          ) : sortedOrders.length === 0 ? (
+            <div className="text-base text-slate-500 py-10 text-center">
               No publisher orders found. Adjust filters or generate new orders.
             </div>
           ) : (
-            <div className="overflow-auto max-h-[420px] rounded-xl border border-slate-200/80 shadow-inner">
-              <table className="w-full text-[11px] border-collapse bg-white">
-                <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-10">
+            <div className="overflow-auto max-h-[460px] rounded-xl border border-slate-200/80 shadow-inner">
+              <table className="w-full text-sm border-collapse bg-white">
+                <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-10 text-sm">
                   <tr>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Order No
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Publisher
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Session
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Order Date
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-right font-semibold text-slate-700">
                       No. of Books
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-right font-semibold text-slate-700">
                       Total Qty
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-right font-semibold text-slate-700">
                       Received
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Status
                     </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    <th className="border-b border-slate-200 px-3 py-2.5 text-left font-semibold text-slate-700">
                       Actions
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleOrders.map((order) => {
-                    const isSending = sendingOrderId === order.id;
-                    const isSent = order.status === "sent";
+                  {(() => {
+                    let lastPublisherId: number | null = null;
 
-                    return (
-                      <tr
-                        key={order.id}
-                        className="hover:bg-slate-50 transition-colors"
-                      >
-                        <td className="border-b border-slate-200 px-3 py-2 font-semibold text-slate-800">
-                          {order.order_no}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
-                          {order.publisher?.name || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
-                          {order.academic_session || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
-                          {formatDate(order.order_date || order.createdAt)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {order.items?.length || 0}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {totalQty(order.items)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {totalReceivedQty(order.items)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${statusChipClass(
-                              order.status
-                            )}`}
-                          >
-                            {statusLabel(order.status)}
-                          </span>
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenView(order)}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
-                            >
-                              <Eye className="w-3 h-3" />
-                              View / Receive
-                            </button>
+                    return sortedOrders.map((order) => {
+                      const isSending = sendingOrderId === order.id;
+                      const isSent = order.status === "sent";
+                      const showGroupHeader =
+                        order.publisher_id !== lastPublisherId;
+                      lastPublisherId = order.publisher_id;
 
-                            <button
-                              type="button"
-                              onClick={() => handleSendEmail(order)}
-                              disabled={isSending}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] border ${
-                                isSent
-                                  ? "border-blue-300 text-blue-700 bg-blue-50"
-                                  : "border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
-                              } disabled:opacity-60 disabled:cursor-not-allowed`}
-                            >
-                              <Send className="w-3 h-3" />
-                              {isSending
-                                ? "Sending..."
-                                : isSent
-                                ? "Resend Email"
-                                : "Send Email"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                      return (
+                        <React.Fragment key={order.id}>
+                          {showGroupHeader && (
+                            <tr>
+                              <td
+                                colSpan={9}
+                                className="bg-slate-100 border-t border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                              >
+                                Publisher:{" "}
+                                <span className="font-bold text-slate-900">
+                                  {order.publisher?.name ||
+                                    `Publisher #${order.publisher_id}`}
+                                </span>
+                              </td>
+                            </tr>
+                          )}
+
+                          <tr className={`hover:bg-slate-200 transition-colors ${statusRowClass(order.status)}`}>
+                            <td className="border-b border-slate-200 px-3 py-2.5 font-semibold text-slate-800">
+                              {order.order_no}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-slate-700">
+                              {order.publisher?.name || "-"}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-slate-600">
+                              {order.academic_session || "-"}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-slate-600">
+                              {formatDate(order.order_date || order.createdAt)}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-right text-slate-700">
+                              {order.items?.length || 0}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-right text-slate-700">
+                              {totalQty(order.items)}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5 text-right text-slate-700">
+                              {totalReceivedQty(order.items)}
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm ${statusChipClass(
+                                  order.status
+                                )}`}
+                              >
+                                {statusLabel(order.status)}
+                              </span>
+                            </td>
+                            <td className="border-b border-slate-200 px-3 py-2.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenView(order)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  View / Receive
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendEmail(order)}
+                                  disabled={isSending}
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border ${
+                                    isSent
+                                      ? "border-blue-300 text-blue-700 bg-blue-50"
+                                      : "border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                  {isSending
+                                    ? "Sending..."
+                                    : isSent
+                                    ? "Resend Email"
+                                    : "Send Email"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -799,11 +866,11 @@ const PublisherOrdersPageClient: React.FC = () => {
             {/* Modal header */}
             <div className="px-5 py-4 border-b flex items-center justify-between bg-gradient-to-r from-indigo-50 to-slate-50">
               <div>
-                <h3 className="text-sm sm:text-base font-semibold text-slate-900 flex items-center gap-2">
+                <h3 className="text-base sm:text-lg font-semibold text-slate-900 flex items-center gap-2">
                   <Package className="w-4 h-4 text-indigo-500" />
                   <span>Order Details – {viewOrder.order_no}</span>
                 </h3>
-                <p className="text-[11px] text-slate-500 mt-1">
+                <p className="text-sm text-slate-500 mt-1">
                   Publisher:{" "}
                   <span className="font-medium">
                     {viewOrder.publisher?.name || "-"}
@@ -817,10 +884,10 @@ const PublisherOrdersPageClient: React.FC = () => {
                     {formatDate(viewOrder.order_date || viewOrder.createdAt)}
                   </span>
                 </p>
-                <p className="text-[11px] text-slate-500 mt-1">
+                <p className="text-sm text-slate-500 mt-1">
                   Status:{" "}
                   <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${statusChipClass(
+                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-sm ${statusChipClass(
                       viewOrder.status
                     )}`}
                   >
@@ -835,7 +902,7 @@ const PublisherOrdersPageClient: React.FC = () => {
                     {!isReceiving && (
                       <button
                         onClick={startReceiving}
-                        className="text-[10px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        className="text-sm px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                       >
                         Receive Books
                       </button>
@@ -845,14 +912,14 @@ const PublisherOrdersPageClient: React.FC = () => {
                         <button
                           onClick={handleReceiveSave}
                           disabled={savingReceive}
-                          className="text-[10px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
+                          className="text-sm px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
                         >
                           {savingReceive ? "Saving..." : "Save Receive"}
                         </button>
                         <button
                           onClick={() => setIsReceiving(false)}
                           disabled={savingReceive}
-                          className="text-[10px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
+                          className="text-sm px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
                         >
                           Cancel Edit
                         </button>
@@ -862,7 +929,7 @@ const PublisherOrdersPageClient: React.FC = () => {
                       <button
                         onClick={handleCancelOrder}
                         disabled={savingReceive}
-                        className="text-[10px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                        className="text-sm px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
                       >
                         Mark as Cancelled
                       </button>
@@ -875,7 +942,7 @@ const PublisherOrdersPageClient: React.FC = () => {
                     setViewOrder(null);
                     setIsReceiving(false);
                   }}
-                  className="text-[10px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
+                  className="text-sm px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
                 >
                   Close
                 </button>
@@ -883,14 +950,14 @@ const PublisherOrdersPageClient: React.FC = () => {
             </div>
 
             {/* Modal body */}
-            <div className="p-4 overflow-auto text-[11px]">
+            <div className="p-4 overflow-auto text-sm">
               {!viewOrder.items || viewOrder.items.length === 0 ? (
-                <div className="text-slate-500 py-6">
+                <div className="text-slate-500 py-6 text-base">
                   No items found for this order.
                 </div>
               ) : (
                 <>
-                  <div className="mb-3 text-[11px] text-slate-600 flex flex-wrap gap-3 justify-between">
+                  <div className="mb-3 text-sm text-slate-600 flex flex-wrap gap-3 justify-between">
                     <span>
                       Total Books:{" "}
                       <span className="font-semibold">
@@ -912,31 +979,31 @@ const PublisherOrdersPageClient: React.FC = () => {
                   </div>
 
                   <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <table className="w-full text-[11px] border-collapse">
-                      <thead className="bg-slate-100">
+                    <table className="w-full text-sm border-collapse">
+                      <thead className="bg-slate-100 text-sm">
                         <tr>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-10">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left w-10">
                             #
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left">
-                            Book
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">
+                            Book &amp; Schools
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">
                             Class
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">
                             Subject
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">
                             Code / ISBN
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right">
                             Ordered
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right">
                             Received
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right">
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right">
                             Pending
                           </th>
                         </tr>
@@ -971,27 +1038,52 @@ const PublisherOrdersPageClient: React.FC = () => {
                           return (
                             <tr
                               key={item.id}
-                              className="hover:bg-slate-50 transition-colors"
+                              className="hover:bg-slate-50 transition-colors align-top"
                             >
-                              <td className="border-b border-slate-200 px-2 py-1">
+                              <td className="border-b border-slate-200 px-2 py-1.5">
                                 {idx + 1}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1">
-                                {item.book?.title || `Book #${item.book_id}`}
+                              <td className="border-b border-slate-200 px-2 py-1.5">
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-medium text-slate-900">
+                                    {item.book?.title ||
+                                      `Book #${item.book_id}`}
+                                  </span>
+                                  {item.school_breakup &&
+                                  item.school_breakup.length > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {item.school_breakup.map((sb) => (
+                                        <span
+                                          key={sb.school_id}
+                                          className="inline-flex items-center rounded-full bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-sm text-indigo-700"
+                                        >
+                                          {sb.school_name}{" "}
+                                          <span className="ml-0.5 text-sm text-slate-500">
+                                            ({sb.allocated_qty})
+                                          </span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-sm text-slate-400">
+                                      No school breakup available
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1">
+                              <td className="border-b border-slate-200 px-2 py-1.5">
                                 {item.book?.class_name || "-"}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1">
+                              <td className="border-b border-slate-200 px-2 py-1.5">
                                 {item.book?.subject || "-"}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1">
+                              <td className="border-b border-slate-200 px-2 py-1.5">
                                 {item.book?.code || item.book?.isbn || "-"}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1 text-right">
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                 {ordered}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1 text-right">
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                 {isReceiving ? (
                                   <input
                                     type="number"
@@ -1004,13 +1096,13 @@ const PublisherOrdersPageClient: React.FC = () => {
                                         e.target.value
                                       )
                                     }
-                                    className="w-20 border border-slate-300 rounded-lg px-1 py-0.5 text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                    className="w-20 border border-slate-300 rounded-lg px-1 py-0.5 text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                                   />
                                 ) : (
                                   displayReceived
                                 )}
                               </td>
-                              <td className="border-b border-slate-200 px-2 py-1 text-right">
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                 {pending}
                               </td>
                             </tr>

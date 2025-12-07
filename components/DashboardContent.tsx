@@ -84,7 +84,9 @@ const DashboardContent: React.FC = () => {
             </span>
           </div>
           <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-            Dive into the heart of book distribution. Seamlessly manage publishers, curate catalogs, fulfill school needs, and keep your inventory in perfect sync—all in one intuitive hub.
+            Dive into the heart of book distribution. Seamlessly manage
+            publishers, curate catalogs, fulfill school needs, and keep your
+            inventory in perfect sync—all in one intuitive hub.
           </p>
         </section>
 
@@ -102,14 +104,19 @@ const DashboardContent: React.FC = () => {
                   <Building2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Publishers</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Publishers
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Discover and onboard top publishers. Link them effortlessly to your catalog and streamline order fulfillment.
+                    Discover and onboard top publishers. Link them effortlessly
+                    to your catalog and streamline order fulfillment.
                   </p>
                 </div>
               </div>
               <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-indigo-600 font-medium">Explore Now</span>
+                <span className="text-xs text-indigo-600 font-medium">
+                  Explore Now
+                </span>
                 <ChevronRight className="w-4 h-4 text-indigo-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
@@ -125,9 +132,12 @@ const DashboardContent: React.FC = () => {
                   <GraduationCap className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Classes</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Classes
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Curate a dynamic class roster. Map textbooks precisely to grades and subjects for seamless requirements.
+                    Curate a dynamic class roster. Map textbooks precisely to
+                    grades and subjects for seamless requirements.
                   </p>
                 </div>
               </div>
@@ -148,9 +158,12 @@ const DashboardContent: React.FC = () => {
                   <Building2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Schools</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Schools
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Profile educational institutions. Monitor and forecast their yearly book demands with precision.
+                    Profile educational institutions. Monitor and forecast their
+                    yearly book demands with precision.
                   </p>
                 </div>
               </div>
@@ -171,14 +184,19 @@ const DashboardContent: React.FC = () => {
                   <BookOpen className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Books</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Books
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Build your ultimate library catalog. Track classes, subjects, publishers, pricing, and more.
+                    Build your ultimate library catalog. Track classes,
+                    subjects, publishers, pricing, and more.
                   </p>
                 </div>
               </div>
               <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-purple-600 font-medium">Catalog</span>
+                <span className="text-xs text-purple-600 font-medium">
+                  Catalog
+                </span>
                 <ChevronRight className="w-4 h-4 text-purple-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
@@ -194,9 +212,12 @@ const DashboardContent: React.FC = () => {
                   <Receipt className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Requirements</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Requirements
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Gather school-specific needs. Leverage Excel imports/exports for bulk efficiency.
+                    Gather school-specific needs. Leverage Excel imports/exports
+                    for bulk efficiency.
                   </p>
                 </div>
               </div>
@@ -217,15 +238,44 @@ const DashboardContent: React.FC = () => {
                   <Package className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Publisher Orders</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Publisher Orders
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Consolidate demands into smart POs. Automate emails for swift publisher coordination.
+                    Consolidate demands into smart POs. Automate emails for
+                    swift publisher coordination.
                   </p>
                 </div>
               </div>
               <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 <span className="text-xs text-green-600 font-medium">Order</span>
                 <ChevronRight className="w-4 h-4 text-green-500 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            {/* School Orders */}
+            <Link
+              href="/school-orders"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-sky-500/5 to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-cyan-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <Package className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    School Orders
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Generate school-wise orders from requirements. Send order
+                    emails and track received vs pending at school level.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-sky-600 font-medium">Dispatch</span>
+                <ChevronRight className="w-4 h-4 text-sky-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
 
@@ -240,14 +290,19 @@ const DashboardContent: React.FC = () => {
                   <Layers className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">Stock & Inventory</h3>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Stock & Inventory
+                  </h3>
                   <p className="text-slate-600 text-sm leading-relaxed">
-                    Real-time visibility into stock levels. Auto-sync with orders and receipts for accuracy.
+                    Real-time visibility into stock levels. Auto-sync with
+                    orders and receipts for accuracy.
                   </p>
                 </div>
               </div>
               <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-emerald-600 font-medium">Monitor</span>
+                <span className="text-xs text-emerald-600 font-medium">
+                  Monitor
+                </span>
                 <ChevronRight className="w-4 h-4 text-emerald-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>

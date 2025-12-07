@@ -29,8 +29,6 @@ type ClassItem = {
 type Book = {
   id: number;
   title: string;
-  code?: string | null;
-  isbn?: string | null;
   class_name?: string | null;
   subject?: string | null;
   medium?: string | null;
@@ -43,10 +41,7 @@ type Book = {
 
 type BookFormState = {
   title: string;
-  code: string;
-  isbn: string;
-  publisher_id: string;
-  class_name: string; // will store class_name string from ClassItem
+  class_name: string;
   subject: string;
   medium: string;
   mrp: string;
@@ -56,9 +51,6 @@ type BookFormState = {
 
 const emptyBookForm: BookFormState = {
   title: "",
-  code: "",
-  isbn: "",
-  publisher_id: "",
   class_name: "",
   subject: "",
   medium: "",
@@ -92,12 +84,16 @@ const formatAmount = (value: number | string | null | undefined): string => {
       : NaN;
 
   if (Number.isNaN(num)) {
-    // fallback: just show raw value as string
     return String(value);
   }
 
   return num.toFixed(2);
 };
+
+type ToastState = {
+  message: string;
+  type: "success" | "error";
+} | null;
 
 const BooksPageClient: React.FC = () => {
   const { user, logout } = useAuth();
@@ -111,7 +107,6 @@ const BooksPageClient: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -124,6 +119,17 @@ const BooksPageClient: React.FC = () => {
   const [exportLoading, setExportLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
+  const [toast, setToast] = useState<ToastState>(null);
+
+  // Publisher combo text (for add + edit)
+  const [publisherInput, setPublisherInput] = useState<string>("");
+
+  // Excel-style navigation refs
+  const addRowRefs = useRef<(HTMLInputElement | HTMLSelectElement | null)[]>([]);
+  const editRowRefs = useRef<(HTMLInputElement | HTMLSelectElement | null)[]>([]);
+
+  const LAST_INDEX = 5; // title, class, subject, publisher, mrp, price
+
   /* -------------------- FETCH HELPERS -------------------- */
 
   const fetchPublishers = async () => {
@@ -132,7 +138,6 @@ const BooksPageClient: React.FC = () => {
       setPublishers(res.data || []);
     } catch (err) {
       console.error(err);
-      // ignore for now
     }
   };
 
@@ -147,7 +152,6 @@ const BooksPageClient: React.FC = () => {
       setClasses(normalizeClasses(res.data));
     } catch (err) {
       console.error(err);
-      // ignore for now
     }
   };
 
@@ -188,6 +192,13 @@ const BooksPageClient: React.FC = () => {
     fetchBooks();
   }, []);
 
+  // Auto-hide toast
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(id);
+  }, [toast]);
+
   /* -------------------- FORM HANDLERS -------------------- */
 
   const handleChange = (
@@ -195,67 +206,114 @@ const BooksPageClient: React.FC = () => {
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >
   ) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleToggleActive = () => {
-    setForm((prev) => ({ ...prev, is_active: !prev.is_active }));
+    const { name, value, type, checked } = e.target as HTMLInputElement;
+    if (type === "checkbox") {
+      setForm((prev) => ({ ...prev, [name]: checked }));
+    } else {
+      setForm((prev) => ({ ...prev, [name]: value }));
+    }
   };
 
   const resetForm = () => {
     setForm(emptyBookForm);
+    setPublisherInput("");
     setEditingId(null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const buildPayload = (publisherId: number) => {
+    if (!form.title.trim()) {
+      throw new Error("Title is required.");
+    }
+
+    return {
+      title: form.title.trim(),
+      publisher_id: publisherId,
+      class_name: form.class_name.trim() || null,
+      subject: form.subject.trim() || null,
+      medium: form.medium.trim() || null,
+      mrp: form.mrp ? Number(form.mrp) : 0, // DB default 0, not null
+      selling_price: form.selling_price ? Number(form.selling_price) : null,
+      is_active: form.is_active,
+    };
+  };
+
+  const saveBook = async () => {
     setError(null);
-    setInfo(null);
     setLoading(true);
 
     try {
       if (!form.title.trim()) {
-        setError("Title is required.");
-        setLoading(false);
-        return;
-      }
-      if (!form.publisher_id) {
-        setError("Publisher is required.");
-        setLoading(false);
-        return;
+        throw new Error("Title is required.");
       }
 
-      const payload = {
-        title: form.title.trim(),
-        code: form.code.trim() || null,
-        isbn: form.isbn.trim() || null,
-        publisher_id: Number(form.publisher_id),
-        class_name: form.class_name.trim() || null, // selected class_name string
-        subject: form.subject.trim() || null,
-        medium: form.medium.trim() || null,
-        mrp: form.mrp ? Number(form.mrp) : null,
-        selling_price: form.selling_price ? Number(form.selling_price) : null,
-        is_active: form.is_active,
-      };
+      const pubName = publisherInput.trim();
+      if (!pubName) {
+        throw new Error("Publisher is required.");
+      }
+
+      // 1️⃣ Check existing publisher (case-insensitive)
+      let publisherId: number;
+      const existing = publishers.find(
+        (p) => p.name.toLowerCase() === pubName.toLowerCase()
+      );
+
+      if (existing) {
+        publisherId = existing.id;
+      } else {
+        // 2️⃣ Create new publisher
+        const res = await api.post("/api/publishers", {
+          name: pubName,
+        });
+        const newPublisher: Publisher = res.data;
+        publisherId = newPublisher.id;
+
+        // 3️⃣ Add to local list to show in combo
+        setPublishers((prev) => [...prev, newPublisher]);
+      }
+
+      // 4️⃣ Class combo: if typed class_name not in master, create it
+      const className = form.class_name.trim();
+      if (className) {
+        const existingClass = classes.find(
+          (c) => c.class_name.toLowerCase() === className.toLowerCase()
+        );
+        if (!existingClass) {
+          try {
+            const resClass = await api.post("/api/classes", {
+              class_name: className,
+              sort_order: 0,
+              is_active: true,
+            });
+            const newClass: ClassItem = resClass.data;
+            setClasses((prev) => [...prev, newClass]);
+          } catch (err) {
+            console.error("Failed to auto-create class:", err);
+            // optional: don't block book save if class creation fails
+          }
+        }
+      }
+
+      const payload = buildPayload(publisherId);
 
       if (editingId) {
         await api.put(`/api/books/${editingId}`, payload);
-        setInfo("Book updated successfully.");
+        setToast({ message: "Book updated successfully.", type: "success" });
       } else {
         await api.post("/api/books", payload);
-        setInfo("Book added successfully.");
+        setToast({ message: "Book added successfully.", type: "success" });
       }
 
       resetForm();
       await fetchBooks(search, filterPublisherId, filterClassName);
     } catch (err: any) {
       console.error(err);
-      setError(
+      const msg =
+        err?.message ||
         err?.response?.data?.error ||
-          err?.response?.data?.message ||
-          (editingId ? "Failed to update book." : "Failed to create book.")
-      );
+        err?.response?.data?.message ||
+        (editingId ? "Failed to update book." : "Failed to create book.");
+      setError(msg);
+      setToast({ message: msg, type: "error" });
     } finally {
       setLoading(false);
     }
@@ -263,13 +321,9 @@ const BooksPageClient: React.FC = () => {
 
   const handleEdit = (book: Book) => {
     setError(null);
-    setInfo(null);
     setEditingId(book.id);
     setForm({
       title: book.title || "",
-      code: book.code || "",
-      isbn: book.isbn || "",
-      publisher_id: book.publisher_id ? String(book.publisher_id) : "",
       class_name: book.class_name || "",
       subject: book.subject || "",
       medium: book.medium || "",
@@ -281,6 +335,14 @@ const BooksPageClient: React.FC = () => {
           : "",
       is_active: book.is_active,
     });
+
+    const pubNameFromBook =
+      book.publisher?.name ||
+      publishers.find((p) => p.id === book.publisher_id)?.name ||
+      "";
+    setPublisherInput(pubNameFromBook);
+
+    editRowRefs.current = [];
   };
 
   const handleDelete = async (id: number) => {
@@ -290,7 +352,6 @@ const BooksPageClient: React.FC = () => {
     if (!confirmDelete) return;
 
     setError(null);
-    setInfo(null);
     setDeletingId(id);
     try {
       await api.delete(`/api/books/${id}`);
@@ -298,10 +359,11 @@ const BooksPageClient: React.FC = () => {
         resetForm();
       }
       await fetchBooks(search, filterPublisherId, filterClassName);
-      setInfo("Book deleted successfully.");
+      setToast({ message: "Book deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       setError("Failed to delete book.");
+      setToast({ message: "Failed to delete book.", type: "error" });
     } finally {
       setDeletingId(null);
     }
@@ -342,7 +404,6 @@ const BooksPageClient: React.FC = () => {
 
   const triggerImport = () => {
     setError(null);
-    setInfo(null);
     if (importInputRef.current) {
       importInputRef.current.value = "";
       importInputRef.current.click();
@@ -356,7 +417,6 @@ const BooksPageClient: React.FC = () => {
     if (!file) return;
 
     setError(null);
-    setInfo(null);
     setImportLoading(true);
 
     try {
@@ -372,19 +432,19 @@ const BooksPageClient: React.FC = () => {
       const { created, updated, errors } = res.data || {};
       const errorCount = Array.isArray(errors) ? errors.length : 0;
 
-      setInfo(
-        `Import completed: ${created ?? 0} created, ${
-          updated ?? 0
-        } updated, ${errorCount} row(s) with errors.`
-      );
+      setToast({
+        message: `Import: ${created ?? 0} new, ${updated ?? 0} updated, ${errorCount} error(s).`,
+        type: "success",
+      });
 
       await fetchBooks(search, filterPublisherId, filterClassName);
     } catch (err: any) {
       console.error(err);
-      setError(
+      const msg =
         err?.response?.data?.error ||
-          "Failed to import books. Please check the file format."
-      );
+        "Failed to import books. Please check the file format.";
+      setError(msg);
+      setToast({ message: msg, type: "error" });
     } finally {
       setImportLoading(false);
     }
@@ -392,7 +452,6 @@ const BooksPageClient: React.FC = () => {
 
   const handleExport = async () => {
     setError(null);
-    setInfo(null);
     setExportLoading(true);
 
     try {
@@ -413,14 +472,53 @@ const BooksPageClient: React.FC = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
 
-      setInfo("Books exported successfully.");
+      setToast({ message: "Books exported successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       setError("Failed to export books.");
+      setToast({ message: "Failed to export books.", type: "error" });
     } finally {
       setExportLoading(false);
     }
   };
+
+  /* ----------------- EXCEL-LIKE KEY NAV HANDLERS ----------------- */
+
+  const makeAddRowKeyDown =
+    (index: number) =>
+    (
+      e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>
+    ): void => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+
+      if (index < LAST_INDEX) {
+        const next = addRowRefs.current[index + 1];
+        if (next) next.focus();
+      } else {
+        if (!loading) {
+          saveBook();
+        }
+      }
+    };
+
+  const makeEditRowKeyDown =
+    (index: number) =>
+    (
+      e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>
+    ): void => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+
+      if (index < LAST_INDEX) {
+        const next = editRowRefs.current[index + 1];
+        if (next) next.focus();
+      } else {
+        if (!loading) {
+          saveBook();
+        }
+      }
+    };
 
   /* -------------------- UI -------------------- */
 
@@ -438,10 +536,10 @@ const BooksPageClient: React.FC = () => {
         <div className="font-bold flex items-center gap-3">
           <Link
             href="/"
-            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
+            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors text-sm"
           >
             <ChevronLeft className="w-5 h-5" />
-            <span className="text-sm">Back to Dashboard</span>
+            <span>Back to Dashboard</span>
           </Link>
         </div>
         <div className="font-bold flex items-center gap-3">
@@ -449,7 +547,7 @@ const BooksPageClient: React.FC = () => {
             <BookOpen className="w-5 h-5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-base sm:text-lg tracking-tight">
+            <span className="text-lg sm:text-xl tracking-tight">
               Book Master
             </span>
             <span className="text-xs text-slate-500 font-medium">
@@ -459,25 +557,25 @@ const BooksPageClient: React.FC = () => {
         </div>
         <div className="flex items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800">
+            <span className="font-semibold text-slate-800 text-sm">
               {user?.name || "User"}
             </span>
             {user?.role && (
-              <span className="text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
+              <span className="text-[11px] rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
                 {user.role}
               </span>
             )}
           </div>
           <button
             onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-xs sm:text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
           >
             Logout
           </button>
         </div>
       </header>
 
-      <main className="relative z-10 p-6 lg:p-8 space-y-8">
+      <main className="relative z-10 p-6 lg:p-8 space-y-6">
         {/* Header + search + filters + import/export */}
         <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-5 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="max-w-2xl">
@@ -489,22 +587,23 @@ const BooksPageClient: React.FC = () => {
                 Books Catalogue
               </h1>
             </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Manage your{" "}
+            <p className="text-sm sm:text[15px] text-slate-600 leading-relaxed">
+              Excel-like{" "}
               <span className="font-semibold">
-                complete book master (class-wise, subject-wise, publisher-wise)
+                inline entry & editing for class-wise, subject-wise and
+                publisher-wise books
               </span>{" "}
-              and keep it in sync with Excel import / export.
+              with import / export support.
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 text-xs">
+          <div className="flex flex-col gap-2 text-xs sm:text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
                 value={search}
                 onChange={handleSearchChange}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs min-w-[200px] bg-white shadow-sm"
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm min-w-[200px] bg-white shadow-sm"
                 placeholder="Search by title / subject..."
               />
 
@@ -512,7 +611,7 @@ const BooksPageClient: React.FC = () => {
               <select
                 value={filterClassName}
                 onChange={handleClassFilterChange}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs bg-white min-w-[180px] shadow-sm"
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[160px] shadow-sm"
               >
                 <option value="">All classes</option>
                 {classes.map((cls) => (
@@ -526,7 +625,7 @@ const BooksPageClient: React.FC = () => {
               <select
                 value={filterPublisherId}
                 onChange={handlePublisherFilterChange}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs bg-white min-w-[180px] shadow-sm"
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[180px] shadow-sm"
               >
                 <option value="">All publishers</option>
                 {publishers.map((pub) => (
@@ -551,7 +650,7 @@ const BooksPageClient: React.FC = () => {
                 type="button"
                 onClick={triggerImport}
                 disabled={importLoading}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs font-medium shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
               >
                 <Upload className="w-3.5 h-3.5" />
                 <span>{importLoading ? "Importing..." : "Import Excel"}</span>
@@ -561,374 +660,409 @@ const BooksPageClient: React.FC = () => {
                 type="button"
                 onClick={handleExport}
                 disabled={exportLoading}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs font-medium shadow-sm"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
               </button>
 
-              <span className="text-[11px] text-slate-500 hidden sm:block">
+              <span className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
                 Use export as template for bulk updates.
               </span>
             </div>
           </div>
         </section>
 
-        {/* Alerts */}
-        {(error || info) && (
-          <section className="space-y-3">
-            {error && (
-              <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs text-red-700 flex items-center gap-2">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
-                  !
-                </div>
-                <span>{error}</span>
+        {/* Error alert */}
+        {error && (
+          <section>
+            <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs sm:text-sm text-red-700 flex items-center gap-2">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
+                !
               </div>
-            )}
-            {info && !error && (
-              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm text-xs text-emerald-700 flex items-center gap-2">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                  <Sparkles className="w-3 h-3" />
-                </div>
-                <span>{info}</span>
-              </div>
-            )}
+              <span>{error}</span>
+            </div>
           </section>
         )}
 
-        {/* Form + List */}
-        <section className="grid gap-8 lg:grid-cols-2">
-          {/* Add / Edit form */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/60">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm sm:text-base font-semibold flex items-center gap-2 text-slate-800">
-                {editingId ? (
-                  <>
-                    <Pencil className="w-4 h-4 text-indigo-500" />
-                    Edit Book
-                  </>
-                ) : (
-                  <>
-                    <BookOpen className="w-4 h-4 text-emerald-500" />
-                    Add New Book
-                  </>
-                )}
-              </h2>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="text-[11px] px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium"
-                >
-                  Cancel Edit
-                </button>
-              )}
-            </div>
-
-            <form className="space-y-4 text-sm" onSubmit={handleSubmit}>
-              <div>
-                <label className="block text-xs mb-1.5 text-slate-700">
-                  Title *
-                </label>
-                <input
-                  name="title"
-                  value={form.title}
-                  onChange={handleChange}
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="Enter book title"
-                />
-              </div>
-
-              {/* Code + ISBN + Publisher */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Book Code
-                  </label>
-                  <input
-                    name="code"
-                    value={form.code}
-                    onChange={handleChange}
-                    placeholder="Optional internal code"
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    ISBN (Optional)
-                  </label>
-                  <input
-                    name="isbn"
-                    value={form.isbn}
-                    onChange={handleChange}
-                    placeholder="ISBN-10 / ISBN-13"
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Publisher *
-                  </label>
-                  <select
-                    name="publisher_id"
-                    value={form.publisher_id}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  >
-                    <option value="">Select publisher</option>
-                    {publishers.map((pub) => (
-                      <option key={pub.id} value={pub.id}>
-                        {pub.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Class + Subject + Medium */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Class
-                  </label>
-                  <select
-                    name="class_name"
-                    value={form.class_name}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  >
-                    <option value="">Select class</option>
-                    {classes.map((cls) => (
-                      <option key={cls.id} value={cls.class_name}>
-                        {cls.class_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Subject
-                  </label>
-                  <input
-                    name="subject"
-                    value={form.subject}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                    placeholder="Mathematics, Science..."
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Medium
-                  </label>
-                  <input
-                    name="medium"
-                    value={form.medium}
-                    onChange={handleChange}
-                    placeholder="English / Hindi..."
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                </div>
-              </div>
-
-              {/* MRP + Selling Price + Active */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    MRP
-                  </label>
-                  <input
-                    name="mrp"
-                    type="number"
-                    step="0.01"
-                    value={form.mrp}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs mb-1.5 text-slate-700">
-                    Selling Price
-                  </label>
-                  <input
-                    name="selling_price"
-                    type="number"
-                    step="0.01"
-                    value={form.selling_price}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.is_active}
-                      onChange={handleToggleActive}
-                      className="h-3 w-3"
-                    />
-                    <span className="text-slate-700">Active</span>
-                  </label>
-                </div>
-              </div>
-
+        {/* Table with Excel-style add/edit */}
+        <section className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/60">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-indigo-500" />
+              Books ({books.length})
+            </h2>
+            {editingId && (
               <button
-                type="submit"
-                disabled={loading}
-                className="mt-2 w-full sm:w-auto bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-5 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                type="button"
+                onClick={resetForm}
+                className="text-[11px] sm:text-xs px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium"
               >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    {editingId ? "Updating..." : "Saving..."}
-                  </>
-                ) : editingId ? (
-                  <>
-                    <Pencil className="w-4 h-4" />
-                    Update Book
-                  </>
-                ) : (
-                  <>
-                    <BookOpen className="w-4 h-4" />
-                    Save Book
-                  </>
-                )}
+                Cancel Edit
               </button>
-            </form>
-          </div>
-
-          {/* List */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/60">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-indigo-500" />
-                Existing Books ({books.length})
-              </h2>
-            </div>
-
-            {listLoading ? (
-              <div className="flex items-center justify-center py-10 text-xs text-slate-600">
-                <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
-                Loading books...
-              </div>
-            ) : books.length === 0 ? (
-              <div className="text-xs text-slate-500 py-8 text-center">
-                No books added yet. Start by adding your first book on the left.
-              </div>
-            ) : (
-              <div className="overflow-auto max-h-[480px] rounded-xl border border-slate-200/80 shadow-inner">
-                <table className="w-full text-[11px] border-collapse bg-white">
-                  <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-10">
-                    <tr>
-                      <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                        Title
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                        Class
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                        Subject
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                        Publisher
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                        MRP
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                        Price
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                        Status
-                      </th>
-                      <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {books.map((b) => (
-                      <tr key={b.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <div className="font-semibold text-slate-800 truncate max-w-[260px]">
-                            {b.title}
-                          </div>
-                          <div className="space-y-0.5 mt-0.5">
-                            {b.code && (
-                              <div className="text-[10px] text-slate-500">
-                                Code: {b.code}
-                              </div>
-                            )}
-                            {b.isbn && (
-                              <div className="text-[10px] text-slate-500">
-                                ISBN: {b.isbn}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          {b.class_name || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          {b.subject || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          {b.publisher?.name || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right">
-                          {formatAmount(b.mrp)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right">
-                          {formatAmount(b.selling_price)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-center">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
-                              b.is_active
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : "bg-slate-50 text-slate-500 border border-slate-200"
-                            }`}
-                          >
-                            {b.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <div className="flex items-center justify-center gap-2">
-                            {/* Edit icon */}
-                            <button
-                              type="button"
-                              onClick={() => handleEdit(b)}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
-                              aria-label="Edit book"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-
-                            {/* Delete icon */}
-                            <button
-                              type="button"
-                              onClick={() => handleDelete(b.id)}
-                              disabled={deletingId === b.id}
-                              className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
-                              aria-label="Delete book"
-                            >
-                              {deletingId === b.id ? (
-                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             )}
           </div>
+
+          {listLoading ? (
+            <div className="flex items-center justify-center py-10 text-xs sm:text-sm text-slate-600">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
+              Loading books...
+            </div>
+          ) : books.length === 0 && !editingId ? (
+            <div className="text-xs sm:text-sm text-slate-500 py-4 mb-3">
+              Start typing in the row below headers to add your first book.
+            </div>
+          ) : null}
+
+          <div className="overflow-auto max-h-[520px] rounded-xl border border-slate-200/80 shadow-inner">
+            <table className="w-full text-xs sm:text-sm border-collapse bg-white">
+              <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-20">
+                <tr>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Title
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Class
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Subject
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Publisher
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    MRP
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    Price
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Active
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* ✅ ADD ROW always on top (Excel style) */}
+                <tr className="bg-slate-50/80">
+                  <td className="border-b border-slate-200 px-3 py-1.5">
+                    <input
+                      name="title"
+                      value={form.title}
+                      onChange={handleChange}
+                      ref={(el) => {
+                        addRowRefs.current[0] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(0)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="Book title"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5">
+                    <input
+                      list="classOptions"
+                      name="class_name"
+                      value={form.class_name}
+                      onChange={handleChange}
+                      ref={(el) => {
+                        addRowRefs.current[1] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(1)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="Class"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5">
+                    <input
+                      name="subject"
+                      value={form.subject}
+                      onChange={handleChange}
+                      ref={(el) => {
+                        addRowRefs.current[2] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(2)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="Subject"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5">
+                    <input
+                      list="publisherOptions"
+                      value={publisherInput}
+                      onChange={(e) => setPublisherInput(e.target.value)}
+                      ref={(el) => {
+                        addRowRefs.current[3] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(3)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="Publisher"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5 text-right">
+                    <input
+                      name="mrp"
+                      type="number"
+                      step="0.01"
+                      value={form.mrp}
+                      onChange={handleChange}
+                      ref={(el) => {
+                        addRowRefs.current[4] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(4)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="0.00"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5 text-right">
+                    <input
+                      name="selling_price"
+                      type="number"
+                      step="0.01"
+                      value={form.selling_price}
+                      onChange={handleChange}
+                      ref={(el) => {
+                        addRowRefs.current[5] = el;
+                      }}
+                      onKeyDown={makeAddRowKeyDown(5)}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      placeholder="0.00"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5 text-center">
+                    <input
+                      type="checkbox"
+                      name="is_active"
+                      checked={form.is_active}
+                      onChange={handleChange}
+                      className="h-4 w-4"
+                    />
+                  </td>
+                  <td className="border-b border-slate-200 px-3 py-1.5 text-center">
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={saveBook}
+                      className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-xs sm:text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                    >
+                      {loading ? "Saving..." : "Add"}
+                    </button>
+                  </td>
+                </tr>
+
+                {/* Data rows - SAME row becomes editable on edit */}
+                {books.map((b) =>
+                  editingId === b.id ? (
+                    // ✅ EDIT = this same row in editable mode
+                    <tr key={b.id} className="bg-yellow-50/70">
+                      <td className="border-b border-slate-200 px-3 py-1.5">
+                        <input
+                          name="title"
+                          value={form.title}
+                          onChange={handleChange}
+                          ref={(el) => {
+                            editRowRefs.current[0] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(0)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5">
+                        <input
+                          list="classOptions"
+                          name="class_name"
+                          value={form.class_name}
+                          onChange={handleChange}
+                          ref={(el) => {
+                            editRowRefs.current[1] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(1)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          placeholder="Class"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5">
+                        <input
+                          name="subject"
+                          value={form.subject}
+                          onChange={handleChange}
+                          ref={(el) => {
+                            editRowRefs.current[2] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(2)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5">
+                        <input
+                          list="publisherOptions"
+                          value={publisherInput}
+                          onChange={(e) => setPublisherInput(e.target.value)}
+                          ref={(el) => {
+                            editRowRefs.current[3] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(3)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          placeholder="Publisher"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5 text-right">
+                        <input
+                          name="mrp"
+                          type="number"
+                          step="0.01"
+                          value={form.mrp}
+                          onChange={handleChange}
+                          ref={(el) => {
+                            editRowRefs.current[4] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(4)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white text-right focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5 text-right">
+                        <input
+                          name="selling_price"
+                          type="number"
+                          step="0.01"
+                          value={form.selling_price}
+                          onChange={handleChange}
+                          ref={(el) => {
+                            editRowRefs.current[5] = el;
+                          }}
+                          onKeyDown={makeEditRowKeyDown(5)}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-xs sm:text-sm bg-white text-right focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5 text-center">
+                        <input
+                          type="checkbox"
+                          name="is_active"
+                          checked={form.is_active}
+                          onChange={handleChange}
+                          className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-1.5 text-center">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={saveBook}
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs sm:text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                          >
+                            {loading ? "Saving..." : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={resetForm}
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-full border border-slate-300 bg-white text-xs sm:text-sm text-slate-700 hover:bg-slate-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    // Normal display row
+                    <tr
+                      key={b.id}
+                      className="hover:bg-slate-50 transition-colors"
+                    >
+                      <td className="border-b border-slate-200 px-3 py-2">
+                        <div className="font-semibold text-slate-800 truncate max-w-[260px]">
+                          {b.title}
+                        </div>
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2">
+                        {b.class_name || "-"}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2">
+                        {b.subject || "-"}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2">
+                        {b.publisher?.name || "-"}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 text-right">
+                        {formatAmount(b.mrp)}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 text-right">
+                        {formatAmount(b.selling_price)}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 text-center">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs ${
+                            b.is_active
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-slate-50 text-slate-500 border border-slate-200"
+                          }`}
+                        >
+                          {b.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2">
+                        <div className="flex items-center justify-center gap-2">
+                          {/* Edit icon */}
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(b)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
+                            aria-label="Edit book"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Delete icon */}
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(b.id)}
+                            disabled={deletingId === b.id}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
+                            aria-label="Delete book"
+                          >
+                            {deletingId === b.id ? (
+                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Combos data sources */}
+          <datalist id="publisherOptions">
+            {publishers.map((pub) => (
+              <option key={pub.id} value={pub.name} />
+            ))}
+          </datalist>
+
+          <datalist id="classOptions">
+            {classes.map((cls) => (
+              <option key={cls.id} value={cls.class_name} />
+            ))}
+          </datalist>
         </section>
       </main>
+
+      {/* ✅ Toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
 
       <style jsx>{`
         @keyframes blob {
