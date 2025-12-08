@@ -13,6 +13,7 @@ import {
   Eye,
   ChevronLeft,
   Sparkles,
+  FileText, // ✅ for PDF button
 } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -42,7 +43,6 @@ type SchoolOrderItem = {
 type SchoolOrder = {
   id: number;
   school_id: number;
-  // we also support backend sending `School`
   school?: School;
   School?: School;
   order_no: string;
@@ -50,14 +50,12 @@ type SchoolOrder = {
   order_date?: string | null;
   createdAt?: string;
   status: string;
-  // we also support backend sending `SchoolOrderItems`
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
 };
 
 /* ---------- Session Options ---------- */
 
-// 🔹 Session dropdown options: 2025-26 + next 5
 const SESSION_OPTIONS = (() => {
   const base = 2025; // 2025-26
   const arr: string[] = [];
@@ -71,19 +69,16 @@ const SESSION_OPTIONS = (() => {
 
 /* ---------- Helpers ---------- */
 
-// /api/schools can be array OR { data: [...] }
 const normalizeSchools = (payload: any): School[] => {
   if (Array.isArray(payload)) return payload as School[];
   if (payload && Array.isArray(payload.data)) return payload.data as School[];
   return [];
 };
 
-// handle `order.school` OR `order.School`
 const getOrderSchool = (order: SchoolOrder | any): School | undefined => {
   return (order && (order.school || order.School)) || undefined;
 };
 
-// handle `order.items` OR `order.SchoolOrderItems`
 const getOrderItems = (order: SchoolOrder | any): SchoolOrderItem[] => {
   if (!order) return [];
   if (Array.isArray(order.items)) return order.items as SchoolOrderItem[];
@@ -144,8 +139,6 @@ const statusChipClass = (status: string | undefined) => {
       return "bg-amber-50 text-amber-700 border border-amber-200";
     case "cancelled":
       return "bg-red-50 text-red-700 border border-red-200";
-    case "partial_received":
-      return "bg-amber-50 text-amber-700 border border-amber-200";
     case "sent":
       return "bg-blue-50 text-blue-700 border border-blue-200";
     case "draft":
@@ -170,11 +163,8 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [academicSession, setAcademicSession] = useState("2025-26");
   const [filterSession, setFilterSession] = useState("");
   const [filterSchoolId, setFilterSchoolId] = useState("");
-
-  // 🔍 Status filter
   const [filterStatus, setFilterStatus] = useState("");
 
-  // 🔍 For "View / Receive Order" modal
   const [viewOrder, setViewOrder] = useState<SchoolOrder | null>(null);
   const [isReceiving, setIsReceiving] = useState(false);
   const [savingReceive, setSavingReceive] = useState(false);
@@ -284,6 +274,28 @@ const SchoolOrdersPageClient: React.FC = () => {
       );
     } finally {
       setSendingOrderId(null);
+    }
+  };
+
+  // ✅ View / Download PDF
+  const handleViewPdf = async (order: SchoolOrder) => {
+    if (!order.id) return;
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await api.get(`/api/school-orders/${order.id}/pdf`, {
+        responseType: "blob",
+      });
+
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      console.error("Error downloading PDF:", err);
+      setError(
+        err?.response?.data?.message ||
+          "Failed to generate / download order PDF."
+      );
     }
   };
 
@@ -431,7 +443,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
-  // 🔢 Aggregate totals for visibleOrders (for cards)
   const aggregate = (() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
@@ -477,7 +488,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <Package className="w-5 h-5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-base sm:text-lg tracking-tight">
+            <span className="text-lg sm:text-xl tracking-tight">
               School Orders
             </span>
             <span className="text-xs text-slate-500 font-medium">
@@ -506,26 +517,9 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
       </header>
 
-      <main className="relative z-10 p-6 lg:p-8 space-y-8">
-        {/* Header + Generate */}
-        <section className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-                School-wise Orders
-              </h1>
-            </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Generate <span className="font-semibold">one order per school</span>{" "}
-              from confirmed requirements,{" "}
-              <span className="font-semibold">track received vs pending</span>, and
-              send <span className="font-semibold">order emails to schools</span>.
-            </p>
-          </div>
-
+      <main className="relative z-10 p-6 lg:p-8 space-y-6">
+        {/* Only Generate block (top description removed) */}
+        <section className="flex justify-end">
           <form
             onSubmit={handleGenerate}
             className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-5 py-4 flex flex-col sm:flex-row sm:items-end gap-4 min-w-[260px]"
@@ -661,53 +655,14 @@ const SchoolOrdersPageClient: React.FC = () => {
           </div>
         </section>
 
-        {/* Summary Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-slate-500">
-              Total Books Ordered (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-slate-900">
-              {orderedTotal}
-            </span>
-            <span className="mt-1 text-[11px] text-slate-400">
-              Across {visibleOrders.length} order(s)
-            </span>
-          </div>
-
-          <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-emerald-700">
-              Total Books Received (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-emerald-800">
-              {receivedTotal}
-            </span>
-            <span className="mt-1 text-[11px] text-emerald-600">
-              Updated from receive entries
-            </span>
-          </div>
-
-          <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-[11px] text-amber-700">
-              Pending to Receive (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-amber-800">
-              {pendingTotal}
-            </span>
-            <span className="mt-1 text-[11px] text-amber-600">
-              Ordered – Received (current filters)
-            </span>
-          </div>
-        </section>
-
         {/* Orders List */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/60 p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold flex items-center gap-2 text-slate-800">
+            <h2 className="text-base font-semibold flex items-center gap-2 text-slate-800">
               <BookOpen className="w-4 h-4 text-indigo-500" />
               <span>Existing School Orders</span>
             </h2>
-            <span className="text-[11px] text-slate-500">
+            <span className="text-xs text-slate-500">
               Total Orders: {visibleOrders.length}
             </span>
           </div>
@@ -723,7 +678,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             </div>
           ) : (
             <div className="overflow-auto max-h-[420px] rounded-xl border border-slate-200/80 shadow-inner">
-              <table className="w-full text-[11px] border-collapse bg-white">
+              <table className="w-full text-xs border-collapse bg-white">
                 <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-10">
                   <tr>
                     <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
@@ -791,7 +746,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                         </td>
                         <td className="border-b border-slate-200 px-3 py-2">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${statusChipClass(
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(
                               order.status
                             )}`}
                           >
@@ -803,7 +758,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleOpenView(order)}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
                             >
                               <Eye className="w-3 h-3" />
                               View / Receive
@@ -813,7 +768,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                               type="button"
                               onClick={() => handleSendEmail(order)}
                               disabled={isSending}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] border ${
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border ${
                                 isSent
                                   ? "border-blue-300 text-blue-700 bg-blue-50"
                                   : "border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
@@ -826,6 +781,16 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 ? "Resend Email"
                                 : "Send Email"}
                             </button>
+
+                            {/* PDF Button per order */}
+                            <button
+                              type="button"
+                              onClick={() => handleViewPdf(order)}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                            >
+                              <FileText className="w-3 h-3" />
+                              PDF
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -836,9 +801,48 @@ const SchoolOrdersPageClient: React.FC = () => {
             </div>
           )}
         </section>
+
+        {/* Summary Cards (below list) */}
+        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
+            <span className="text-xs text-slate-500">
+              Total Books Ordered (Qty)
+            </span>
+            <span className="mt-1 text-xl font-bold text-slate-900">
+              {orderedTotal}
+            </span>
+            <span className="mt-1 text-xs text-slate-400">
+              Across {visibleOrders.length} order(s)
+            </span>
+          </div>
+
+          <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
+            <span className="text-xs text-emerald-700">
+              Total Books Received (Qty)
+            </span>
+            <span className="mt-1 text-xl font-bold text-emerald-800">
+              {receivedTotal}
+            </span>
+            <span className="mt-1 text-xs text-emerald-600">
+              Updated from receive entries
+            </span>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
+            <span className="text-xs text-amber-700">
+              Pending to Receive (Qty)
+            </span>
+            <span className="mt-1 text-xl font-bold text-amber-800">
+              {pendingTotal}
+            </span>
+            <span className="mt-1 text-xs text-amber-600">
+              Ordered – Received (current filters)
+            </span>
+          </div>
+        </section>
       </main>
 
-      {/* 🔍 View / Receive Order Modal */}
+      {/* View / Receive Modal */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -854,7 +858,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                         <Package className="w-4 h-4 text-indigo-500" />
                         <span>Order Details – {viewOrder.order_no}</span>
                       </h3>
-                      <p className="text-[11px] text-slate-500 mt-1">
+                      <p className="text-xs text-slate-500 mt-1">
                         School:{" "}
                         <span className="font-medium">
                           {school?.name || "-"}
@@ -871,25 +875,38 @@ const SchoolOrdersPageClient: React.FC = () => {
                           )}
                         </span>
                       </p>
-                      <p className="text-[11px] text-slate-500 mt-1">
+                      <p className="text-xs text-slate-500 mt-1">
                         Status:{" "}
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${statusChipClass(
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(
                             viewOrder.status
                           )}`}
                         >
                           {statusLabel(viewOrder.status)}
                         </span>
                       </p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Items:{" "}
+                        <span className="font-semibold">{items.length}</span>
+                      </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* PDF from modal */}
+                      <button
+                        onClick={() => handleViewPdf(viewOrder)}
+                        className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
+                      >
+                        <FileText className="w-3 h-3" />
+                        PDF
+                      </button>
+
                       {viewOrder.status !== "cancelled" && (
                         <>
                           {!isReceiving && (
                             <button
                               onClick={startReceiving}
-                              className="text-[10px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              className="text-[11px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
                             >
                               Receive Books
                             </button>
@@ -899,14 +916,14 @@ const SchoolOrdersPageClient: React.FC = () => {
                               <button
                                 onClick={handleReceiveSave}
                                 disabled={savingReceive}
-                                className="text-[10px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
+                                className="text-[11px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
                               >
                                 {savingReceive ? "Saving..." : "Save Receive"}
                               </button>
                               <button
                                 onClick={() => setIsReceiving(false)}
                                 disabled={savingReceive}
-                                className="text-[10px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
+                                className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
                               >
                                 Cancel Edit
                               </button>
@@ -916,7 +933,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <button
                               onClick={handleCancelOrder}
                               disabled={savingReceive}
-                              className="text-[10px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                              className="text-[11px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
                             >
                               Mark as Cancelled
                             </button>
@@ -929,20 +946,18 @@ const SchoolOrdersPageClient: React.FC = () => {
                           setViewOrder(null);
                           setIsReceiving(false);
                         }}
-                        className="text-[10px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
+                        className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
                       >
                         Close
                       </button>
                     </div>
-
-                    {/* small summary on right if needed later */}
                   </>
                 );
               })()}
             </div>
 
             {/* Modal body */}
-            <div className="p-4 overflow-auto text-[11px]">
+            <div className="p-4 overflow-auto text-xs">
               {(() => {
                 const items = getOrderItems(viewOrder);
                 if (!items || items.length === 0) {
@@ -955,7 +970,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                 return (
                   <>
-                    <div className="mb-3 text-[11px] text-slate-600 flex flex-wrap gap-3 justify-between">
+                    <div className="mb-3 text-xs text-slate-600 flex flex-wrap gap-3 justify-between">
                       <span>
                         Total Books:{" "}
                         <span className="font-semibold">{items.length}</span>
@@ -975,7 +990,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                     </div>
 
                     <div className="border border-slate-200 rounded-xl overflow-hidden">
-                      <table className="w-full text-[11px] border-collapse">
+                      <table className="w-full text-xs border-collapse">
                         <thead className="bg-slate-100">
                           <tr>
                             <th className="border-b border-slate-200 px-2 py-1 text-left w-10">
@@ -1024,10 +1039,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                             const pendingWhenNotEditing =
                               item.pending_qty != null
-                                ? Math.max(
-                                    Number(item.pending_qty) || 0,
-                                    0
-                                  )
+                                ? Math.max(Number(item.pending_qty) || 0, 0)
                                 : Math.max(ordered - backendReceived, 0);
 
                             const pending = isReceiving
