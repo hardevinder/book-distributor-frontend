@@ -13,10 +13,22 @@ import {
   Eye,
   ChevronLeft,
   Sparkles,
-  FileText, // ✅ for PDF button
+  FileText,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
+
+type PublisherLite = {
+  id: number;
+  name: string;
+};
+
+type TransportLite = {
+  id: number;
+  name: string;
+  city?: string | null;
+  phone?: string | null;
+};
 
 type School = {
   id: number;
@@ -37,6 +49,8 @@ type SchoolOrderItem = {
     subject?: string | null;
     code?: string | null;
     isbn?: string | null;
+    publisher_id?: number | null;
+    publisher?: PublisherLite | null;
   };
 };
 
@@ -52,6 +66,12 @@ type SchoolOrder = {
   status: string;
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
+
+  // 🔹 transport + extra fields
+  transport_id?: number | null;
+  transport_through?: string | null;
+  notes?: string | null;
+  transport?: TransportLite | null;
 };
 
 /* ---------- Session Options ---------- */
@@ -72,6 +92,13 @@ const SESSION_OPTIONS = (() => {
 const normalizeSchools = (payload: any): School[] => {
   if (Array.isArray(payload)) return payload as School[];
   if (payload && Array.isArray(payload.data)) return payload.data as School[];
+  return [];
+};
+
+const normalizeTransports = (payload: any): TransportLite[] => {
+  if (Array.isArray(payload)) return payload as TransportLite[];
+  if (payload && Array.isArray(payload.data))
+    return payload.data as TransportLite[];
   return [];
 };
 
@@ -147,11 +174,14 @@ const statusChipClass = (status: string | undefined) => {
   }
 };
 
+/* ---------- Component ---------- */
+
 const SchoolOrdersPageClient: React.FC = () => {
   const { user, logout } = useAuth();
 
   const [orders, setOrders] = useState<SchoolOrder[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
+  const [transports, setTransports] = useState<TransportLite[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -170,6 +200,12 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [savingReceive, setSavingReceive] = useState(false);
   const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
 
+  // 🔹 new meta-edit state
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [metaTransportId, setMetaTransportId] = useState<string>("");
+  const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
+  const [metaNotes, setMetaNotes] = useState<string>("");
+
   /* ---------- Data fetching ---------- */
 
   const fetchSchools = async () => {
@@ -179,6 +215,16 @@ const SchoolOrdersPageClient: React.FC = () => {
       setSchools(list);
     } catch (err) {
       console.error("Error loading schools:", err);
+    }
+  };
+
+  const fetchTransports = async () => {
+    try {
+      const res = await api.get("/api/transports");
+      const list = normalizeTransports(res.data);
+      setTransports(list);
+    } catch (err) {
+      console.error("Error loading transports:", err);
     }
   };
 
@@ -209,6 +255,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   useEffect(() => {
     fetchSchools();
+    fetchTransports();
     fetchOrders();
   }, []);
 
@@ -277,29 +324,62 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ View / Download PDF
-  const handleViewPdf = async (order: SchoolOrder) => {
+  // ✅ View / Download PDF (full OR publisher-wise)
+  const handleViewPdf = async (order: SchoolOrder, publisherId?: number) => {
     if (!order.id) return;
     setError(null);
     setInfo(null);
+
     try {
-      const res = await api.get(`/api/school-orders/${order.id}/pdf`, {
+      const path = publisherId
+        ? `/api/school-orders/${order.id}/pdf?publisher_id=${publisherId}`
+        : `/api/school-orders/${order.id}/pdf`;
+
+      const res = await api.get(path, {
         responseType: "blob",
       });
 
+      const contentType = res.headers?.["content-type"] || "";
+      if (!contentType.includes("application/pdf")) {
+        try {
+          const blob = res.data as Blob;
+          const text = await blob.text();
+          throw new Error(text || "Server did not return a PDF file.");
+        } catch {
+          throw new Error("Server did not return a PDF file.");
+        }
+      }
+
       const blob = new Blob([res.data], { type: "application/pdf" });
-      const url = window.URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const pdfUrl = window.URL.createObjectURL(blob);
+      window.open(pdfUrl, "_blank", "noopener,noreferrer");
     } catch (err: any) {
       console.error("Error downloading PDF:", err);
-      setError(
+
+      let msg =
         err?.response?.data?.message ||
-          "Failed to generate / download order PDF."
-      );
+        err?.message ||
+        "Failed to generate / download order PDF.";
+
+      try {
+        if (err?.response?.data instanceof Blob) {
+          const text = await (err.response.data as Blob).text();
+          if (text && text.startsWith("{")) {
+            const parsed = JSON.parse(text);
+            msg = parsed.message || msg;
+          } else if (text) {
+            msg = text;
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      setError(msg);
     }
   };
 
-  // 🔍 Open modal & prepare receive form
+  // 🔍 Open modal & prepare receive + meta form
   const handleOpenView = (order: SchoolOrder) => {
     setViewOrder(order);
     setIsReceiving(false);
@@ -311,6 +391,11 @@ const SchoolOrdersPageClient: React.FC = () => {
       initial[it.id] = String(it.received_qty ?? 0);
     });
     setReceiveForm(initial);
+
+    // pre-fill meta form
+    setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
+    setMetaTransportThrough(order.transport_through || "");
+    setMetaNotes(order.notes || "");
   };
 
   const startReceiving = () => {
@@ -366,6 +451,13 @@ const SchoolOrdersPageClient: React.FC = () => {
       setViewOrder(updatedOrder);
       setIsReceiving(false);
 
+      // also align meta form with updated order (if backend changed anything)
+      setMetaTransportId(
+        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
+      );
+      setMetaTransportThrough(updatedOrder.transport_through || "");
+      setMetaNotes(updatedOrder.notes || "");
+
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
@@ -404,6 +496,14 @@ const SchoolOrdersPageClient: React.FC = () => {
       const updatedOrder: SchoolOrder = res.data.order;
       setViewOrder(updatedOrder);
       setIsReceiving(false);
+
+      // keep meta fields in sync
+      setMetaTransportId(
+        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
+      );
+      setMetaTransportThrough(updatedOrder.transport_through || "");
+      setMetaNotes(updatedOrder.notes || "");
+
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
@@ -412,6 +512,55 @@ const SchoolOrdersPageClient: React.FC = () => {
       );
     } finally {
       setSavingReceive(false);
+    }
+  };
+
+  // 🔹 Save Transport + Notes
+  const handleMetaSave = async () => {
+    if (!viewOrder) return;
+    setError(null);
+    setInfo(null);
+    setMetaSaving(true);
+
+    try {
+      const payload = {
+        transport_id: metaTransportId ? Number(metaTransportId) : null,
+        transport_through:
+          metaTransportThrough.trim() !== ""
+            ? metaTransportThrough.trim()
+            : null,
+        notes: metaNotes.trim() !== "" ? metaNotes.trim() : null,
+      };
+
+      const res = await api.patch(
+        `/api/school-orders/${viewOrder.id}/meta`,
+        payload
+      );
+
+      const updatedOrder: SchoolOrder = res.data.order;
+
+      setViewOrder(updatedOrder);
+      setOrders((prev) =>
+        prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o))
+      );
+
+      setMetaTransportId(
+        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
+      );
+      setMetaTransportThrough(updatedOrder.transport_through || "");
+      setMetaNotes(updatedOrder.notes || "");
+
+      setInfo(
+        res.data?.message || "Order transport & notes updated successfully."
+      );
+    } catch (err: any) {
+      console.error(err);
+      setError(
+        err?.response?.data?.message ||
+          "Failed to update transport / notes for this order."
+      );
+    } finally {
+      setMetaSaving(false);
     }
   };
 
@@ -484,15 +633,16 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
 
         <div className="font-bold flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg animate-pulse">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
             <Package className="w-5 h-5" />
           </div>
           <div className="flex flex-col">
-            <span className="text-lg sm:text-xl tracking-tight">
-              School Orders
+            <span className="text-lg sm:text-xl tracking-tight flex items-center gap-1">
+              <Sparkles className="w-4 h-4 text-indigo-500" />
+              <span>School Orders</span>
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Generate, Email & Receive School-wise
+              Generate, Email, Receive & Track – School-wise
             </span>
           </div>
         </div>
@@ -503,14 +653,14 @@ const SchoolOrdersPageClient: React.FC = () => {
               {user?.name || "User"}
             </span>
             {user?.role && (
-              <span className="text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
+              <span className="mt-0.5 text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
                 {user.role}
               </span>
             )}
           </div>
           <button
             onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
+            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200"
           >
             Logout
           </button>
@@ -518,7 +668,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       </header>
 
       <main className="relative z-10 p-6 lg:p-8 space-y-6">
-        {/* Only Generate block (top description removed) */}
+        {/* Generate Block */}
         <section className="flex justify-end">
           <form
             onSubmit={handleGenerate}
@@ -539,6 +689,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Generates school-wise orders from confirmed requirements.
+              </p>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
@@ -653,11 +806,31 @@ const SchoolOrdersPageClient: React.FC = () => {
               <option value="cancelled">Cancelled</option>
             </select>
           </div>
+
+          {/* Small legend */}
+          <div className="ml-auto flex flex-wrap gap-2 text-[10px] text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-blue-300" />
+              Sent
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-300" />
+              Partial
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-300" />
+              Completed
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-rose-300" />
+              Cancelled
+            </span>
+          </div>
         </section>
 
         {/* Orders List */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/60 p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
             <h2 className="text-base font-semibold flex items-center gap-2 text-slate-800">
               <BookOpen className="w-4 h-4 text-indigo-500" />
               <span>Existing School Orders</span>
@@ -782,14 +955,14 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 : "Send Email"}
                             </button>
 
-                            {/* PDF Button per order */}
+                            {/* PDF Button per order (all publishers) */}
                             <button
                               type="button"
                               onClick={() => handleViewPdf(order)}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
                             >
                               <FileText className="w-3 h-3" />
-                              PDF
+                              PDF (All)
                             </button>
                           </div>
                         </td>
@@ -802,7 +975,7 @@ const SchoolOrdersPageClient: React.FC = () => {
           )}
         </section>
 
-        {/* Summary Cards (below list) */}
+        {/* Summary Cards */}
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
             <span className="text-xs text-slate-500">
@@ -847,18 +1020,39 @@ const SchoolOrdersPageClient: React.FC = () => {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
             {/* Modal header */}
-            <div className="px-5 py-4 border-b flex items-center justify-between bg-gradient-to-r from-indigo-50 to-slate-50">
+            <div className="px-5 py-4 border-b flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 bg-gradient-to-r from-indigo-50 to-slate-50">
               {(() => {
                 const school = getOrderSchool(viewOrder);
                 const items = getOrderItems(viewOrder);
+
+                // 🔹 Build unique publisher list for this order
+                const publishersMap = new Map<number, PublisherLite>();
+                items.forEach((it) => {
+                  const p = it.book?.publisher;
+                  const pid =
+                    p?.id ??
+                    (it.book?.publisher_id
+                      ? Number(it.book.publisher_id)
+                      : undefined);
+                  if (!pid) return;
+                  const name = p?.name || `Publisher #${pid}`;
+                  if (!publishersMap.has(pid)) {
+                    publishersMap.set(pid, { id: pid, name });
+                  }
+                });
+                const publishers = Array.from(publishersMap.values());
+
+                const transport = viewOrder.transport;
+
                 return (
                   <>
-                    <div>
+                    {/* LEFT: Order + transport summary */}
+                    <div className="space-y-1 flex-1">
                       <h3 className="text-sm sm:text-base font-semibold text-slate-900 flex items-center gap-2">
                         <Package className="w-4 h-4 text-indigo-500" />
                         <span>Order Details – {viewOrder.order_no}</span>
                       </h3>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-slate-500">
                         School:{" "}
                         <span className="font-medium">
                           {school?.name || "-"}
@@ -875,7 +1069,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                           )}
                         </span>
                       </p>
-                      <p className="text-xs text-slate-500 mt-1">
+                      <p className="text-xs text-slate-500">
                         Status:{" "}
                         <span
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(
@@ -885,71 +1079,213 @@ const SchoolOrdersPageClient: React.FC = () => {
                           {statusLabel(viewOrder.status)}
                         </span>
                       </p>
-                      <p className="text-[11px] text-slate-400 mt-1">
+                      <p className="text-[11px] text-slate-400">
                         Items:{" "}
-                        <span className="font-semibold">{items.length}</span>
+                        <span className="font-semibold">
+                          {items.length}
+                        </span>
                       </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {/* PDF from modal */}
-                      <button
-                        onClick={() => handleViewPdf(viewOrder)}
-                        className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
-                      >
-                        <FileText className="w-3 h-3" />
-                        PDF
-                      </button>
-
-                      {viewOrder.status !== "cancelled" && (
-                        <>
-                          {!isReceiving && (
-                            <button
-                              onClick={startReceiving}
-                              className="text-[11px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            >
-                              Receive Books
-                            </button>
-                          )}
-                          {isReceiving && (
-                            <>
-                              <button
-                                onClick={handleReceiveSave}
-                                disabled={savingReceive}
-                                className="text-[11px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
-                              >
-                                {savingReceive ? "Saving..." : "Save Receive"}
-                              </button>
-                              <button
-                                onClick={() => setIsReceiving(false)}
-                                disabled={savingReceive}
-                                className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
-                              >
-                                Cancel Edit
-                              </button>
-                            </>
-                          )}
-                          {!isReceiving && (
-                            <button
-                              onClick={handleCancelOrder}
-                              disabled={savingReceive}
-                              className="text-[11px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
-                            >
-                              Mark as Cancelled
-                            </button>
-                          )}
-                        </>
+                      {publishers.length > 0 && (
+                        <p className="text-[11px] text-slate-400">
+                          Publishers in this order:{" "}
+                          <span className="font-medium">
+                            {publishers.map((p) => p.name).join(", ")}
+                          </span>
+                        </p>
                       )}
 
-                      <button
-                        onClick={() => {
-                          setViewOrder(null);
-                          setIsReceiving(false);
-                        }}
-                        className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
-                      >
-                        Close
-                      </button>
+                      {/* 🔹 Current Transport & Notes summary */}
+                      {(viewOrder.transport_through ||
+                        viewOrder.notes ||
+                        transport) && (
+                        <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-slate-500">
+                          {(transport || viewOrder.transport_through) && (
+                            <div>
+                              <span className="font-medium text-slate-600">
+                                Transport:
+                              </span>
+                              <div className="mt-0.5">
+                                {transport?.name ? (
+                                  <>
+                                    <span className="font-semibold text-slate-800">
+                                      {transport.name}
+                                    </span>
+                                    {transport.city && (
+                                      <span className="text-slate-500">
+                                        {" "}
+                                        ({transport.city})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="font-semibold text-slate-800">
+                                    {viewOrder.transport_through || "-"}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {viewOrder.notes && (
+                            <div>
+                              <span className="font-medium text-slate-600">
+                                Notes:
+                              </span>
+                              <div className="mt-0.5 text-slate-700 whitespace-pre-wrap">
+                                {viewOrder.notes}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* RIGHT: PDF + meta form + actions */}
+                    <div className="flex flex-col items-end gap-2 lg:w-[260px]">
+                      {/* PDF buttons */}
+                      <div className="flex flex-wrap gap-1 justify-end w-full">
+                        <button
+                          onClick={() => handleViewPdf(viewOrder)}
+                          className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
+                        >
+                          <FileText className="w-3 h-3" />
+                          PDF (All)
+                        </button>
+                        {publishers.map((p) => (
+                          <button
+                            key={p.id}
+                            onClick={() => handleViewPdf(viewOrder, p.id)}
+                            className="text-[11px] px-3 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
+                          >
+                            <FileText className="w-3 h-3" />
+                            {p.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 🔹 NEW: Transport & Notes editor */}
+                      <div className="w-full mt-1 p-2 border border-slate-200 rounded-xl bg-white/90 shadow-sm flex flex-col gap-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-slate-700">
+                            Transport & Notes
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleMetaSave}
+                            disabled={metaSaving}
+                            className="text-[10px] px-2 py-1 rounded-full bg-slate-900 text-white disabled:opacity-60"
+                          >
+                            {metaSaving ? "Saving..." : "Save"}
+                          </button>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] text-slate-500">
+                            Through (Transport)
+                          </label>
+                          <select
+                            value={metaTransportId}
+                            onChange={(e) =>
+                              setMetaTransportId(e.target.value)
+                            }
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                          >
+                            <option value="">-- Select Transport --</option>
+                            {transports.map((t) => (
+                              <option key={t.id} value={String(t.id)}>
+                                {t.name}
+                                {t.city ? ` (${t.city})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-slate-400">
+                            Or enter manual text below.
+                          </p>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] text-slate-500">
+                            Through (Manual Text)
+                          </label>
+                          <input
+                            type="text"
+                            value={metaTransportThrough}
+                            onChange={(e) =>
+                              setMetaTransportThrough(e.target.value)
+                            }
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                            placeholder="e.g., By Bus, By Hand, DTDC, etc."
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] text-slate-500">
+                            Notes
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={metaNotes}
+                            onChange={(e) => setMetaNotes(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] resize-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                            placeholder="Optional dispatch / packing notes..."
+                          />
+                        </div>
+                      </div>
+
+                      {/* Receive / Cancel buttons */}
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        {viewOrder.status !== "cancelled" && (
+                          <>
+                            {!isReceiving && (
+                              <button
+                                onClick={startReceiving}
+                                className="text-[11px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              >
+                                Receive Books
+                              </button>
+                            )}
+                            {isReceiving && (
+                              <>
+                                <button
+                                  onClick={handleReceiveSave}
+                                  disabled={savingReceive}
+                                  className="text-[11px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
+                                >
+                                  {savingReceive
+                                    ? "Saving..."
+                                    : "Save Receive"}
+                                </button>
+                                <button
+                                  onClick={() => setIsReceiving(false)}
+                                  disabled={savingReceive}
+                                  className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
+                                >
+                                  Cancel Edit
+                                </button>
+                              </>
+                            )}
+                            {!isReceiving && (
+                              <button
+                                onClick={handleCancelOrder}
+                                disabled={savingReceive}
+                                className="text-[11px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                              >
+                                Mark as Cancelled
+                              </button>
+                            )}
+                          </>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            setViewOrder(null);
+                            setIsReceiving(false);
+                          }}
+                          className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
+                        >
+                          Close
+                        </button>
+                      </div>
                     </div>
                   </>
                 );
@@ -957,9 +1293,11 @@ const SchoolOrdersPageClient: React.FC = () => {
             </div>
 
             {/* Modal body */}
-            <div className="p-4 overflow-auto text-xs">
+            <div className="p-4 overflow-auto text-xs flex-1">
               {(() => {
                 const items = getOrderItems(viewOrder);
+                const school = getOrderSchool(viewOrder);
+
                 if (!items || items.length === 0) {
                   return (
                     <div className="text-slate-500 py-6">
@@ -993,8 +1331,11 @@ const SchoolOrdersPageClient: React.FC = () => {
                       <table className="w-full text-xs border-collapse">
                         <thead className="bg-slate-100">
                           <tr>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left w-10">
-                              #
+                            <th className="border-b border-slate-200 px-2 py-1 text-left w-32">
+                              School
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1 text-left w-32">
+                              Publisher
                             </th>
                             <th className="border-b border-slate-200 px-2 py-1 text-left">
                               Book
@@ -1020,80 +1361,172 @@ const SchoolOrdersPageClient: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {items.map((item, idx) => {
-                            const ordered = Number(item.total_order_qty) || 0;
-                            const rawVal =
-                              receiveForm[item.id] ??
-                              String(item.received_qty ?? 0);
-                            const numericReceived =
-                              Number(rawVal) >= 0 ? Number(rawVal) : 0;
-                            const effectiveReceived = isNaN(numericReceived)
-                              ? 0
-                              : Math.min(numericReceived, ordered);
-                            const backendReceived =
-                              Number(item.received_qty ?? 0) || 0;
+                          {(() => {
+                            type PublisherGroup = {
+                              key: string;
+                              publisherName: string;
+                              items: SchoolOrderItem[];
+                            };
 
-                            const displayReceived = isReceiving
-                              ? effectiveReceived
-                              : backendReceived;
+                            const groupsMap = new Map<string, PublisherGroup>();
 
-                            const pendingWhenNotEditing =
-                              item.pending_qty != null
-                                ? Math.max(Number(item.pending_qty) || 0, 0)
-                                : Math.max(ordered - backendReceived, 0);
+                            items.forEach((item) => {
+                              const p = item.book?.publisher;
+                              const pid =
+                                p?.id ??
+                                (item.book?.publisher_id
+                                  ? Number(item.book.publisher_id)
+                                  : 0);
+                              const key = pid ? String(pid) : "no_publisher";
+                              const publisherName =
+                                p?.name ||
+                                (pid
+                                  ? `Publisher #${pid}`
+                                  : "No Publisher / Misc");
 
-                            const pending = isReceiving
-                              ? Math.max(ordered - effectiveReceived, 0)
-                              : pendingWhenNotEditing;
+                              if (!groupsMap.has(key)) {
+                                groupsMap.set(key, {
+                                  key,
+                                  publisherName,
+                                  items: [item],
+                                });
+                              } else {
+                                groupsMap.get(key)!.items.push(item);
+                              }
+                            });
 
-                            return (
-                              <tr
-                                key={item.id}
-                                className="hover:bg-slate-50 transition-colors"
-                              >
-                                <td className="border-b border-slate-200 px-2 py-1">
-                                  {idx + 1}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1">
-                                  {item.book?.title || `Book #${item.book_id}`}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1">
-                                  {item.book?.class_name || "-"}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1">
-                                  {item.book?.subject || "-"}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1">
-                                  {item.book?.code || item.book?.isbn || "-"}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                  {ordered}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                  {isReceiving ? (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      max={ordered}
-                                      value={rawVal}
-                                      onChange={(e) =>
-                                        handleReceiveChange(
-                                          item.id,
-                                          e.target.value
-                                        )
-                                      }
-                                      className="w-20 border border-slate-300 rounded-lg px-1 py-0.5 text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                                    />
-                                  ) : (
-                                    displayReceived
-                                  )}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                  {pending}
-                                </td>
-                              </tr>
+                            const groups = Array.from(groupsMap.values());
+
+                            const totalRows = groups.reduce(
+                              (sum, g) => sum + g.items.length,
+                              0
                             );
-                          })}
+
+                            let schoolCellRendered = false;
+
+                            return groups.map((group) => (
+                              <React.Fragment key={group.key}>
+                                {group.items.map((item, idxInGroup) => {
+                                  const ordered =
+                                    Number(item.total_order_qty) || 0;
+                                  const rawVal =
+                                    receiveForm[item.id] ??
+                                    String(item.received_qty ?? 0);
+                                  const numericReceived =
+                                    Number(rawVal) >= 0
+                                      ? Number(rawVal)
+                                      : 0;
+                                  const effectiveReceived = isNaN(
+                                    numericReceived
+                                  )
+                                    ? 0
+                                    : Math.min(numericReceived, ordered);
+                                  const backendReceived =
+                                    Number(item.received_qty ?? 0) || 0;
+
+                                  const displayReceived = isReceiving
+                                    ? effectiveReceived
+                                    : backendReceived;
+
+                                  const pendingWhenNotEditing =
+                                    item.pending_qty != null
+                                      ? Math.max(
+                                          Number(item.pending_qty) || 0,
+                                          0
+                                        )
+                                      : Math.max(
+                                          ordered - backendReceived,
+                                          0
+                                        );
+
+                                  const pending = isReceiving
+                                    ? Math.max(
+                                        ordered - effectiveReceived,
+                                        0
+                                      )
+                                    : pendingWhenNotEditing;
+
+                                  const showSchoolCell = !schoolCellRendered;
+                                  const showPublisherCell = idxInGroup === 0;
+
+                                  if (showSchoolCell) {
+                                    schoolCellRendered = true;
+                                  }
+
+                                  return (
+                                    <tr
+                                      key={item.id}
+                                      className="hover:bg-slate-50 transition-colors"
+                                    >
+                                      {showSchoolCell && (
+                                        <td
+                                          rowSpan={totalRows}
+                                          className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-semibold text-slate-800"
+                                        >
+                                          {school?.name || "-"}
+                                          {school?.city && (
+                                            <span className="block text-[10px] text-slate-500">
+                                              {school.city}
+                                            </span>
+                                          )}
+                                        </td>
+                                      )}
+
+                                      {showPublisherCell && (
+                                        <td
+                                          rowSpan={group.items.length}
+                                          className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-medium text-indigo-700"
+                                        >
+                                          {group.publisherName}
+                                        </td>
+                                      )}
+
+                                      <td className="border-b border-slate-200 px-2 py-1">
+                                        {item.book?.title ||
+                                          `Book #${item.book_id}`}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1">
+                                        {item.book?.class_name || "-"}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1">
+                                        {item.book?.subject || "-"}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1">
+                                        {item.book?.code ||
+                                          item.book?.isbn ||
+                                          "-"}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                        {ordered}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                        {isReceiving ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={ordered}
+                                            value={rawVal}
+                                            onChange={(e) =>
+                                              handleReceiveChange(
+                                                item.id,
+                                                e.target.value
+                                              )
+                                            }
+                                            className="w-20 border border-slate-300 rounded-lg px-1 py-0.5 text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                          />
+                                        ) : (
+                                          displayReceived
+                                        )}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                        {pending}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </React.Fragment>
+                            ));
+                          })()}
                         </tbody>
                       </table>
                     </div>

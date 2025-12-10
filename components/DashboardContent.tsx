@@ -12,6 +12,7 @@ import {
   Layers,
   ChevronRight,
   Sparkles,
+  Truck,
 } from "lucide-react";
 
 const DashboardContent: React.FC = () => {
@@ -84,8 +85,8 @@ const DashboardContent: React.FC = () => {
             </span>
           </div>
           <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-            Dive into the heart of book distribution. Seamlessly manage
-            publishers, curate catalogs, fulfill school needs, and keep your
+            Dive into the heart of book distribution. Configure your company
+            header, manage masters, fulfill school needs, and keep your
             inventory in perfect sync—all in one intuitive hub.
           </p>
         </section>
@@ -93,6 +94,35 @@ const DashboardContent: React.FC = () => {
         {/* GRID OF MODULE CARDS */}
         <section>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Company Profile */}
+            <Link
+              href="/company-profile"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-teal-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <Building2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Company Profile
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Maintain your own company name, address, GST & logo. This
+                    header will print on purchase orders, invoices and other
+                    PDFs.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-emerald-700 font-medium">
+                  Configure Header
+                </span>
+                <ChevronRight className="w-4 h-4 text-emerald-600 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
             {/* Publishers */}
             <Link
               href="/publishers"
@@ -118,6 +148,34 @@ const DashboardContent: React.FC = () => {
                   Explore Now
                 </span>
                 <ChevronRight className="w-4 h-4 text-indigo-500 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            {/* Transports */}
+            <Link
+              href="/transports"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-sky-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-sky-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <Truck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Transports
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Maintain your transporter / courier master. Use it on
+                    purchase orders and delivery notes for smooth dispatches.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-cyan-600 font-medium">
+                  Configure
+                </span>
+                <ChevronRight className="w-4 h-4 text-cyan-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
 
@@ -274,7 +332,9 @@ const DashboardContent: React.FC = () => {
                 </div>
               </div>
               <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-sky-600 font-medium">Dispatch</span>
+                <span className="text-xs text-sky-600 font-medium">
+                  Dispatch
+                </span>
                 <ChevronRight className="w-4 h-4 text-sky-500 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>

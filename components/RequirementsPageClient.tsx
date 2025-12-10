@@ -272,8 +272,12 @@ const RequirementsPageClient: React.FC = () => {
   // When school filter changes and we are NOT editing, auto-fill school in form and clear pending list
   useEffect(() => {
     if (editingId) return;
+    if (!schools || !schools.length) return;
+
     if (filterSchoolId) {
-      const s = schools.find((sch) => String(sch.id) === filterSchoolId);
+      const s = schools.find(
+        (sch) => String(sch.id) === String(filterSchoolId)
+      );
       setForm((prev) => ({
         ...prev,
         school_name: s?.name || "",
@@ -936,10 +940,10 @@ const RequirementsPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* Form content wrapper: inputs left, pending right on lg+ */}
+            {/* Form content wrapper: inputs left (less), pending right (more) on lg+ */}
             <div className="flex flex-col lg:flex-row gap-4">
-              {/* Inputs panel */}
-              <div className="w-full lg:w-2/3 space-y-3 text-[11px] sm:text-xs">
+              {/* Inputs panel – narrower on large screens */}
+              <div className="w-full lg:w-5/12 space-y-3 text-[11px] sm:text-xs">
                 {/* School */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">
@@ -1130,9 +1134,9 @@ const RequirementsPageClient: React.FC = () => {
                 </div>
               </div>
 
-              {/* Pending panel (right side on lg+, only in add mode with items) */}
+              {/* Pending panel – wider on large screens */}
               {showPendingPanel && (
-                <div className="w-full lg:w-1/3">
+                <div className="w-full lg:w-7/12">
                   <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -1172,25 +1176,25 @@ const RequirementsPageClient: React.FC = () => {
                             <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[60px]">
                               Class
                             </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[100px]">
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">
                               Book
                             </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[80px]">
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
                               Pub
                             </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
                               Sess
                             </th>
-                            <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[40px]">
+                            <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[50px]">
                               Copies
                             </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
                               Status
                             </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">
                               Lock
                             </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[30px]">
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">
                               Del
                             </th>
                           </tr>
@@ -1202,12 +1206,12 @@ const RequirementsPageClient: React.FC = () => {
                                 {item.class_name || "-"}
                               </td>
                               <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="font-semibold truncate inline-block max-w-[100px]">
+                                <span className="font-semibold truncate inline-block max-w-[140px]">
                                   {item.book_title}
                                 </span>
                               </td>
                               <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="truncate inline-block max-w-[80px] text-slate-700">
+                                <span className="truncate inline-block max-w-[100px] text-slate-700">
                                   {item.publisher_name || "-"}
                                 </span>
                               </td>
