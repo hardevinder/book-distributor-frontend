@@ -174,6 +174,9 @@ const statusChipClass = (status: string | undefined) => {
   }
 };
 
+const makePublisherKey = (orderId: number, publisherId: number) =>
+  `${orderId}:${publisherId}`;
+
 /* ---------- Component ---------- */
 
 const SchoolOrdersPageClient: React.FC = () => {
@@ -200,11 +203,19 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [savingReceive, setSavingReceive] = useState(false);
   const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
 
-  // 🔹 new meta-edit state
+  // 🔹 order meta (full order – transport + notes)
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaTransportId, setMetaTransportId] = useState<string>("");
   const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
   const [metaNotes, setMetaNotes] = useState<string>("");
+
+  // 🔹 publisher-wise editable order no
+  const [publisherOrderNos, setPublisherOrderNos] = useState<
+    Record<string, string>
+  >({});
+  const [savingPublisherMetaKey, setSavingPublisherMetaKey] = useState<
+    string | null
+  >(null);
 
   /* ---------- Data fetching ---------- */
 
@@ -294,7 +305,8 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  const handleSendEmail = async (order: SchoolOrder) => {
+  // 🔹 Send email – full order OR publisher-wise
+  const handleSendEmail = async (order: SchoolOrder, publisherId?: number) => {
     if (!order.id) {
       setError("Order ID is missing for this order.");
       return;
@@ -305,11 +317,17 @@ const SchoolOrdersPageClient: React.FC = () => {
     setSendingOrderId(order.id);
 
     try {
-      const res = await api.post(`/api/school-orders/${order.id}/send-email`);
+      const path = publisherId
+        ? `/api/school-orders/${order.id}/send-email?publisher_id=${publisherId}`
+        : `/api/school-orders/${order.id}/send-email`;
+
+      const res = await api.post(path);
 
       setInfo(
         res?.data?.message ||
-          `Email sent successfully to school (Order: ${order.order_no}).`
+          (publisherId
+            ? `Email sent successfully for this publisher (Order: ${order.order_no}).`
+            : `Email sent successfully to school (Order: ${order.order_no}).`)
       );
 
       await fetchOrders();
@@ -515,7 +533,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // 🔹 Save Transport + Notes
+  // 🔹 Save Transport + Notes (full order)
   const handleMetaSave = async () => {
     if (!viewOrder) return;
     setError(null);
@@ -564,6 +582,51 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
+  // 🔹 Save publisher-wise order no
+  const handleSavePublisherOrderNo = async (
+    order: SchoolOrder,
+    publisher: PublisherLite
+  ) => {
+    const key = makePublisherKey(order.id, publisher.id);
+    const orderNo = (publisherOrderNos[key] ?? order.order_no ?? "").trim();
+
+    if (!orderNo) {
+      setError("Order number cannot be empty.");
+      return;
+    }
+
+    setError(null);
+    setInfo(null);
+    setSavingPublisherMetaKey(key);
+
+    try {
+      // EXPECTED BACKEND: update / create publisher-wise meta
+      const res = await api.patch(
+        `/api/school-orders/${order.id}/publisher-meta`,
+        {
+          publisher_id: publisher.id,
+          order_no: orderNo,
+        }
+      );
+
+      setInfo(
+        res?.data?.message ||
+          `Order number updated for ${publisher.name} (School Order: ${order.order_no}).`
+      );
+
+      // Optionally refresh orders if backend returns updated data
+      await fetchOrders();
+    } catch (err: any) {
+      console.error(err);
+      setError(
+        err?.response?.data?.message ||
+          "Failed to update publisher-wise order number."
+      );
+    } finally {
+      setSavingPublisherMetaKey(null);
+    }
+  };
+
   /* ---------- Filters ---------- */
 
   const visibleOrders: SchoolOrder[] = orders.filter((o) => {
@@ -592,6 +655,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
+  // 🔹 Aggregate totals (still order-level)
   const aggregate = (() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
@@ -608,6 +672,91 @@ const SchoolOrdersPageClient: React.FC = () => {
   })();
 
   const { orderedTotal, receivedTotal, pendingTotal } = aggregate;
+
+  // 🔹 Build SCHOOL → publisher rows structure
+  type PublisherRow = {
+    key: string;
+    order: SchoolOrder;
+    school: School | undefined;
+    publisher: PublisherLite;
+    orderedTotal: number;
+    receivedTotal: number;
+    pendingTotal: number;
+  };
+
+  const schoolGroups: {
+    schoolId: number;
+    school: School | undefined;
+    rows: PublisherRow[];
+  }[] = (() => {
+    const map = new Map<
+      number,
+      { school: School | undefined; rows: PublisherRow[] }
+    >();
+
+    visibleOrders.forEach((order) => {
+      const school = getOrderSchool(order);
+      const schoolId = order.school_id;
+      const items = getOrderItems(order);
+
+      const publishersMap = new Map<
+        number,
+        { publisher: PublisherLite; items: SchoolOrderItem[] }
+      >();
+
+      items.forEach((it) => {
+        const p = it.book?.publisher;
+        const pid =
+          p?.id ??
+          (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
+        if (!pid) return;
+        const name = p?.name || `Publisher #${pid}`;
+
+        if (!publishersMap.has(pid)) {
+          publishersMap.set(pid, {
+            publisher: { id: pid, name },
+            items: [it],
+          });
+        } else {
+          publishersMap.get(pid)!.items.push(it);
+        }
+      });
+
+      const rows: PublisherRow[] = [];
+
+      publishersMap.forEach((pubGroup, pid) => {
+        const ordTotal = totalQtyFromItems(pubGroup.items);
+        const recTotal = totalReceivedFromItems(pubGroup.items);
+        const pendTotal = Math.max(ordTotal - recTotal, 0);
+
+        rows.push({
+          key: makePublisherKey(order.id, pid),
+          order,
+          school,
+          publisher: pubGroup.publisher,
+          orderedTotal: ordTotal,
+          receivedTotal: recTotal,
+          pendingTotal: pendTotal,
+        });
+      });
+
+      const existing = map.get(schoolId);
+      if (!existing) {
+        map.set(schoolId, {
+          school,
+          rows,
+        });
+      } else {
+        existing.rows.push(...rows);
+      }
+    });
+
+    return Array.from(map.entries()).map(([schoolId, value]) => ({
+      schoolId,
+      school: value.school,
+      rows: value.rows,
+    }));
+  })();
 
   /* ---------- UI ---------- */
 
@@ -642,7 +791,7 @@ const SchoolOrdersPageClient: React.FC = () => {
               <span>School Orders</span>
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Generate, Email, Receive & Track – School-wise
+              School-wise heading, publisher-wise orders & emails
             </span>
           </div>
         </div>
@@ -668,64 +817,6 @@ const SchoolOrdersPageClient: React.FC = () => {
       </header>
 
       <main className="relative z-10 p-6 lg:p-8 space-y-6">
-        {/* Generate Block */}
-        <section className="flex justify-end">
-          <form
-            onSubmit={handleGenerate}
-            className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-5 py-4 flex flex-col sm:flex-row sm:items-end gap-4 min-w-[260px]"
-          >
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                Academic Session
-              </label>
-              <select
-                value={academicSession}
-                onChange={(e) => setAcademicSession(e.target.value)}
-                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              >
-                {SESSION_OPTIONS.map((session) => (
-                  <option key={session} value={session}>
-                    {session}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-slate-400">
-                Generates school-wise orders from confirmed requirements.
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-              <button
-                type="submit"
-                disabled={generating}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {generating ? (
-                  <>
-                    <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    Generate Orders
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={fetchOrders}
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-slate-300 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              >
-                <RefreshCcw className="w-3.5 h-3.5" />
-                Refresh
-              </button>
-            </div>
-          </form>
-        </section>
-
         {/* Alerts */}
         {(error || info) && (
           <div className="space-y-3">
@@ -748,67 +839,128 @@ const SchoolOrdersPageClient: React.FC = () => {
           </div>
         )}
 
-        {/* Filters */}
-        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg p-4 flex flex-wrap items-center gap-4 text-xs">
-          <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              Filter by Session
-            </label>
-            <select
-              value={filterSession}
-              onChange={(e) => setFilterSession(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[140px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-            >
-              <option value="">All sessions</option>
-              {SESSION_OPTIONS.map((session) => (
-                <option key={session} value={session}>
-                  {session}
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* Filters + Generate Orders (combined toolbar) */}
+        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg p-4 flex flex-col gap-4 text-xs">
+          <div className="flex flex-wrap gap-4 items-center justify-between">
+            {/* Left: Filters */}
+            <div className="flex flex-wrap gap-4">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Filter by Session
+                </label>
+                <select
+                  value={filterSession}
+                  onChange={(e) => setFilterSession(e.target.value)}
+                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[140px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">All sessions</option>
+                  {SESSION_OPTIONS.map((session) => (
+                    <option key={session} value={session}>
+                      {session}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              Filter by School
-            </label>
-            <select
-              value={filterSchoolId}
-              onChange={(e) => setFilterSchoolId(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[200px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-            >
-              <option value="">All schools</option>
-              {Array.isArray(schools) &&
-                schools.map((s) => (
-                  <option key={s.id} value={String(s.id)}>
-                    {s.name}
-                    {s.city ? ` (${s.city})` : ""}
-                  </option>
-                ))}
-            </select>
-          </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Filter by School
+                </label>
+                <select
+                  value={filterSchoolId}
+                  onChange={(e) => setFilterSchoolId(e.target.value)}
+                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[200px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">All schools</option>
+                  {Array.isArray(schools) &&
+                    schools.map((s) => (
+                      <option key={s.id} value={String(s.id)}>
+                        {s.name}
+                        {s.city ? ` (${s.city})` : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
 
-          <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">
-              Filter by Status / Receive
-            </label>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[220px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Filter by Status / Receive
+                </label>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[220px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">All statuses</option>
+                  <option value="not_received">Not Received (0 received)</option>
+                  <option value="draft">Draft</option>
+                  <option value="sent">Ordered / Sent</option>
+                  <option value="partial_received">Partial Collected</option>
+                  <option value="completed">Collected (Fully)</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Right: Generate Orders */}
+            <form
+              onSubmit={handleGenerate}
+              className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-3"
             >
-              <option value="">All statuses</option>
-              <option value="not_received">Not Received (0 received)</option>
-              <option value="draft">Draft</option>
-              <option value="sent">Ordered / Sent</option>
-              <option value="partial_received">Partial Collected</option>
-              <option value="completed">Collected (Fully)</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                  Generate for Session
+                </label>
+                <select
+                  value={academicSession}
+                  onChange={(e) => setAcademicSession(e.target.value)}
+                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[160px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  {SESSION_OPTIONS.map((session) => (
+                    <option key={session} value={session}>
+                      {session}
+                    </option>
+                  ))}
+                </select>
+                {/* <p className="mt-1 text-[10px] text-slate-400 max-w-[220px]">
+                  Generates school-wise orders from confirmed requirements.
+                </p> */}
+              </div>
+
+              <div className="flex flex-row gap-2 sm:gap-3">
+                <button
+                  type="submit"
+                  disabled={generating}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[11px] font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {generating ? (
+                    <>
+                      <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      Generate Orders
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={fetchOrders}
+                  disabled={loading}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-slate-300 bg-white text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  <RefreshCcw className="w-3.5 h-3.5" />
+                  Refresh
+                </button>
+              </div>
+            </form>
           </div>
 
           {/* Small legend */}
-          <div className="ml-auto flex flex-wrap gap-2 text-[10px] text-slate-500">
+          <div className="flex flex-wrap gap-2 text-[10px] text-slate-500 justify-end">
             <span className="inline-flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-blue-300" />
               Sent
@@ -828,15 +980,15 @@ const SchoolOrdersPageClient: React.FC = () => {
           </div>
         </section>
 
-        {/* Orders List */}
+        {/* Orders List – SCHOOL → publisher-wise rows */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/60 p-5">
           <div className="flex items-center justify-between mb-4 gap-2">
             <h2 className="text-base font-semibold flex items-center gap-2 text-slate-800">
               <BookOpen className="w-4 h-4 text-indigo-500" />
-              <span>Existing School Orders</span>
+              <span>School-wise Publisher Orders</span>
             </h2>
             <span className="text-xs text-slate-500">
-              Total Orders: {visibleOrders.length}
+              Total School Orders: {visibleOrders.length}
             </span>
           </div>
 
@@ -845,132 +997,195 @@ const SchoolOrdersPageClient: React.FC = () => {
               <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
               Loading orders...
             </div>
-          ) : visibleOrders.length === 0 ? (
+          ) : schoolGroups.length === 0 ? (
             <div className="text-sm text-slate-500 py-10 text-center">
               No school orders found. Adjust filters or generate new orders.
             </div>
           ) : (
-            <div className="overflow-auto max-h-[420px] rounded-xl border border-slate-200/80 shadow-inner">
-              <table className="w-full text-xs border-collapse bg-white">
-                <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-10">
-                  <tr>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Order No
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      School
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Session
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Order Date
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                      No. of Books
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                      Total Qty
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                      Received
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Status
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleOrders.map((order) => {
-                    const isSending = sendingOrderId === order.id;
-                    const isSent = order.status === "sent";
-                    const school = getOrderSchool(order);
-                    const items = getOrderItems(order);
+            <div className="space-y-4 max-h-[420px] overflow-auto pr-1">
+              {schoolGroups.map((group) => (
+                <div
+                  key={group.schoolId}
+                  className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm"
+                >
+                  {/* School heading */}
+                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        {group.school?.name || "Unknown School"}
+                      </div>
+                      {group.school?.city && (
+                        <div className="text-[11px] text-slate-500">
+                          {group.school.city}
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Orders in this school:{" "}
+                        <span className="font-semibold">
+                        {group.rows.length}
+                      </span>
+                    </div>
+                  </div>
 
-                    return (
-                      <tr
-                        key={order.id}
-                        className="hover:bg-slate-50 transition-colors"
-                      >
-                        <td className="border-b border-slate-200 px-3 py-2 font-semibold text-slate-800">
-                          {order.order_no}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
-                          {school?.name || "-"}
-                          {school?.city ? ` (${school.city})` : ""}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
-                          {order.academic_session || "-"}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
-                          {formatDate(order.order_date || order.createdAt)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {items.length}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {totalQtyFromItems(items)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
-                          {totalReceivedFromItems(items)}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(
-                              order.status
-                            )}`}
-                          >
-                            {statusLabel(order.status)}
-                          </span>
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenView(order)}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
-                            >
-                              <Eye className="w-3 h-3" />
-                              View / Receive
-                            </button>
+                  {/* Publisher rows for this school */}
+                  <div className="overflow-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-gradient-to-r from-indigo-50 to-purple-50">
+                        <tr>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Publisher
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Session
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Publisher Order No
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Order Date
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                            Ordered Qty
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                            Received Qty
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                            Pending
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Status
+                          </th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.rows.map((row) => {
+                          const { order, publisher } = row;
+                          const isSending = sendingOrderId === order.id;
+                          const status = order.status;
+                          const statusClass = statusChipClass(status);
+                          const statusText = statusLabel(status);
+                          const key = row.key;
+                          const currentOrderNo =
+                            publisherOrderNos[key] ?? order.order_no ?? "";
 
-                            <button
-                              type="button"
-                              onClick={() => handleSendEmail(order)}
-                              disabled={isSending}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border ${
-                                isSent
-                                  ? "border-blue-300 text-blue-700 bg-blue-50"
-                                  : "border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
-                              } disabled:opacity-60 disabled:cursor-not-allowed`}
-                            >
-                              <Send className="w-3 h-3" />
-                              {isSending
-                                ? "Sending..."
-                                : isSent
-                                ? "Resend Email"
-                                : "Send Email"}
-                            </button>
+                          const isSavingPublisherMeta =
+                            savingPublisherMetaKey === key;
 
-                            {/* PDF Button per order (all publishers) */}
-                            <button
-                              type="button"
-                              onClick={() => handleViewPdf(order)}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                          return (
+                            <tr
+                              key={row.key}
+                              className="hover:bg-slate-50 transition-colors"
                             >
-                              <FileText className="w-3 h-3" />
-                              PDF (All)
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                              <td className="border-b border-slate-200 px-3 py-2 text-slate-800 font-medium">
+                                {publisher.name}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
+                                {order.academic_session || "-"}
+                              </td>
+                              {/* Editable publisher order no */}
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={currentOrderNo}
+                                    onChange={(e) =>
+                                      setPublisherOrderNos((prev) => ({
+                                        ...prev,
+                                        [key]: e.target.value,
+                                      }))
+                                    }
+                                    className="w-36 border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                                    placeholder="Enter order no"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleSavePublisherOrderNo(
+                                        order,
+                                        publisher
+                                      )
+                                    }
+                                    disabled={isSavingPublisherMeta}
+                                    className="text-[10px] px-2 py-1 rounded-full bg-slate-900 text-white disabled:opacity-60"
+                                  >
+                                    {isSavingPublisherMeta
+                                      ? "Saving..."
+                                      : "Save"}
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  Base school order: {order.order_no}
+                                </div>
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
+                                {formatDate(order.order_date || order.createdAt)}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+                                {row.orderedTotal}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+                                {row.receivedTotal}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+                                {row.pendingTotal}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusClass}`}
+                                >
+                                  {statusText}
+                                </span>
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenView(order)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                  >
+                                    <Eye className="w-3 h-3" />
+                                    View / Receive
+                                  </button>
+
+                                  {/* Email for this publisher */}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleSendEmail(order, publisher.id)
+                                    }
+                                    disabled={isSending}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
+                                  >
+                                    <Send className="w-3 h-3" />
+                                    {isSending ? "Sending..." : "Email"}
+                                  </button>
+
+                                  {/* PDF for this publisher */}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleViewPdf(order, publisher.id)
+                                    }
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    PDF
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
@@ -985,7 +1200,7 @@ const SchoolOrdersPageClient: React.FC = () => {
               {orderedTotal}
             </span>
             <span className="mt-1 text-xs text-slate-400">
-              Across {visibleOrders.length} order(s)
+              Across {visibleOrders.length} school order(s)
             </span>
           </div>
 
@@ -1015,7 +1230,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* View / Receive Modal */}
+      {/* View / Receive Modal – same as before (for detailed items) */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -1025,7 +1240,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                 const school = getOrderSchool(viewOrder);
                 const items = getOrderItems(viewOrder);
 
-                // 🔹 Build unique publisher list for this order
                 const publishersMap = new Map<number, PublisherLite>();
                 items.forEach((it) => {
                   const p = it.book?.publisher;
@@ -1081,20 +1295,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                       </p>
                       <p className="text-[11px] text-slate-400">
                         Items:{" "}
-                        <span className="font-semibold">
-                          {items.length}
-                        </span>
+                        <span className="font-semibold">{items.length}</span>
                       </p>
-                      {publishers.length > 0 && (
-                        <p className="text-[11px] text-slate-400">
-                          Publishers in this order:{" "}
-                          <span className="font-medium">
-                            {publishers.map((p) => p.name).join(", ")}
-                          </span>
-                        </p>
-                      )}
 
-                      {/* 🔹 Current Transport & Notes summary */}
                       {(viewOrder.transport_through ||
                         viewOrder.notes ||
                         transport) && (
@@ -1163,7 +1366,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                         ))}
                       </div>
 
-                      {/* 🔹 NEW: Transport & Notes editor */}
+                      {/* Transport & Notes editor */}
                       <div className="w-full mt-1 p-2 border border-slate-200 rounded-xl bg-white/90 shadow-sm flex flex-col gap-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[11px] font-semibold text-slate-700">
