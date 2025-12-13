@@ -12,16 +12,12 @@ import {
   Send,
   Eye,
   ChevronLeft,
-  Sparkles,
   FileText,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
 
-type PublisherLite = {
-  id: number;
-  name: string;
-};
+type PublisherLite = { id: number; name: string };
 
 type TransportLite = {
   id: number;
@@ -30,11 +26,7 @@ type TransportLite = {
   phone?: string | null;
 };
 
-type School = {
-  id: number;
-  name: string;
-  city?: string | null;
-};
+type School = { id: number; name: string; city?: string | null };
 
 type SchoolOrderItem = {
   id: number;
@@ -67,7 +59,6 @@ type SchoolOrder = {
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
 
-  // 🔹 transport + extra fields
   transport_id?: number | null;
   transport_through?: string | null;
   notes?: string | null;
@@ -77,7 +68,7 @@ type SchoolOrder = {
 /* ---------- Session Options ---------- */
 
 const SESSION_OPTIONS = (() => {
-  const base = 2025; // 2025-26
+  const base = 2025;
   const arr: string[] = [];
   for (let i = 0; i <= 5; i++) {
     const y1 = base + i;
@@ -102,9 +93,8 @@ const normalizeTransports = (payload: any): TransportLite[] => {
   return [];
 };
 
-const getOrderSchool = (order: SchoolOrder | any): School | undefined => {
-  return (order && (order.school || order.School)) || undefined;
-};
+const getOrderSchool = (order: SchoolOrder | any): School | undefined =>
+  (order && (order.school || order.School)) || undefined;
 
 const getOrderItems = (order: SchoolOrder | any): SchoolOrderItem[] => {
   if (!order) return [];
@@ -125,32 +115,22 @@ const formatDate = (value?: string | null) => {
   });
 };
 
-const totalQtyFromItems = (items: SchoolOrderItem[]) => {
-  if (!items || !items.length) return 0;
-  return items.reduce(
-    (sum, item) => sum + (Number(item.total_order_qty) || 0),
-    0
-  );
-};
+const totalQtyFromItems = (items: SchoolOrderItem[]) =>
+  (items || []).reduce((sum, it) => sum + (Number(it.total_order_qty) || 0), 0);
 
-const totalReceivedFromItems = (items: SchoolOrderItem[]) => {
-  if (!items || !items.length) return 0;
-  return items.reduce(
-    (sum, item) => sum + (Number(item.received_qty) || 0),
-    0
-  );
-};
+const totalReceivedFromItems = (items: SchoolOrderItem[]) =>
+  (items || []).reduce((sum, it) => sum + (Number(it.received_qty) || 0), 0);
 
 const statusLabel = (status: string | undefined) => {
   switch (status) {
     case "completed":
       return "Collected";
     case "partial_received":
-      return "Partial Collected";
+      return "Partial";
     case "cancelled":
       return "Cancelled";
     case "sent":
-      return "Ordered / Sent";
+      return "Sent";
     case "draft":
       return "Draft";
     default:
@@ -203,27 +183,27 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [savingReceive, setSavingReceive] = useState(false);
   const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
 
-  // 🔹 order meta (full order – transport + notes)
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaTransportId, setMetaTransportId] = useState<string>("");
   const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
   const [metaNotes, setMetaNotes] = useState<string>("");
 
-  // 🔹 publisher-wise editable order no
-  const [publisherOrderNos, setPublisherOrderNos] = useState<
-    Record<string, string>
-  >({});
-  const [savingPublisherMetaKey, setSavingPublisherMetaKey] = useState<
-    string | null
-  >(null);
+  // ✅ Modal base order no edit (existing)
+  const [baseOrderNoDraft, setBaseOrderNoDraft] = useState<string>("");
+  const [savingBaseOrderNo, setSavingBaseOrderNo] = useState(false);
+
+  // ✅ Listing base order no edit (NEW)
+  const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>(
+    {}
+  );
+  const [savingOrderNoId, setSavingOrderNoId] = useState<number | null>(null);
 
   /* ---------- Data fetching ---------- */
 
   const fetchSchools = async () => {
     try {
       const res = await api.get("/api/schools");
-      const list = normalizeSchools(res.data);
-      setSchools(list);
+      setSchools(normalizeSchools(res.data));
     } catch (err) {
       console.error("Error loading schools:", err);
     }
@@ -232,8 +212,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   const fetchTransports = async () => {
     try {
       const res = await api.get("/api/transports");
-      const list = normalizeTransports(res.data);
-      setTransports(list);
+      setTransports(normalizeTransports(res.data));
     } catch (err) {
       console.error("Error loading transports:", err);
     }
@@ -253,6 +232,15 @@ const SchoolOrdersPageClient: React.FC = () => {
         : [];
 
       setOrders(list || []);
+
+      // ✅ keep drafts in sync (do not overwrite user typing if already set)
+      setOrderNoDrafts((prev) => {
+        const next = { ...prev };
+        (list || []).forEach((o) => {
+          if (next[o.id] == null) next[o.id] = o.order_no || "";
+        });
+        return next;
+      });
     } catch (err: any) {
       console.error(err);
       setError(
@@ -278,37 +266,29 @@ const SchoolOrdersPageClient: React.FC = () => {
     setInfo(null);
 
     if (!academicSession.trim()) {
-      setError("Please select academic session.");
+      setError("Select session.");
       return;
     }
 
     try {
       setGenerating(true);
-
       const res = await api.post("/api/school-orders/generate", {
         academic_session: academicSession.trim(),
       });
 
-      setInfo(
-        res?.data?.message ||
-          "School orders generated successfully from requirements."
-      );
-
+      setInfo(res?.data?.message || "Generated.");
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message || "Failed to generate school orders."
-      );
+      setError(err?.response?.data?.message || "Generate failed.");
     } finally {
       setGenerating(false);
     }
   };
 
-  // 🔹 Send email – full order OR publisher-wise
   const handleSendEmail = async (order: SchoolOrder, publisherId?: number) => {
     if (!order.id) {
-      setError("Order ID is missing for this order.");
+      setError("Order ID missing.");
       return;
     }
 
@@ -322,27 +302,16 @@ const SchoolOrdersPageClient: React.FC = () => {
         : `/api/school-orders/${order.id}/send-email`;
 
       const res = await api.post(path);
-
-      setInfo(
-        res?.data?.message ||
-          (publisherId
-            ? `Email sent successfully for this publisher (Order: ${order.order_no}).`
-            : `Email sent successfully to school (Order: ${order.order_no}).`)
-      );
-
+      setInfo(res?.data?.message || "Email sent.");
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message ||
-          "Failed to send order email. Please check SMTP / school email."
-      );
+      setError(err?.response?.data?.message || "Email failed.");
     } finally {
       setSendingOrderId(null);
     }
   };
 
-  // ✅ View / Download PDF (full OR publisher-wise)
   const handleViewPdf = async (order: SchoolOrder, publisherId?: number) => {
     if (!order.id) return;
     setError(null);
@@ -353,51 +322,24 @@ const SchoolOrdersPageClient: React.FC = () => {
         ? `/api/school-orders/${order.id}/pdf?publisher_id=${publisherId}`
         : `/api/school-orders/${order.id}/pdf`;
 
-      const res = await api.get(path, {
-        responseType: "blob",
-      });
+      const res = await api.get(path, { responseType: "blob" });
 
       const contentType = res.headers?.["content-type"] || "";
       if (!contentType.includes("application/pdf")) {
-        try {
-          const blob = res.data as Blob;
-          const text = await blob.text();
-          throw new Error(text || "Server did not return a PDF file.");
-        } catch {
-          throw new Error("Server did not return a PDF file.");
-        }
+        const blob = res.data as Blob;
+        const text = await blob.text().catch(() => "");
+        throw new Error(text || "Not a PDF.");
       }
 
       const blob = new Blob([res.data], { type: "application/pdf" });
       const pdfUrl = window.URL.createObjectURL(blob);
       window.open(pdfUrl, "_blank", "noopener,noreferrer");
     } catch (err: any) {
-      console.error("Error downloading PDF:", err);
-
-      let msg =
-        err?.response?.data?.message ||
-        err?.message ||
-        "Failed to generate / download order PDF.";
-
-      try {
-        if (err?.response?.data instanceof Blob) {
-          const text = await (err.response.data as Blob).text();
-          if (text && text.startsWith("{")) {
-            const parsed = JSON.parse(text);
-            msg = parsed.message || msg;
-          } else if (text) {
-            msg = text;
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      setError(msg);
+      console.error("PDF error:", err);
+      setError(err?.response?.data?.message || err?.message || "PDF failed.");
     }
   };
 
-  // 🔍 Open modal & prepare receive + meta form
   const handleOpenView = (order: SchoolOrder) => {
     setViewOrder(order);
     setIsReceiving(false);
@@ -405,33 +347,27 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     const items = getOrderItems(order);
     const initial: Record<number, string> = {};
-    items.forEach((it) => {
-      initial[it.id] = String(it.received_qty ?? 0);
-    });
+    items.forEach((it) => (initial[it.id] = String(it.received_qty ?? 0)));
     setReceiveForm(initial);
 
-    // pre-fill meta form
     setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
     setMetaTransportThrough(order.transport_through || "");
     setMetaNotes(order.notes || "");
+
+    setBaseOrderNoDraft(order.order_no || "");
   };
 
   const startReceiving = () => {
     if (!viewOrder) return;
     const items = getOrderItems(viewOrder);
     const initial: Record<number, string> = {};
-    items.forEach((it) => {
-      initial[it.id] = String(it.received_qty ?? 0);
-    });
+    items.forEach((it) => (initial[it.id] = String(it.received_qty ?? 0)));
     setReceiveForm(initial);
     setIsReceiving(true);
   };
 
   const handleReceiveChange = (itemId: number, value: string) => {
-    setReceiveForm((prev) => ({
-      ...prev,
-      [itemId]: value,
-    }));
+    setReceiveForm((prev) => ({ ...prev, [itemId]: value }));
   };
 
   const handleReceiveSave = async () => {
@@ -442,47 +378,43 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       const items = getOrderItems(viewOrder);
-      const itemsPayload =
-        items.map((it) => {
-          const raw = receiveForm[it.id];
-          let num = Number(raw ?? it.received_qty ?? 0);
-          if (isNaN(num) || num < 0) num = 0;
-          const ordered = Number(it.total_order_qty) || 0;
-          if (num > ordered) num = ordered;
-          return {
-            item_id: it.id,
-            received_qty: num,
-          };
-        }) || [];
+      const itemsPayload = items.map((it) => {
+        const raw = receiveForm[it.id];
+        let num = Number(raw ?? it.received_qty ?? 0);
+        if (isNaN(num) || num < 0) num = 0;
+        const ordered = Number(it.total_order_qty) || 0;
+        if (num > ordered) num = ordered;
+        return { item_id: it.id, received_qty: num };
+      });
 
-      const res = await api.post(
-        `/api/school-orders/${viewOrder.id}/receive`,
-        {
-          status: "auto",
-          items: itemsPayload,
-        }
-      );
+      const res = await api.post(`/api/school-orders/${viewOrder.id}/receive`, {
+        status: "auto",
+        items: itemsPayload,
+      });
 
-      setInfo(res.data?.message || "Order items updated successfully.");
+      setInfo(res.data?.message || "Saved.");
       const updatedOrder: SchoolOrder = res.data.order;
 
       setViewOrder(updatedOrder);
       setIsReceiving(false);
 
-      // also align meta form with updated order (if backend changed anything)
       setMetaTransportId(
         updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
       );
       setMetaTransportThrough(updatedOrder.transport_through || "");
       setMetaNotes(updatedOrder.notes || "");
+      setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
+
+      // keep listing draft in sync
+      setOrderNoDrafts((prev) => ({
+        ...prev,
+        [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
+      }));
 
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message ||
-          "Failed to update received quantities."
-      );
+      setError(err?.response?.data?.message || "Receive save failed.");
     } finally {
       setSavingReceive(false);
     }
@@ -496,44 +428,43 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       const items = getOrderItems(viewOrder);
-      const itemsPayload =
-        items.map((it) => ({
-          item_id: it.id,
-          received_qty: it.received_qty ?? 0,
-        })) || [];
+      const itemsPayload = items.map((it) => ({
+        item_id: it.id,
+        received_qty: it.received_qty ?? 0,
+      }));
 
-      const res = await api.post(
-        `/api/school-orders/${viewOrder.id}/receive`,
-        {
-          status: "cancelled",
-          items: itemsPayload,
-        }
-      );
+      const res = await api.post(`/api/school-orders/${viewOrder.id}/receive`, {
+        status: "cancelled",
+        items: itemsPayload,
+      });
 
-      setInfo(res.data?.message || "Order marked as cancelled.");
+      setInfo(res.data?.message || "Cancelled.");
       const updatedOrder: SchoolOrder = res.data.order;
+
       setViewOrder(updatedOrder);
       setIsReceiving(false);
 
-      // keep meta fields in sync
       setMetaTransportId(
         updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
       );
       setMetaTransportThrough(updatedOrder.transport_through || "");
       setMetaNotes(updatedOrder.notes || "");
+      setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
+
+      setOrderNoDrafts((prev) => ({
+        ...prev,
+        [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
+      }));
 
       await fetchOrders();
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message || "Failed to cancel school order."
-      );
+      setError(err?.response?.data?.message || "Cancel failed.");
     } finally {
       setSavingReceive(false);
     }
   };
 
-  // 🔹 Save Transport + Notes (full order)
   const handleMetaSave = async () => {
     if (!viewOrder) return;
     setError(null);
@@ -543,18 +474,13 @@ const SchoolOrdersPageClient: React.FC = () => {
     try {
       const payload = {
         transport_id: metaTransportId ? Number(metaTransportId) : null,
-        transport_through:
-          metaTransportThrough.trim() !== ""
-            ? metaTransportThrough.trim()
-            : null,
-        notes: metaNotes.trim() !== "" ? metaNotes.trim() : null,
+        transport_through: metaTransportThrough.trim()
+          ? metaTransportThrough.trim()
+          : null,
+        notes: metaNotes.trim() ? metaNotes.trim() : null,
       };
 
-      const res = await api.patch(
-        `/api/school-orders/${viewOrder.id}/meta`,
-        payload
-      );
-
+      const res = await api.patch(`/api/school-orders/${viewOrder.id}/meta`, payload);
       const updatedOrder: SchoolOrder = res.data.order;
 
       setViewOrder(updatedOrder);
@@ -568,79 +494,93 @@ const SchoolOrdersPageClient: React.FC = () => {
       setMetaTransportThrough(updatedOrder.transport_through || "");
       setMetaNotes(updatedOrder.notes || "");
 
-      setInfo(
-        res.data?.message || "Order transport & notes updated successfully."
-      );
+      setInfo(res.data?.message || "Meta saved.");
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message ||
-          "Failed to update transport / notes for this order."
-      );
+      setError(err?.response?.data?.message || "Meta save failed.");
     } finally {
       setMetaSaving(false);
     }
   };
 
-  // 🔹 Save publisher-wise order no
-  const handleSavePublisherOrderNo = async (
-    order: SchoolOrder,
-    publisher: PublisherLite
-  ) => {
-    const key = makePublisherKey(order.id, publisher.id);
-    const orderNo = (publisherOrderNos[key] ?? order.order_no ?? "").trim();
+  // ✅ Modal Save (existing)
+  const handleSaveBaseOrderNo = async () => {
+    if (!viewOrder) return;
 
-    if (!orderNo) {
-      setError("Order number cannot be empty.");
+    const newNo = String(baseOrderNoDraft || "").trim();
+    if (!newNo) {
+      setError("Order no required.");
       return;
     }
 
     setError(null);
     setInfo(null);
-    setSavingPublisherMetaKey(key);
+    setSavingBaseOrderNo(true);
 
     try {
-      // EXPECTED BACKEND: update / create publisher-wise meta
-      const res = await api.patch(
-        `/api/school-orders/${order.id}/publisher-meta`,
-        {
-          publisher_id: publisher.id,
-          order_no: orderNo,
-        }
+      const res = await api.patch(`/api/school-orders/${viewOrder.id}/order-no`, {
+        order_no: newNo,
+      });
+
+      setInfo(res?.data?.message || "Order no updated.");
+
+      setViewOrder((prev) => (prev ? { ...prev, order_no: newNo } : prev));
+      setOrders((prev) =>
+        prev.map((o) => (o.id === viewOrder.id ? { ...o, order_no: newNo } : o))
       );
 
-      setInfo(
-        res?.data?.message ||
-          `Order number updated for ${publisher.name} (School Order: ${order.order_no}).`
-      );
-
-      // Optionally refresh orders if backend returns updated data
-      await fetchOrders();
+      // sync listing drafts too
+      setOrderNoDrafts((prev) => ({ ...prev, [viewOrder.id]: newNo }));
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message ||
-          "Failed to update publisher-wise order number."
-      );
+      setError(err?.response?.data?.message || "Order no update failed.");
     } finally {
-      setSavingPublisherMetaKey(null);
+      setSavingBaseOrderNo(false);
     }
   };
 
-  /* ---------- Filters ---------- */
+  // ✅ Listing Save (NEW)
+  const handleSaveOrderNoFromListing = async (orderId: number) => {
+    const newNo = String(orderNoDrafts[orderId] || "").trim();
+    if (!newNo) {
+      setError("Order no required.");
+      return;
+    }
+
+    setError(null);
+    setInfo(null);
+    setSavingOrderNoId(orderId);
+
+    try {
+      const res = await api.patch(`/api/school-orders/${orderId}/order-no`, {
+        order_no: newNo,
+      });
+
+      setInfo(res?.data?.message || "Order no updated.");
+
+      // optimistic update
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o))
+      );
+
+      // if same order is open in modal, sync there too
+      setViewOrder((prev) => (prev?.id === orderId ? { ...prev, order_no: newNo } : prev));
+      if (viewOrder?.id === orderId) setBaseOrderNoDraft(newNo);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.message || "Order no update failed.");
+    } finally {
+      setSavingOrderNoId(null);
+    }
+  };
+
+  /* ---------- Filters + Groups ---------- */
 
   const visibleOrders: SchoolOrder[] = orders.filter((o) => {
     let ok = true;
 
-    if (filterSession && o.academic_session) {
-      ok = ok && o.academic_session === filterSession;
-    } else if (filterSession && !o.academic_session) {
-      ok = false;
-    }
-
-    if (filterSchoolId) {
-      ok = ok && String(o.school_id) === filterSchoolId;
-    }
+    if (filterSession) ok = ok && (o.academic_session || "") === filterSession;
+    if (filterSchoolId) ok = ok && String(o.school_id) === filterSchoolId;
 
     if (filterStatus) {
       const items = getOrderItems(o);
@@ -655,25 +595,23 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
-  // 🔹 Aggregate totals (still order-level)
   const aggregate = (() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
-
     visibleOrders.forEach((o) => {
       const items = getOrderItems(o);
       orderedTotal += totalQtyFromItems(items);
       receivedTotal += totalReceivedFromItems(items);
     });
-
-    const pendingTotal = Math.max(orderedTotal - receivedTotal, 0);
-
-    return { orderedTotal, receivedTotal, pendingTotal };
+    return {
+      orderedTotal,
+      receivedTotal,
+      pendingTotal: Math.max(orderedTotal - receivedTotal, 0),
+    };
   })();
 
   const { orderedTotal, receivedTotal, pendingTotal } = aggregate;
 
-  // 🔹 Build SCHOOL → publisher rows structure
   type PublisherRow = {
     key: string;
     order: SchoolOrder;
@@ -689,46 +627,32 @@ const SchoolOrdersPageClient: React.FC = () => {
     school: School | undefined;
     rows: PublisherRow[];
   }[] = (() => {
-    const map = new Map<
-      number,
-      { school: School | undefined; rows: PublisherRow[] }
-    >();
+    const map = new Map<number, { school: School | undefined; rows: PublisherRow[] }>();
 
     visibleOrders.forEach((order) => {
       const school = getOrderSchool(order);
       const schoolId = order.school_id;
       const items = getOrderItems(order);
 
-      const publishersMap = new Map<
-        number,
-        { publisher: PublisherLite; items: SchoolOrderItem[] }
-      >();
+      const publishersMap = new Map<number, { publisher: PublisherLite; items: SchoolOrderItem[] }>();
 
       items.forEach((it) => {
         const p = it.book?.publisher;
-        const pid =
-          p?.id ??
-          (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
+        const pid = p?.id ?? (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
         if (!pid) return;
         const name = p?.name || `Publisher #${pid}`;
 
         if (!publishersMap.has(pid)) {
-          publishersMap.set(pid, {
-            publisher: { id: pid, name },
-            items: [it],
-          });
+          publishersMap.set(pid, { publisher: { id: pid, name }, items: [it] });
         } else {
           publishersMap.get(pid)!.items.push(it);
         }
       });
 
       const rows: PublisherRow[] = [];
-
       publishersMap.forEach((pubGroup, pid) => {
         const ordTotal = totalQtyFromItems(pubGroup.items);
         const recTotal = totalReceivedFromItems(pubGroup.items);
-        const pendTotal = Math.max(ordTotal - recTotal, 0);
-
         rows.push({
           key: makePublisherKey(order.id, pid),
           order,
@@ -736,19 +660,13 @@ const SchoolOrdersPageClient: React.FC = () => {
           publisher: pubGroup.publisher,
           orderedTotal: ordTotal,
           receivedTotal: recTotal,
-          pendingTotal: pendTotal,
+          pendingTotal: Math.max(ordTotal - recTotal, 0),
         });
       });
 
       const existing = map.get(schoolId);
-      if (!existing) {
-        map.set(schoolId, {
-          school,
-          rows,
-        });
-      } else {
-        existing.rows.push(...rows);
-      }
+      if (!existing) map.set(schoolId, { school, rows });
+      else existing.rows.push(...rows);
     });
 
     return Array.from(map.entries()).map(([schoolId, value]) => ({
@@ -761,417 +679,319 @@ const SchoolOrdersPageClient: React.FC = () => {
   /* ---------- UI ---------- */
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
-      {/* Animated Background Elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000"></div>
-      </div>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Compact Header */}
+      <header className="sticky top-0 z-20 bg-white border-b border-slate-200">
+        <div className="px-3 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-xs"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Back
+            </Link>
 
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-lg">
-        <div className="font-bold flex items-center gap-3">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-            <span className="text-sm">Back to Dashboard</span>
-          </Link>
-        </div>
-
-        <div className="font-bold flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
-            <Package className="w-5 h-5" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="h-8 w-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center">
+                <Package className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate">School Orders</div>
+              </div>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="text-lg sm:text-xl tracking-tight flex items-center gap-1">
-              <Sparkles className="w-4 h-4 text-indigo-500" />
-              <span>School Orders</span>
-            </span>
-            <span className="text-xs text-slate-500 font-medium">
-              School-wise heading, publisher-wise orders & emails
-            </span>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-4 text-sm">
-          <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[11px] text-slate-600 hidden sm:inline">
               {user?.name || "User"}
             </span>
-            {user?.role && (
-              <span className="mt-0.5 text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
-                {user.role}
-              </span>
-            )}
+            <button
+              onClick={logout}
+              className="text-[11px] px-3 py-1 rounded-full bg-rose-600 text-white"
+            >
+              Logout
+            </button>
           </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200"
-          >
-            Logout
-          </button>
+        </div>
+
+        {/* Ultra compact toolbar - single row */}
+        <div className="px-3 pb-2">
+          <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-2 text-[11px]">
+            <select
+              value={filterSession}
+              onChange={(e) => setFilterSession(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              title="Session"
+            >
+              <option value="">Session</option>
+              {SESSION_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filterSchoolId}
+              onChange={(e) => setFilterSchoolId(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white min-w-[180px]"
+              title="School"
+            >
+              <option value="">School</option>
+              {schools.map((s) => (
+                <option key={s.id} value={String(s.id)}>
+                  {s.name}
+                  {s.city ? ` (${s.city})` : ""}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              title="Status"
+            >
+              <option value="">Status</option>
+              <option value="not_received">Not Received</option>
+              <option value="draft">Draft</option>
+              <option value="sent">Sent</option>
+              <option value="partial_received">Partial</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+
+            <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
+
+            <select
+              value={academicSession}
+              onChange={(e) => setAcademicSession(e.target.value)}
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              title="Generate Session"
+            >
+              {SESSION_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="submit"
+              disabled={generating}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-indigo-600 text-white disabled:opacity-60"
+              title="Generate"
+            >
+              {generating ? (
+                <>
+                  <RefreshCcw className="w-3 h-3 animate-spin" />
+                  Gen...
+                </>
+              ) : (
+                <>
+                  <PlusCircle className="w-3 h-3" />
+                  Generate
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={fetchOrders}
+              disabled={loading}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
+              title="Refresh"
+            >
+              <RefreshCcw className="w-3 h-3" />
+              Refresh
+            </button>
+
+            <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-600">
+              <span title="Orders">{visibleOrders.length} orders</span>
+              <span title="Ordered">O:{orderedTotal}</span>
+              <span title="Received">R:{receivedTotal}</span>
+              <span title="Pending">P:{pendingTotal}</span>
+            </div>
+          </form>
+
+          {(error || info) && (
+            <div className="mt-2">
+              {error && (
+                <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                  {error}
+                </div>
+              )}
+              {info && (
+                <div className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
+                  {info}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
-      <main className="relative z-10 p-6 lg:p-8 space-y-6">
-        {/* Alerts */}
-        {(error || info) && (
-          <div className="space-y-3">
-            {error && (
-              <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs text-red-700 flex items-center gap-2">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
-                  !
-                </div>
-                <span>{error}</span>
-              </div>
-            )}
-            {info && (
-              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm text-xs text-emerald-700 flex items-center gap-2">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                  ✓
-                </div>
-                <span>{info}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Filters + Generate Orders (combined toolbar) */}
-        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg p-4 flex flex-col gap-4 text-xs">
-          <div className="flex flex-wrap gap-4 items-center justify-between">
-            {/* Left: Filters */}
-            <div className="flex flex-wrap gap-4">
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Filter by Session
-                </label>
-                <select
-                  value={filterSession}
-                  onChange={(e) => setFilterSession(e.target.value)}
-                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[140px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  <option value="">All sessions</option>
-                  {SESSION_OPTIONS.map((session) => (
-                    <option key={session} value={session}>
-                      {session}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Filter by School
-                </label>
-                <select
-                  value={filterSchoolId}
-                  onChange={(e) => setFilterSchoolId(e.target.value)}
-                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[200px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  <option value="">All schools</option>
-                  {Array.isArray(schools) &&
-                    schools.map((s) => (
-                      <option key={s.id} value={String(s.id)}>
-                        {s.name}
-                        {s.city ? ` (${s.city})` : ""}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Filter by Status / Receive
-                </label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[220px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  <option value="">All statuses</option>
-                  <option value="not_received">Not Received (0 received)</option>
-                  <option value="draft">Draft</option>
-                  <option value="sent">Ordered / Sent</option>
-                  <option value="partial_received">Partial Collected</option>
-                  <option value="completed">Collected (Fully)</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Right: Generate Orders */}
-            <form
-              onSubmit={handleGenerate}
-              className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-3"
-            >
-              <div>
-                <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Generate for Session
-                </label>
-                <select
-                  value={academicSession}
-                  onChange={(e) => setAcademicSession(e.target.value)}
-                  className="border border-slate-300 rounded-full px-3 py-1.5 bg-white min-w-[160px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                >
-                  {SESSION_OPTIONS.map((session) => (
-                    <option key={session} value={session}>
-                      {session}
-                    </option>
-                  ))}
-                </select>
-                {/* <p className="mt-1 text-[10px] text-slate-400 max-w-[220px]">
-                  Generates school-wise orders from confirmed requirements.
-                </p> */}
-              </div>
-
-              <div className="flex flex-row gap-2 sm:gap-3">
-                <button
-                  type="submit"
-                  disabled={generating}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[11px] font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {generating ? (
-                    <>
-                      <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      Generate Orders
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={fetchOrders}
-                  disabled={loading}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-full border border-slate-300 bg-white text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                >
-                  <RefreshCcw className="w-3.5 h-3.5" />
-                  Refresh
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Small legend */}
-          <div className="flex flex-wrap gap-2 text-[10px] text-slate-500 justify-end">
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-blue-300" />
-              Sent
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-amber-300" />
-              Partial
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-300" />
-              Completed
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-rose-300" />
-              Cancelled
-            </span>
-          </div>
-        </section>
-
-        {/* Orders List – SCHOOL → publisher-wise rows */}
-        <section className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-slate-200/60 p-5">
-          <div className="flex items-center justify-between mb-4 gap-2">
-            <h2 className="text-base font-semibold flex items-center gap-2 text-slate-800">
-              <BookOpen className="w-4 h-4 text-indigo-500" />
-              <span>School-wise Publisher Orders</span>
-            </h2>
-            <span className="text-xs text-slate-500">
-              Total School Orders: {visibleOrders.length}
-            </span>
+      {/* Listing (max space) */}
+      <main className="p-2">
+        <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-indigo-600" />
+            <span className="text-sm font-semibold">School → Publisher</span>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-10 text-sm text-slate-500">
-              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
-              Loading orders...
+            <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              Loading...
             </div>
           ) : schoolGroups.length === 0 ? (
-            <div className="text-sm text-slate-500 py-10 text-center">
-              No school orders found. Adjust filters or generate new orders.
-            </div>
+            <div className="p-6 text-sm text-slate-500">No orders.</div>
           ) : (
-            <div className="space-y-4 max-h-[420px] overflow-auto pr-1">
+            <div className="space-y-2 p-2 max-h-[68vh] overflow-auto">
               {schoolGroups.map((group) => (
                 <div
                   key={group.schoolId}
-                  className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-sm"
+                  className="border border-slate-200 rounded-lg overflow-hidden"
                 >
-                  {/* School heading */}
-                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900">
-                        {group.school?.name || "Unknown School"}
-                      </div>
-                      {group.school?.city && (
-                        <div className="text-[11px] text-slate-500">
-                          {group.school.city}
-                        </div>
-                      )}
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <div className="text-sm font-semibold">
+                      {group.school?.name || "Unknown"}
+                      {group.school?.city ? (
+                        <span className="text-xs text-slate-500 font-normal">
+                          {" "}
+                          ({group.school.city})
+                        </span>
+                      ) : null}
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      Orders in this school:{" "}
-                        <span className="font-semibold">
-                        {group.rows.length}
-                      </span>
+                      {group.rows.length} rows
                     </div>
                   </div>
 
-                  {/* Publisher rows for this school */}
                   <div className="overflow-auto">
                     <table className="w-full text-xs border-collapse">
-                      <thead className="bg-gradient-to-r from-indigo-50 to-purple-50">
+                      <thead className="bg-slate-100">
                         <tr>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Publisher
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Session
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                            Publisher Order No
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
+                            Order No (Edit)
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                            Order Date
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
+                            Date
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                            Ordered Qty
+                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
+                            O
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                            Received Qty
+                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
+                            R
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                            Pending
+                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
+                            P
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Status
                           </th>
-                          <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Actions
                           </th>
                         </tr>
                       </thead>
+
                       <tbody>
                         {group.rows.map((row) => {
                           const { order, publisher } = row;
                           const isSending = sendingOrderId === order.id;
-                          const status = order.status;
-                          const statusClass = statusChipClass(status);
-                          const statusText = statusLabel(status);
-                          const key = row.key;
-                          const currentOrderNo =
-                            publisherOrderNos[key] ?? order.order_no ?? "";
+                          const statusClass = statusChipClass(order.status);
 
-                          const isSavingPublisherMeta =
-                            savingPublisherMetaKey === key;
+                          const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
+                          const savingThis = savingOrderNoId === order.id;
 
                           return (
-                            <tr
-                              key={row.key}
-                              className="hover:bg-slate-50 transition-colors"
-                            >
-                              <td className="border-b border-slate-200 px-3 py-2 text-slate-800 font-medium">
+                            <tr key={row.key} className="hover:bg-slate-50">
+                              <td className="border-b border-slate-200 px-2 py-2 font-medium">
                                 {publisher.name}
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
+
+                              <td className="border-b border-slate-200 px-2 py-2 text-slate-600">
                                 {order.academic_session || "-"}
                               </td>
-                              {/* Editable publisher order no */}
-                              <td className="border-b border-slate-200 px-3 py-2">
-                                <div className="flex items-center gap-2">
+
+                              {/* ✅ EDIT HERE IN LISTING */}
+                              <td className="border-b border-slate-200 px-2 py-2">
+                                <div className="flex items-center gap-1">
                                   <input
-                                    type="text"
-                                    value={currentOrderNo}
+                                    value={draft}
                                     onChange={(e) =>
-                                      setPublisherOrderNos((prev) => ({
+                                      setOrderNoDrafts((prev) => ({
                                         ...prev,
-                                        [key]: e.target.value,
+                                        [order.id]: e.target.value,
                                       }))
                                     }
-                                    className="w-36 border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="Enter order no"
+                                    className="w-36 border border-slate-300 rounded-md px-2 py-1 text-[11px]"
+                                    placeholder={`#${order.id}`}
                                   />
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      handleSavePublisherOrderNo(
-                                        order,
-                                        publisher
-                                      )
-                                    }
-                                    disabled={isSavingPublisherMeta}
-                                    className="text-[10px] px-2 py-1 rounded-full bg-slate-900 text-white disabled:opacity-60"
+                                    onClick={() => handleSaveOrderNoFromListing(order.id)}
+                                    disabled={savingThis}
+                                    className="text-[11px] px-2 py-1 rounded-md bg-slate-900 text-white disabled:opacity-60"
                                   >
-                                    {isSavingPublisherMeta
-                                      ? "Saving..."
-                                      : "Save"}
+                                    {savingThis ? "..." : "Save"}
                                   </button>
                                 </div>
-                                <div className="text-[10px] text-slate-400 mt-0.5">
-                                  Base school order: {order.order_no}
-                                </div>
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2 text-slate-600">
+
+                              <td className="border-b border-slate-200 px-2 py-2 text-slate-600">
                                 {formatDate(order.order_date || order.createdAt)}
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+
+                              <td className="border-b border-slate-200 px-2 py-2 text-right">
                                 {row.orderedTotal}
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+                              <td className="border-b border-slate-200 px-2 py-2 text-right">
                                 {row.receivedTotal}
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2 text-right text-slate-700">
+                              <td className="border-b border-slate-200 px-2 py-2 text-right">
                                 {row.pendingTotal}
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2">
-                                <span
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusClass}`}
-                                >
-                                  {statusText}
+
+                              <td className="border-b border-slate-200 px-2 py-2">
+                                <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusClass}`}>
+                                  {statusLabel(order.status)}
                                 </span>
                               </td>
-                              <td className="border-b border-slate-200 px-3 py-2">
-                                <div className="flex flex-wrap items-center gap-1.5">
+
+                              <td className="border-b border-slate-200 px-2 py-2">
+                                <div className="flex flex-wrap items-center gap-1">
                                   <button
                                     type="button"
                                     onClick={() => handleOpenView(order)}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                                   >
                                     <Eye className="w-3 h-3" />
-                                    View / Receive
+                                    View
                                   </button>
 
-                                  {/* Email for this publisher */}
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      handleSendEmail(order, publisher.id)
-                                    }
+                                    onClick={() => handleSendEmail(order, publisher.id)}
                                     disabled={isSending}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60"
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 text-[11px]"
                                   >
                                     <Send className="w-3 h-3" />
-                                    {isSending ? "Sending..." : "Email"}
+                                    {isSending ? "..." : "Email"}
                                   </button>
 
-                                  {/* PDF for this publisher */}
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      handleViewPdf(order, publisher.id)
-                                    }
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-slate-300 text-slate-700 bg-white hover:bg-slate-100"
+                                    onClick={() => handleViewPdf(order, publisher.id)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                                   >
                                     <FileText className="w-3 h-3" />
                                     PDF
@@ -1189,53 +1009,14 @@ const SchoolOrdersPageClient: React.FC = () => {
             </div>
           )}
         </section>
-
-        {/* Summary Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-xs text-slate-500">
-              Total Books Ordered (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-slate-900">
-              {orderedTotal}
-            </span>
-            <span className="mt-1 text-xs text-slate-400">
-              Across {visibleOrders.length} school order(s)
-            </span>
-          </div>
-
-          <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-xs text-emerald-700">
-              Total Books Received (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-emerald-800">
-              {receivedTotal}
-            </span>
-            <span className="mt-1 text-xs text-emerald-600">
-              Updated from receive entries
-            </span>
-          </div>
-
-          <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-100 rounded-2xl shadow-lg px-4 py-4 flex flex-col">
-            <span className="text-xs text-amber-700">
-              Pending to Receive (Qty)
-            </span>
-            <span className="mt-1 text-xl font-bold text-amber-800">
-              {pendingTotal}
-            </span>
-            <span className="mt-1 text-xs text-amber-600">
-              Ordered – Received (current filters)
-            </span>
-          </div>
-        </section>
       </main>
 
-      {/* View / Receive Modal – same as before (for detailed items) */}
+      {/* Modal (same compact version) */}
       {viewOrder && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
-            {/* Modal header */}
-            <div className="px-5 py-4 border-b flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 bg-gradient-to-r from-indigo-50 to-slate-50">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="px-3 py-2 border-b bg-slate-50 flex flex-col gap-2">
               {(() => {
                 const school = getOrderSchool(viewOrder);
                 const items = getOrderItems(viewOrder);
@@ -1245,527 +1026,334 @@ const SchoolOrdersPageClient: React.FC = () => {
                   const p = it.book?.publisher;
                   const pid =
                     p?.id ??
-                    (it.book?.publisher_id
-                      ? Number(it.book.publisher_id)
-                      : undefined);
+                    (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
                   if (!pid) return;
                   const name = p?.name || `Publisher #${pid}`;
-                  if (!publishersMap.has(pid)) {
-                    publishersMap.set(pid, { id: pid, name });
-                  }
+                  if (!publishersMap.has(pid)) publishersMap.set(pid, { id: pid, name });
                 });
                 const publishers = Array.from(publishersMap.values());
 
-                const transport = viewOrder.transport;
-
                 return (
                   <>
-                    {/* LEFT: Order + transport summary */}
-                    <div className="space-y-1 flex-1">
-                      <h3 className="text-sm sm:text-base font-semibold text-slate-900 flex items-center gap-2">
-                        <Package className="w-4 h-4 text-indigo-500" />
-                        <span>Order Details – {viewOrder.order_no}</span>
-                      </h3>
-                      <p className="text-xs text-slate-500">
-                        School:{" "}
-                        <span className="font-medium">
-                          {school?.name || "-"}
-                          {school?.city ? ` (${school.city})` : ""}
-                        </span>{" "}
-                        · Session:{" "}
-                        <span className="font-medium">
-                          {viewOrder.academic_session || "-"}
-                        </span>{" "}
-                        · Date:{" "}
-                        <span className="font-medium">
-                          {formatDate(
-                            viewOrder.order_date || viewOrder.createdAt
-                          )}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Package className="w-4 h-4 text-indigo-600" />
+                        <span className="text-sm font-semibold">
+                          {school?.name || "School"}{" "}
+                          <span className="text-xs text-slate-500 font-normal">
+                            ({viewOrder.academic_session || "-"})
+                          </span>
                         </span>
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Status:{" "}
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(
-                            viewOrder.status
-                          )}`}
-                        >
-                          {statusLabel(viewOrder.status)}
-                        </span>
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        Items:{" "}
-                        <span className="font-semibold">{items.length}</span>
-                      </p>
+                      </div>
 
-                      {(viewOrder.transport_through ||
-                        viewOrder.notes ||
-                        transport) && (
-                        <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] text-slate-500">
-                          {(transport || viewOrder.transport_through) && (
-                            <div>
-                              <span className="font-medium text-slate-600">
-                                Transport:
-                              </span>
-                              <div className="mt-0.5">
-                                {transport?.name ? (
-                                  <>
-                                    <span className="font-semibold text-slate-800">
-                                      {transport.name}
-                                    </span>
-                                    {transport.city && (
-                                      <span className="text-slate-500">
-                                        {" "}
-                                        ({transport.city})
-                                      </span>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="font-semibold text-slate-800">
-                                    {viewOrder.transport_through || "-"}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {viewOrder.notes && (
-                            <div>
-                              <span className="font-medium text-slate-600">
-                                Notes:
-                              </span>
-                              <div className="mt-0.5 text-slate-700 whitespace-pre-wrap">
-                                {viewOrder.notes}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* RIGHT: PDF + meta form + actions */}
-                    <div className="flex flex-col items-end gap-2 lg:w-[260px]">
-                      {/* PDF buttons */}
-                      <div className="flex flex-wrap gap-1 justify-end w-full">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           onClick={() => handleViewPdf(viewOrder)}
-                          className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
+                          className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
                         >
-                          <FileText className="w-3 h-3" />
-                          PDF (All)
+                          <FileText className="w-3 h-3" /> PDF All
                         </button>
                         {publishers.map((p) => (
                           <button
                             key={p.id}
                             onClick={() => handleViewPdf(viewOrder, p.id)}
-                            className="text-[11px] px-3 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
+                            className="text-[11px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
                           >
                             <FileText className="w-3 h-3" />
                             {p.name}
                           </button>
                         ))}
                       </div>
+                    </div>
 
-                      {/* Transport & Notes editor */}
-                      <div className="w-full mt-1 p-2 border border-slate-200 rounded-xl bg-white/90 shadow-sm flex flex-col gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold text-slate-700">
-                            Transport & Notes
-                          </span>
+                    {/* Order No + Meta in one line */}
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">
+                          Order No
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={baseOrderNoDraft}
+                            onChange={(e) => setBaseOrderNoDraft(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSaveBaseOrderNo}
+                            disabled={savingBaseOrderNo}
+                            className="text-[11px] px-2 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
+                          >
+                            {savingBaseOrderNo ? "..." : "Save"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">
+                          Transport
+                        </label>
+                        <select
+                          value={metaTransportId}
+                          onChange={(e) => setMetaTransportId(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white"
+                        >
+                          <option value="">-- Select --</option>
+                          {transports.map((t) => (
+                            <option key={t.id} value={String(t.id)}>
+                              {t.name}
+                              {t.city ? ` (${t.city})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">
+                          Through
+                        </label>
+                        <input
+                          value={metaTransportThrough}
+                          onChange={(e) => setMetaTransportThrough(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
+                          placeholder="DTDC / By Bus..."
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">
+                          Notes
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={metaNotes}
+                            onChange={(e) => setMetaNotes(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
+                            placeholder="Optional..."
+                          />
                           <button
                             type="button"
                             onClick={handleMetaSave}
                             disabled={metaSaving}
-                            className="text-[10px] px-2 py-1 rounded-full bg-slate-900 text-white disabled:opacity-60"
+                            className="text-[11px] px-2 py-1 rounded-lg bg-indigo-600 text-white disabled:opacity-60"
                           >
-                            {metaSaving ? "Saving..." : "Save"}
+                            {metaSaving ? "..." : "Save"}
                           </button>
                         </div>
-
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] text-slate-500">
-                            Through (Transport)
-                          </label>
-                          <select
-                            value={metaTransportId}
-                            onChange={(e) =>
-                              setMetaTransportId(e.target.value)
-                            }
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                          >
-                            <option value="">-- Select Transport --</option>
-                            {transports.map((t) => (
-                              <option key={t.id} value={String(t.id)}>
-                                {t.name}
-                                {t.city ? ` (${t.city})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          <p className="text-[10px] text-slate-400">
-                            Or enter manual text below.
-                          </p>
-                        </div>
-
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] text-slate-500">
-                            Through (Manual Text)
-                          </label>
-                          <input
-                            type="text"
-                            value={metaTransportThrough}
-                            onChange={(e) =>
-                              setMetaTransportThrough(e.target.value)
-                            }
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="e.g., By Bus, By Hand, DTDC, etc."
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] text-slate-500">
-                            Notes
-                          </label>
-                          <textarea
-                            rows={2}
-                            value={metaNotes}
-                            onChange={(e) => setMetaNotes(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] resize-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                            placeholder="Optional dispatch / packing notes..."
-                          />
-                        </div>
                       </div>
+                    </div>
 
-                      {/* Receive / Cancel buttons */}
-                      <div className="flex flex-wrap items-center gap-2 mt-1">
-                        {viewOrder.status !== "cancelled" && (
-                          <>
-                            {!isReceiving && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {viewOrder.status !== "cancelled" && (
+                        <>
+                          {!isReceiving ? (
+                            <button
+                              onClick={startReceiving}
+                              className="text-[11px] px-3 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700"
+                            >
+                              Receive
+                            </button>
+                          ) : (
+                            <>
                               <button
-                                onClick={startReceiving}
-                                className="text-[11px] px-3 py-1 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                              >
-                                Receive Books
-                              </button>
-                            )}
-                            {isReceiving && (
-                              <>
-                                <button
-                                  onClick={handleReceiveSave}
-                                  disabled={savingReceive}
-                                  className="text-[11px] px-3 py-1 rounded-full border border-slate-900 bg-slate-900 text-white disabled:opacity-60"
-                                >
-                                  {savingReceive
-                                    ? "Saving..."
-                                    : "Save Receive"}
-                                </button>
-                                <button
-                                  onClick={() => setIsReceiving(false)}
-                                  disabled={savingReceive}
-                                  className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
-                                >
-                                  Cancel Edit
-                                </button>
-                              </>
-                            )}
-                            {!isReceiving && (
-                              <button
-                                onClick={handleCancelOrder}
+                                onClick={handleReceiveSave}
                                 disabled={savingReceive}
-                                className="text-[11px] px-3 py-1 rounded-full border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                                className="text-[11px] px-3 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
                               >
-                                Mark as Cancelled
+                                {savingReceive ? "..." : "Save Receive"}
                               </button>
-                            )}
-                          </>
-                        )}
+                              <button
+                                onClick={() => setIsReceiving(false)}
+                                disabled={savingReceive}
+                                className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          )}
 
-                        <button
-                          onClick={() => {
-                            setViewOrder(null);
-                            setIsReceiving(false);
-                          }}
-                          className="text-[11px] px-3 py-1 rounded-full border border-slate-300 bg-white hover:bg-slate-100"
-                        >
-                          Close
-                        </button>
-                      </div>
+                          {!isReceiving && (
+                            <button
+                              onClick={handleCancelOrder}
+                              disabled={savingReceive}
+                              className="text-[11px] px-3 py-1 rounded-lg border border-red-300 bg-red-50 text-red-700 disabled:opacity-60"
+                            >
+                              Cancel Order
+                            </button>
+                          )}
+                        </>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          setViewOrder(null);
+                          setIsReceiving(false);
+                        }}
+                        className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white"
+                      >
+                        Close
+                      </button>
                     </div>
                   </>
                 );
               })()}
             </div>
 
-            {/* Modal body */}
-            <div className="p-4 overflow-auto text-xs flex-1">
+            {/* Body */}
+            <div className="p-2 overflow-auto text-xs flex-1">
               {(() => {
                 const items = getOrderItems(viewOrder);
                 const school = getOrderSchool(viewOrder);
-
-                if (!items || items.length === 0) {
-                  return (
-                    <div className="text-slate-500 py-6">
-                      No items found for this order.
-                    </div>
-                  );
-                }
+                if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
 
                 return (
-                  <>
-                    <div className="mb-3 text-xs text-slate-600 flex flex-wrap gap-3 justify-between">
-                      <span>
-                        Total Books:{" "}
-                        <span className="font-semibold">{items.length}</span>
-                      </span>
-                      <span>
-                        Total Quantity:{" "}
-                        <span className="font-semibold">
-                          {totalQtyFromItems(items)}
-                        </span>
-                      </span>
-                      <span>
-                        Total Received:{" "}
-                        <span className="font-semibold">
-                          {totalReceivedFromItems(items)}
-                        </span>
-                      </span>
-                    </div>
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-slate-100">
+                        <tr>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left w-36">School</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left w-40">Publisher</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left">Book</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left w-20">Class</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left w-24">Subject</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-left w-24">Code/ISBN</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-right w-16">O</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-right w-20">R</th>
+                          <th className="border-b border-slate-200 px-2 py-1 text-right w-16">P</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          type PublisherGroup = {
+                            key: string;
+                            publisherName: string;
+                            items: SchoolOrderItem[];
+                          };
 
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
-                      <table className="w-full text-xs border-collapse">
-                        <thead className="bg-slate-100">
-                          <tr>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left w-32">
-                              School
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left w-32">
-                              Publisher
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left">
-                              Book
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left">
-                              Class
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left">
-                              Subject
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-left">
-                              Code / ISBN
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-right">
-                              Ordered
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-right">
-                              Received
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1 text-right">
-                              Pending
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(() => {
-                            type PublisherGroup = {
-                              key: string;
-                              publisherName: string;
-                              items: SchoolOrderItem[];
-                            };
+                          const groupsMap = new Map<string, PublisherGroup>();
 
-                            const groupsMap = new Map<string, PublisherGroup>();
+                          items.forEach((item) => {
+                            const p = item.book?.publisher;
+                            const pid =
+                              p?.id ??
+                              (item.book?.publisher_id ? Number(item.book.publisher_id) : 0);
+                            const key = pid ? String(pid) : "no_publisher";
+                            const publisherName =
+                              p?.name || (pid ? `Publisher #${pid}` : "No Publisher");
 
-                            items.forEach((item) => {
-                              const p = item.book?.publisher;
-                              const pid =
-                                p?.id ??
-                                (item.book?.publisher_id
-                                  ? Number(item.book.publisher_id)
-                                  : 0);
-                              const key = pid ? String(pid) : "no_publisher";
-                              const publisherName =
-                                p?.name ||
-                                (pid
-                                  ? `Publisher #${pid}`
-                                  : "No Publisher / Misc");
+                            if (!groupsMap.has(key)) {
+                              groupsMap.set(key, { key, publisherName, items: [item] });
+                            } else {
+                              groupsMap.get(key)!.items.push(item);
+                            }
+                          });
 
-                              if (!groupsMap.has(key)) {
-                                groupsMap.set(key, {
-                                  key,
-                                  publisherName,
-                                  items: [item],
-                                });
-                              } else {
-                                groupsMap.get(key)!.items.push(item);
-                              }
-                            });
+                          const groups = Array.from(groupsMap.values());
+                          const totalRows = groups.reduce((sum, g) => sum + g.items.length, 0);
+                          let schoolCellRendered = false;
 
-                            const groups = Array.from(groupsMap.values());
+                          return groups.map((group) => (
+                            <React.Fragment key={group.key}>
+                              {group.items.map((item, idxInGroup) => {
+                                const ordered = Number(item.total_order_qty) || 0;
+                                const rawVal =
+                                  receiveForm[item.id] ?? String(item.received_qty ?? 0);
 
-                            const totalRows = groups.reduce(
-                              (sum, g) => sum + g.items.length,
-                              0
-                            );
+                                const numericReceived = Number(rawVal) >= 0 ? Number(rawVal) : 0;
+                                const effectiveReceived = isNaN(numericReceived)
+                                  ? 0
+                                  : Math.min(numericReceived, ordered);
 
-                            let schoolCellRendered = false;
+                                const backendReceived = Number(item.received_qty ?? 0) || 0;
+                                const displayReceived = isReceiving ? effectiveReceived : backendReceived;
 
-                            return groups.map((group) => (
-                              <React.Fragment key={group.key}>
-                                {group.items.map((item, idxInGroup) => {
-                                  const ordered =
-                                    Number(item.total_order_qty) || 0;
-                                  const rawVal =
-                                    receiveForm[item.id] ??
-                                    String(item.received_qty ?? 0);
-                                  const numericReceived =
-                                    Number(rawVal) >= 0
-                                      ? Number(rawVal)
-                                      : 0;
-                                  const effectiveReceived = isNaN(
-                                    numericReceived
-                                  )
-                                    ? 0
-                                    : Math.min(numericReceived, ordered);
-                                  const backendReceived =
-                                    Number(item.received_qty ?? 0) || 0;
+                                const pendingWhenNotEditing =
+                                  item.pending_qty != null
+                                    ? Math.max(Number(item.pending_qty) || 0, 0)
+                                    : Math.max(ordered - backendReceived, 0);
 
-                                  const displayReceived = isReceiving
-                                    ? effectiveReceived
-                                    : backendReceived;
+                                const pending = isReceiving
+                                  ? Math.max(ordered - effectiveReceived, 0)
+                                  : pendingWhenNotEditing;
 
-                                  const pendingWhenNotEditing =
-                                    item.pending_qty != null
-                                      ? Math.max(
-                                          Number(item.pending_qty) || 0,
-                                          0
-                                        )
-                                      : Math.max(
-                                          ordered - backendReceived,
-                                          0
-                                        );
+                                const showSchoolCell = !schoolCellRendered;
+                                const showPublisherCell = idxInGroup === 0;
+                                if (showSchoolCell) schoolCellRendered = true;
 
-                                  const pending = isReceiving
-                                    ? Math.max(
-                                        ordered - effectiveReceived,
-                                        0
-                                      )
-                                    : pendingWhenNotEditing;
+                                return (
+                                  <tr key={item.id} className="hover:bg-slate-50">
+                                    {showSchoolCell && (
+                                      <td
+                                        rowSpan={totalRows}
+                                        className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-semibold"
+                                      >
+                                        {school?.name || "-"}
+                                        {school?.city ? (
+                                          <span className="block text-[10px] text-slate-500 font-normal">
+                                            {school.city}
+                                          </span>
+                                        ) : null}
+                                      </td>
+                                    )}
 
-                                  const showSchoolCell = !schoolCellRendered;
-                                  const showPublisherCell = idxInGroup === 0;
+                                    {showPublisherCell && (
+                                      <td
+                                        rowSpan={group.items.length}
+                                        className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-medium text-indigo-700"
+                                      >
+                                        {group.publisherName}
+                                      </td>
+                                    )}
 
-                                  if (showSchoolCell) {
-                                    schoolCellRendered = true;
-                                  }
-
-                                  return (
-                                    <tr
-                                      key={item.id}
-                                      className="hover:bg-slate-50 transition-colors"
-                                    >
-                                      {showSchoolCell && (
-                                        <td
-                                          rowSpan={totalRows}
-                                          className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-semibold text-slate-800"
-                                        >
-                                          {school?.name || "-"}
-                                          {school?.city && (
-                                            <span className="block text-[10px] text-slate-500">
-                                              {school.city}
-                                            </span>
-                                          )}
-                                        </td>
+                                    <td className="border-b border-slate-200 px-2 py-1">
+                                      {item.book?.title || `Book #${item.book_id}`}
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1">
+                                      {item.book?.class_name || "-"}
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1">
+                                      {item.book?.subject || "-"}
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1">
+                                      {item.book?.code || item.book?.isbn || "-"}
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                      {ordered}
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                      {isReceiving ? (
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          max={ordered}
+                                          value={rawVal}
+                                          onChange={(e) =>
+                                            handleReceiveChange(item.id, e.target.value)
+                                          }
+                                          className="w-16 border border-slate-300 rounded-md px-1 py-0.5 text-right text-[11px]"
+                                        />
+                                      ) : (
+                                        displayReceived
                                       )}
-
-                                      {showPublisherCell && (
-                                        <td
-                                          rowSpan={group.items.length}
-                                          className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-medium text-indigo-700"
-                                        >
-                                          {group.publisherName}
-                                        </td>
-                                      )}
-
-                                      <td className="border-b border-slate-200 px-2 py-1">
-                                        {item.book?.title ||
-                                          `Book #${item.book_id}`}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1">
-                                        {item.book?.class_name || "-"}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1">
-                                        {item.book?.subject || "-"}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1">
-                                        {item.book?.code ||
-                                          item.book?.isbn ||
-                                          "-"}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                        {ordered}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                        {isReceiving ? (
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            max={ordered}
-                                            value={rawVal}
-                                            onChange={(e) =>
-                                              handleReceiveChange(
-                                                item.id,
-                                                e.target.value
-                                              )
-                                            }
-                                            className="w-20 border border-slate-300 rounded-lg px-1 py-0.5 text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-                                          />
-                                        ) : (
-                                          displayReceived
-                                        )}
-                                      </td>
-                                      <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                        {pending}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </React.Fragment>
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
+                                    </td>
+                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
+                                      {pending}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
                 );
               })()}
             </div>
           </div>
         </div>
       )}
-
-      <style jsx>{`
-        @keyframes blob {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(30px, -50px) scale(1.1);
-          }
-          66% {
-            transform: translate(-20px, 20px) scale(0.9);
-          }
-          100% {
-            transform: translate(0px, 0px) scale(1);
-          }
-        }
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-      `}</style>
     </div>
   );
 };
