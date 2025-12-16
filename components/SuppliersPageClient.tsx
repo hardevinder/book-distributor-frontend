@@ -166,7 +166,9 @@ const SuppliersPageClient: React.FC = () => {
       const msg =
         err?.message ||
         err?.response?.data?.error ||
-        (editingId ? "Failed to update supplier." : "Failed to create supplier.");
+        (editingId
+          ? "Failed to update supplier."
+          : "Failed to create supplier.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -506,7 +508,9 @@ const SuppliersPageClient: React.FC = () => {
                       name="name"
                       value={form.name}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[0] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[0] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(0)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Supplier name"
@@ -518,7 +522,9 @@ const SuppliersPageClient: React.FC = () => {
                       name="contact_person"
                       value={form.contact_person}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[1] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[1] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(1)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Contact person"
@@ -530,7 +536,9 @@ const SuppliersPageClient: React.FC = () => {
                       name="phone"
                       value={form.phone}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[2] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[2] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(2)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Phone"
@@ -543,7 +551,9 @@ const SuppliersPageClient: React.FC = () => {
                       type="email"
                       value={form.email}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[3] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[3] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(3)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Email"
@@ -555,7 +565,9 @@ const SuppliersPageClient: React.FC = () => {
                       name="address"
                       value={form.address}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[4] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[4] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(4)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
                       rows={1}
@@ -584,7 +596,9 @@ const SuppliersPageClient: React.FC = () => {
                           name="name"
                           value={form.name}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[0] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[0] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(0)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -595,7 +609,9 @@ const SuppliersPageClient: React.FC = () => {
                           name="contact_person"
                           value={form.contact_person}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[1] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[1] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(1)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -606,7 +622,9 @@ const SuppliersPageClient: React.FC = () => {
                           name="phone"
                           value={form.phone}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[2] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[2] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(2)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -618,7 +636,9 @@ const SuppliersPageClient: React.FC = () => {
                           type="email"
                           value={form.email}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[3] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[3] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(3)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -629,7 +649,9 @@ const SuppliersPageClient: React.FC = () => {
                           name="address"
                           value={form.address}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[4] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[4] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(4)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
                           rows={1}
