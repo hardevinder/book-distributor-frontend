@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Sparkles,
   Truck,
+  Users, // ✅ added
 } from "lucide-react";
 
 const DashboardContent: React.FC = () => {
@@ -120,6 +121,34 @@ const DashboardContent: React.FC = () => {
                   Configure Header
                 </span>
                 <ChevronRight className="w-4 h-4 text-emerald-600 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            {/* ✅ Suppliers (BEFORE Publishers) */}
+            <Link
+              href="/suppliers"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <Users className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Suppliers
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Manage your supplier directory. Add supplier details and
+                    keep procurement contacts organized.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-amber-700 font-medium">
+                  Manage Suppliers
+                </span>
+                <ChevronRight className="w-4 h-4 text-amber-600 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
 

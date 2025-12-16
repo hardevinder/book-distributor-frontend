@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -16,6 +16,16 @@ import {
 } from "lucide-react";
 
 /* ---------- Types ---------- */
+
+type SupplierLite = {
+  id: number;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  address_line1?: string | null;
+  full_address?: string | null;
+};
 
 type PublisherLite = { id: number; name: string };
 
@@ -49,20 +59,34 @@ type SchoolOrderItem = {
 type SchoolOrder = {
   id: number;
   school_id: number;
+  supplier_id: number;
+
   school?: School;
   School?: School;
+
+  supplier?: SupplierLite | null;
+
   order_no: string;
   academic_session?: string | null;
   order_date?: string | null;
   createdAt?: string;
   status: string;
+
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
 
+  // Option 1
   transport_id?: number | null;
   transport_through?: string | null;
-  notes?: string | null;
   transport?: TransportLite | null;
+
+  // Option 2
+  transport_id_2?: number | null;
+  transport_through_2?: string | null;
+  transport2?: TransportLite | null;
+
+  // Notes (highlighted in PDF footer)
+  notes?: string | null;
 };
 
 /* ---------- Session Options ---------- */
@@ -88,8 +112,7 @@ const normalizeSchools = (payload: any): School[] => {
 
 const normalizeTransports = (payload: any): TransportLite[] => {
   if (Array.isArray(payload)) return payload as TransportLite[];
-  if (payload && Array.isArray(payload.data))
-    return payload.data as TransportLite[];
+  if (payload && Array.isArray(payload.data)) return payload.data as TransportLite[];
   return [];
 };
 
@@ -99,10 +122,11 @@ const getOrderSchool = (order: SchoolOrder | any): School | undefined =>
 const getOrderItems = (order: SchoolOrder | any): SchoolOrderItem[] => {
   if (!order) return [];
   if (Array.isArray(order.items)) return order.items as SchoolOrderItem[];
-  if (Array.isArray(order.SchoolOrderItems))
-    return order.SchoolOrderItems as SchoolOrderItem[];
+  if (Array.isArray(order.SchoolOrderItems)) return order.SchoolOrderItems as SchoolOrderItem[];
   return [];
 };
+
+const safeStr = (v: any) => String(v ?? "").trim();
 
 const formatDate = (value?: string | null) => {
   if (!value) return "-";
@@ -154,8 +178,7 @@ const statusChipClass = (status: string | undefined) => {
   }
 };
 
-const makePublisherKey = (orderId: number, publisherId: number) =>
-  `${orderId}:${publisherId}`;
+const makeSupplierKey = (orderId: number, supplierId: number) => `${orderId}:${supplierId}`;
 
 /* ---------- Component ---------- */
 
@@ -184,18 +207,24 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
 
   const [metaSaving, setMetaSaving] = useState(false);
+
+  // Option 1
   const [metaTransportId, setMetaTransportId] = useState<string>("");
   const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
+
+  // Option 2
+  const [metaTransportId2, setMetaTransportId2] = useState<string>("");
+  const [metaTransportThrough2, setMetaTransportThrough2] = useState<string>("");
+
+  // Notes
   const [metaNotes, setMetaNotes] = useState<string>("");
 
-  // ✅ Modal base order no edit (existing)
+  // Modal base order no edit
   const [baseOrderNoDraft, setBaseOrderNoDraft] = useState<string>("");
   const [savingBaseOrderNo, setSavingBaseOrderNo] = useState(false);
 
-  // ✅ Listing base order no edit (NEW)
-  const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>(
-    {}
-  );
+  // Listing base order no edit
+  const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>({});
   const [savingOrderNoId, setSavingOrderNoId] = useState<number | null>(null);
 
   /* ---------- Data fetching ---------- */
@@ -233,7 +262,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setOrders(list || []);
 
-      // ✅ keep drafts in sync (do not overwrite user typing if already set)
+      // keep drafts in sync (do not overwrite user typing if already set)
       setOrderNoDrafts((prev) => {
         const next = { ...prev };
         (list || []).forEach((o) => {
@@ -286,7 +315,8 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  const handleSendEmail = async (order: SchoolOrder, publisherId?: number) => {
+  // ✅ Supplier-wise: no publisher_id now
+  const handleSendEmail = async (order: SchoolOrder) => {
     if (!order.id) {
       setError("Order ID missing.");
       return;
@@ -297,10 +327,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     setSendingOrderId(order.id);
 
     try {
-      const path = publisherId
-        ? `/api/school-orders/${order.id}/send-email?publisher_id=${publisherId}`
-        : `/api/school-orders/${order.id}/send-email`;
-
+      const path = `/api/school-orders/${order.id}/send-email`;
       const res = await api.post(path);
       setInfo(res?.data?.message || "Email sent.");
       await fetchOrders();
@@ -312,16 +339,14 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  const handleViewPdf = async (order: SchoolOrder, publisherId?: number) => {
+  // ✅ Supplier-wise PDF
+  const handleViewPdf = async (order: SchoolOrder) => {
     if (!order.id) return;
     setError(null);
     setInfo(null);
 
     try {
-      const path = publisherId
-        ? `/api/school-orders/${order.id}/pdf?publisher_id=${publisherId}`
-        : `/api/school-orders/${order.id}/pdf`;
-
+      const path = `/api/school-orders/${order.id}/pdf`;
       const res = await api.get(path, { responseType: "blob" });
 
       const contentType = res.headers?.["content-type"] || "";
@@ -352,8 +377,11 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
     setMetaTransportThrough(order.transport_through || "");
-    setMetaNotes(order.notes || "");
 
+    setMetaTransportId2(order.transport_id_2 ? String(order.transport_id_2) : "");
+    setMetaTransportThrough2(order.transport_through_2 || "");
+
+    setMetaNotes(order.notes || "");
     setBaseOrderNoDraft(order.order_no || "");
   };
 
@@ -398,14 +426,15 @@ const SchoolOrdersPageClient: React.FC = () => {
       setViewOrder(updatedOrder);
       setIsReceiving(false);
 
-      setMetaTransportId(
-        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
-      );
+      setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
       setMetaTransportThrough(updatedOrder.transport_through || "");
+
+      setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
+      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
+
       setMetaNotes(updatedOrder.notes || "");
       setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
 
-      // keep listing draft in sync
       setOrderNoDrafts((prev) => ({
         ...prev,
         [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
@@ -444,10 +473,12 @@ const SchoolOrdersPageClient: React.FC = () => {
       setViewOrder(updatedOrder);
       setIsReceiving(false);
 
-      setMetaTransportId(
-        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
-      );
+      setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
       setMetaTransportThrough(updatedOrder.transport_through || "");
+
+      setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
+      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
+
       setMetaNotes(updatedOrder.notes || "");
       setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
 
@@ -474,9 +505,11 @@ const SchoolOrdersPageClient: React.FC = () => {
     try {
       const payload = {
         transport_id: metaTransportId ? Number(metaTransportId) : null,
-        transport_through: metaTransportThrough.trim()
-          ? metaTransportThrough.trim()
-          : null,
+        transport_through: metaTransportThrough.trim() ? metaTransportThrough.trim() : null,
+
+        transport_id_2: metaTransportId2 ? Number(metaTransportId2) : null,
+        transport_through_2: metaTransportThrough2.trim() ? metaTransportThrough2.trim() : null,
+
         notes: metaNotes.trim() ? metaNotes.trim() : null,
       };
 
@@ -484,14 +517,14 @@ const SchoolOrdersPageClient: React.FC = () => {
       const updatedOrder: SchoolOrder = res.data.order;
 
       setViewOrder(updatedOrder);
-      setOrders((prev) =>
-        prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o))
-      );
+      setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
 
-      setMetaTransportId(
-        updatedOrder.transport_id ? String(updatedOrder.transport_id) : ""
-      );
+      setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
       setMetaTransportThrough(updatedOrder.transport_through || "");
+
+      setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
+      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
+
       setMetaNotes(updatedOrder.notes || "");
 
       setInfo(res.data?.message || "Meta saved.");
@@ -503,7 +536,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ Modal Save (existing)
+  // Modal Save
   const handleSaveBaseOrderNo = async () => {
     if (!viewOrder) return;
 
@@ -525,11 +558,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       setInfo(res?.data?.message || "Order no updated.");
 
       setViewOrder((prev) => (prev ? { ...prev, order_no: newNo } : prev));
-      setOrders((prev) =>
-        prev.map((o) => (o.id === viewOrder.id ? { ...o, order_no: newNo } : o))
-      );
-
-      // sync listing drafts too
+      setOrders((prev) => prev.map((o) => (o.id === viewOrder.id ? { ...o, order_no: newNo } : o)));
       setOrderNoDrafts((prev) => ({ ...prev, [viewOrder.id]: newNo }));
     } catch (err: any) {
       console.error(err);
@@ -539,7 +568,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ Listing Save (NEW)
+  // Listing Save
   const handleSaveOrderNoFromListing = async (orderId: number) => {
     const newNo = String(orderNoDrafts[orderId] || "").trim();
     if (!newNo) {
@@ -558,12 +587,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setInfo(res?.data?.message || "Order no updated.");
 
-      // optimistic update
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o))
-      );
-
-      // if same order is open in modal, sync there too
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o)));
       setViewOrder((prev) => (prev?.id === orderId ? { ...prev, order_no: newNo } : prev));
       if (viewOrder?.id === orderId) setBaseOrderNoDraft(newNo);
     } catch (err: any) {
@@ -595,7 +619,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
-  const aggregate = (() => {
+  const aggregate = useMemo(() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
     visibleOrders.forEach((o) => {
@@ -608,15 +632,16 @@ const SchoolOrdersPageClient: React.FC = () => {
       receivedTotal,
       pendingTotal: Math.max(orderedTotal - receivedTotal, 0),
     };
-  })();
+  }, [visibleOrders]);
 
   const { orderedTotal, receivedTotal, pendingTotal } = aggregate;
 
-  type PublisherRow = {
+  type SupplierRow = {
     key: string;
     order: SchoolOrder;
     school: School | undefined;
-    publisher: PublisherLite;
+    supplierId: number;
+    supplierName: string;
     orderedTotal: number;
     receivedTotal: number;
     pendingTotal: number;
@@ -625,56 +650,46 @@ const SchoolOrdersPageClient: React.FC = () => {
   const schoolGroups: {
     schoolId: number;
     school: School | undefined;
-    rows: PublisherRow[];
-  }[] = (() => {
-    const map = new Map<number, { school: School | undefined; rows: PublisherRow[] }>();
+    rows: SupplierRow[];
+  }[] = useMemo(() => {
+    const map = new Map<number, { school: School | undefined; rows: SupplierRow[] }>();
 
     visibleOrders.forEach((order) => {
       const school = getOrderSchool(order);
       const schoolId = order.school_id;
       const items = getOrderItems(order);
 
-      const publishersMap = new Map<number, { publisher: PublisherLite; items: SchoolOrderItem[] }>();
+      const supplierId = Number(order.supplier_id);
+      const supplierName =
+        order.supplier?.name ||
+        (supplierId ? `Supplier #${supplierId}` : "Supplier");
 
-      items.forEach((it) => {
-        const p = it.book?.publisher;
-        const pid = p?.id ?? (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
-        if (!pid) return;
-        const name = p?.name || `Publisher #${pid}`;
+      const ordTotal = totalQtyFromItems(items);
+      const recTotal = totalReceivedFromItems(items);
 
-        if (!publishersMap.has(pid)) {
-          publishersMap.set(pid, { publisher: { id: pid, name }, items: [it] });
-        } else {
-          publishersMap.get(pid)!.items.push(it);
-        }
-      });
-
-      const rows: PublisherRow[] = [];
-      publishersMap.forEach((pubGroup, pid) => {
-        const ordTotal = totalQtyFromItems(pubGroup.items);
-        const recTotal = totalReceivedFromItems(pubGroup.items);
-        rows.push({
-          key: makePublisherKey(order.id, pid),
-          order,
-          school,
-          publisher: pubGroup.publisher,
-          orderedTotal: ordTotal,
-          receivedTotal: recTotal,
-          pendingTotal: Math.max(ordTotal - recTotal, 0),
-        });
-      });
+      const row: SupplierRow = {
+        key: makeSupplierKey(order.id, supplierId || 0),
+        order,
+        school,
+        supplierId,
+        supplierName,
+        orderedTotal: ordTotal,
+        receivedTotal: recTotal,
+        pendingTotal: Math.max(ordTotal - recTotal, 0),
+      };
 
       const existing = map.get(schoolId);
-      if (!existing) map.set(schoolId, { school, rows });
-      else existing.rows.push(...rows);
+      if (!existing) map.set(schoolId, { school, rows: [row] });
+      else existing.rows.push(row);
     });
 
+    // stable ordering inside school: by supplier name
     return Array.from(map.entries()).map(([schoolId, value]) => ({
       schoolId,
       school: value.school,
-      rows: value.rows,
+      rows: value.rows.sort((a, b) => a.supplierName.localeCompare(b.supplierName)),
     }));
-  })();
+  }, [visibleOrders]);
 
   /* ---------- UI ---------- */
 
@@ -697,7 +712,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                 <Package className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">School Orders</div>
+                <div className="text-sm font-semibold truncate">School → Supplier Orders</div>
               </div>
             </div>
           </div>
@@ -715,7 +730,7 @@ const SchoolOrdersPageClient: React.FC = () => {
           </div>
         </div>
 
-        {/* Ultra compact toolbar - single row */}
+        {/* Toolbar */}
         <div className="px-3 pb-2">
           <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-2 text-[11px]">
             <select
@@ -832,12 +847,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
       </header>
 
-      {/* Listing (max space) */}
+      {/* Listing */}
       <main className="p-2">
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-indigo-600" />
-            <span className="text-sm font-semibold">School → Publisher</span>
+            <span className="text-sm font-semibold">School → Supplier</span>
           </div>
 
           {loading ? (
@@ -864,9 +879,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                         </span>
                       ) : null}
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      {group.rows.length} rows
-                    </div>
+                    <div className="text-[11px] text-slate-500">{group.rows.length} orders</div>
                   </div>
 
                   <div className="overflow-auto">
@@ -874,7 +887,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                       <thead className="bg-slate-100">
                         <tr>
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Publisher
+                            Supplier
                           </th>
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Session
@@ -905,7 +918,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                       <tbody>
                         {group.rows.map((row) => {
-                          const { order, publisher } = row;
+                          const { order } = row;
                           const isSending = sendingOrderId === order.id;
                           const statusClass = statusChipClass(order.status);
 
@@ -915,14 +928,13 @@ const SchoolOrdersPageClient: React.FC = () => {
                           return (
                             <tr key={row.key} className="hover:bg-slate-50">
                               <td className="border-b border-slate-200 px-2 py-2 font-medium">
-                                {publisher.name}
+                                {row.supplierName}
                               </td>
 
                               <td className="border-b border-slate-200 px-2 py-2 text-slate-600">
                                 {order.academic_session || "-"}
                               </td>
 
-                              {/* ✅ EDIT HERE IN LISTING */}
                               <td className="border-b border-slate-200 px-2 py-2">
                                 <div className="flex items-center gap-1">
                                   <input
@@ -980,7 +992,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                                   <button
                                     type="button"
-                                    onClick={() => handleSendEmail(order, publisher.id)}
+                                    onClick={() => handleSendEmail(order)}
                                     disabled={isSending}
                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 text-[11px]"
                                   >
@@ -990,7 +1002,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                                   <button
                                     type="button"
-                                    onClick={() => handleViewPdf(order, publisher.id)}
+                                    onClick={() => handleViewPdf(order)}
                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                                   >
                                     <FileText className="w-3 h-3" />
@@ -1011,7 +1023,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* Modal (same compact version) */}
+      {/* Modal */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -1021,57 +1033,77 @@ const SchoolOrdersPageClient: React.FC = () => {
                 const school = getOrderSchool(viewOrder);
                 const items = getOrderItems(viewOrder);
 
-                const publishersMap = new Map<number, PublisherLite>();
-                items.forEach((it) => {
-                  const p = it.book?.publisher;
-                  const pid =
-                    p?.id ??
-                    (it.book?.publisher_id ? Number(it.book.publisher_id) : undefined);
-                  if (!pid) return;
-                  const name = p?.name || `Publisher #${pid}`;
-                  if (!publishersMap.has(pid)) publishersMap.set(pid, { id: pid, name });
-                });
-                const publishers = Array.from(publishersMap.values());
+                const supplierName =
+                  viewOrder.supplier?.name ||
+                  (viewOrder.supplier_id ? `Supplier #${viewOrder.supplier_id}` : "Supplier");
+
+                const supplierPhone =
+                  viewOrder.supplier?.phone ||
+                  "";
+                const supplierEmail =
+                  viewOrder.supplier?.email ||
+                  "";
+                const supplierAddress =
+                  viewOrder.supplier?.address ||
+                  viewOrder.supplier?.address_line1 ||
+                  viewOrder.supplier?.full_address ||
+                  "";
+
+                const totalOrdered = totalQtyFromItems(items);
+                const totalReceived = totalReceivedFromItems(items);
+                const totalPending = Math.max(totalOrdered - totalReceived, 0);
 
                 return (
                   <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <Package className="w-4 h-4 text-indigo-600" />
-                        <span className="text-sm font-semibold">
-                          {school?.name || "School"}{" "}
-                          <span className="text-xs text-slate-500 font-normal">
-                            ({viewOrder.academic_session || "-"})
-                          </span>
-                        </span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold truncate">
+                            {school?.name || "School"}{" "}
+                            <span className="text-xs text-slate-500 font-normal">
+                              ({viewOrder.academic_session || "-"})
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 truncate">
+                            Supplier: <span className="font-semibold text-slate-900">{supplierName}</span>
+                            {supplierPhone ? ` • ${supplierPhone}` : ""}
+                            {supplierEmail ? ` • ${supplierEmail}` : ""}
+                          </div>
+                          {supplierAddress ? (
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {supplierAddress}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-1">
+                        <div className="text-[11px] text-slate-600 mr-2">
+                          O:{totalOrdered} • R:{totalReceived} • P:{totalPending}
+                        </div>
+
                         <button
                           onClick={() => handleViewPdf(viewOrder)}
                           className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
                         >
-                          <FileText className="w-3 h-3" /> PDF All
+                          <FileText className="w-3 h-3" /> PDF
                         </button>
-                        {publishers.map((p) => (
-                          <button
-                            key={p.id}
-                            onClick={() => handleViewPdf(viewOrder, p.id)}
-                            className="text-[11px] px-2 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
-                          >
-                            <FileText className="w-3 h-3" />
-                            {p.name}
-                          </button>
-                        ))}
+
+                        <button
+                          onClick={() => handleSendEmail(viewOrder)}
+                          disabled={sendingOrderId === viewOrder.id}
+                          className="text-[11px] px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 disabled:opacity-60"
+                        >
+                          <Send className="w-3 h-3" /> {sendingOrderId === viewOrder.id ? "..." : "Email"}
+                        </button>
                       </div>
                     </div>
 
-                    {/* Order No + Meta in one line */}
+                    {/* Order No + Meta */}
                     <div className="grid grid-cols-12 gap-2 items-end">
                       <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">
-                          Order No
-                        </label>
+                        <label className="block text-[10px] text-slate-500 mb-1">Order No</label>
                         <div className="flex items-center gap-1">
                           <input
                             value={baseOrderNoDraft}
@@ -1089,10 +1121,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                         </div>
                       </div>
 
+                      {/* Transport Option 1 */}
                       <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">
-                          Transport
-                        </label>
+                        <label className="block text-[10px] text-slate-500 mb-1">Transport (Option 1)</label>
                         <select
                           value={metaTransportId}
                           onChange={(e) => setMetaTransportId(e.target.value)}
@@ -1109,9 +1140,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                       </div>
 
                       <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">
-                          Through
-                        </label>
+                        <label className="block text-[10px] text-slate-500 mb-1">Through (Option 1)</label>
                         <input
                           value={metaTransportThrough}
                           onChange={(e) => setMetaTransportThrough(e.target.value)}
@@ -1120,16 +1149,15 @@ const SchoolOrdersPageClient: React.FC = () => {
                         />
                       </div>
 
+                      {/* Notes + Save */}
                       <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">
-                          Notes
-                        </label>
+                        <label className="block text-[10px] text-slate-500 mb-1">Notes</label>
                         <div className="flex items-center gap-1">
                           <input
                             value={metaNotes}
                             onChange={(e) => setMetaNotes(e.target.value)}
                             className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
-                            placeholder="Optional..."
+                            placeholder="This will print in footer (highlighted)..."
                           />
                           <button
                             type="button"
@@ -1141,58 +1169,88 @@ const SchoolOrdersPageClient: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
-                      {viewOrder.status !== "cancelled" && (
-                        <>
-                          {!isReceiving ? (
-                            <button
-                              onClick={startReceiving}
-                              className="text-[11px] px-3 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700"
-                            >
-                              Receive
-                            </button>
-                          ) : (
+                      {/* Transport Option 2 */}
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">Transport (Option 2)</label>
+                        <select
+                          value={metaTransportId2}
+                          onChange={(e) => setMetaTransportId2(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white"
+                        >
+                          <option value="">-- Select --</option>
+                          {transports.map((t) => (
+                            <option key={t.id} value={String(t.id)}>
+                              {t.name}
+                              {t.city ? ` (${t.city})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="col-span-12 md:col-span-3">
+                        <label className="block text-[10px] text-slate-500 mb-1">Through (Option 2)</label>
+                        <input
+                          value={metaTransportThrough2}
+                          onChange={(e) => setMetaTransportThrough2(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
+                          placeholder="Optional..."
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-6">
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          {viewOrder.status !== "cancelled" && (
                             <>
-                              <button
-                                onClick={handleReceiveSave}
-                                disabled={savingReceive}
-                                className="text-[11px] px-3 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
-                              >
-                                {savingReceive ? "..." : "Save Receive"}
-                              </button>
-                              <button
-                                onClick={() => setIsReceiving(false)}
-                                disabled={savingReceive}
-                                className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
-                              >
-                                Cancel
-                              </button>
+                              {!isReceiving ? (
+                                <button
+                                  onClick={startReceiving}
+                                  className="text-[11px] px-3 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700"
+                                >
+                                  Receive
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={handleReceiveSave}
+                                    disabled={savingReceive}
+                                    className="text-[11px] px-3 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
+                                  >
+                                    {savingReceive ? "..." : "Save Receive"}
+                                  </button>
+                                  <button
+                                    onClick={() => setIsReceiving(false)}
+                                    disabled={savingReceive}
+                                    className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+
+                              {!isReceiving && (
+                                <button
+                                  onClick={handleCancelOrder}
+                                  disabled={savingReceive}
+                                  className="text-[11px] px-3 py-1 rounded-lg border border-red-300 bg-red-50 text-red-700 disabled:opacity-60"
+                                >
+                                  Cancel Order
+                                </button>
+                              )}
                             </>
                           )}
 
-                          {!isReceiving && (
-                            <button
-                              onClick={handleCancelOrder}
-                              disabled={savingReceive}
-                              className="text-[11px] px-3 py-1 rounded-lg border border-red-300 bg-red-50 text-red-700 disabled:opacity-60"
-                            >
-                              Cancel Order
-                            </button>
-                          )}
-                        </>
-                      )}
-
-                      <button
-                        onClick={() => {
-                          setViewOrder(null);
-                          setIsReceiving(false);
-                        }}
-                        className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white"
-                      >
-                        Close
-                      </button>
+                          <button
+                            onClick={() => {
+                              setViewOrder(null);
+                              setIsReceiving(false);
+                            }}
+                            className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </>
                 );
@@ -1224,6 +1282,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                       </thead>
                       <tbody>
                         {(() => {
+                          // Group by publisher just for neat display (order is already supplier-wise)
                           type PublisherGroup = {
                             key: string;
                             publisherName: string;
@@ -1256,8 +1315,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <React.Fragment key={group.key}>
                               {group.items.map((item, idxInGroup) => {
                                 const ordered = Number(item.total_order_qty) || 0;
-                                const rawVal =
-                                  receiveForm[item.id] ?? String(item.received_qty ?? 0);
+                                const rawVal = receiveForm[item.id] ?? String(item.received_qty ?? 0);
 
                                 const numericReceived = Number(rawVal) >= 0 ? Number(rawVal) : 0;
                                 const effectiveReceived = isNaN(numericReceived)
@@ -1327,9 +1385,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                           min={0}
                                           max={ordered}
                                           value={rawVal}
-                                          onChange={(e) =>
-                                            handleReceiveChange(item.id, e.target.value)
-                                          }
+                                          onChange={(e) => handleReceiveChange(item.id, e.target.value)}
                                           className="w-16 border border-slate-300 rounded-md px-1 py-0.5 text-right text-[11px]"
                                         />
                                       ) : (

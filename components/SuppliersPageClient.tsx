@@ -14,16 +14,17 @@ import {
   Sparkles,
 } from "lucide-react";
 
-type Publisher = {
+type Supplier = {
   id: number;
-  name: string; // Publisher name (required)
+  name: string;
   contact_person?: string;
   phone?: string;
   email?: string;
   address?: string;
+  is_active?: boolean;
 };
 
-const emptyForm: Omit<Publisher, "id"> = {
+const emptyForm: Omit<Supplier, "id"> = {
   name: "",
   contact_person: "",
   phone: "",
@@ -38,10 +39,10 @@ type ToastState =
     }
   | null;
 
-const PublishersPageClient: React.FC = () => {
+const SuppliersPageClient: React.FC = () => {
   const { user, logout } = useAuth();
 
-  const [publishers, setPublishers] = useState<Publisher[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
 
@@ -52,6 +53,7 @@ const PublishersPageClient: React.FC = () => {
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // (Optional) keep same buttons; will work once backend endpoints exist
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
@@ -88,26 +90,26 @@ const PublishersPageClient: React.FC = () => {
     });
   };
 
-  const fetchPublishers = async () => {
+  const fetchSuppliers = async () => {
     setListLoading(true);
     try {
-      const res = await api.get<Publisher[]>("/api/publishers");
+      const res = await api.get<Supplier[]>("/api/suppliers");
 
       // ✅ latest on top (id DESC)
       const sorted = [...(res.data || [])].sort(
         (a, b) => (b.id || 0) - (a.id || 0)
       );
-      setPublishers(sorted);
+      setSuppliers(sorted);
     } catch (err: any) {
       console.error(err);
-      setError("Failed to load publishers.");
+      setError("Failed to load suppliers.");
     } finally {
       setListLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPublishers();
+    fetchSuppliers();
   }, []);
 
   // Auto hide toast
@@ -130,7 +132,7 @@ const PublishersPageClient: React.FC = () => {
     editRowRefs.current = [];
   };
 
-  const savePublisher = async () => {
+  const saveSupplier = async () => {
     setError(null);
     setImportSummary(null);
     setLoading(true);
@@ -140,7 +142,7 @@ const PublishersPageClient: React.FC = () => {
 
       const cleanName = (latest.name ?? "").trim();
       if (!cleanName) {
-        throw new Error("Publisher name is required.");
+        throw new Error("Supplier name is required.");
       }
 
       const payload = {
@@ -149,23 +151,22 @@ const PublishersPageClient: React.FC = () => {
       };
 
       if (editingId) {
-        await api.put(`/api/publishers/${editingId}`, payload);
-        setToast({ message: "Publisher updated successfully.", type: "success" });
+        await api.put(`/api/suppliers/${editingId}`, payload);
+        setToast({ message: "Supplier updated successfully.", type: "success" });
       } else {
-        await api.post("/api/publishers", payload);
-        setToast({ message: "Publisher added successfully.", type: "success" });
+        // ✅ this will auto-create publisher on backend (your supplierController.create)
+        await api.post("/api/suppliers", payload);
+        setToast({ message: "Supplier added successfully.", type: "success" });
       }
 
       resetForm();
-      await fetchPublishers();
+      await fetchSuppliers();
     } catch (err: any) {
       console.error(err);
       const msg =
         err?.message ||
         err?.response?.data?.error ||
-        (editingId
-          ? "Failed to update publisher."
-          : "Failed to create publisher.");
+        (editingId ? "Failed to update supplier." : "Failed to create supplier.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -173,17 +174,17 @@ const PublishersPageClient: React.FC = () => {
     }
   };
 
-  const handleEdit = (publisher: Publisher) => {
+  const handleEdit = (s: Supplier) => {
     setError(null);
     setImportSummary(null);
-    setEditingId(publisher.id);
+    setEditingId(s.id);
 
     const nextForm = {
-      name: publisher.name || "",
-      contact_person: publisher.contact_person || "",
-      phone: publisher.phone || "",
-      email: publisher.email || "",
-      address: publisher.address || "",
+      name: s.name || "",
+      contact_person: s.contact_person || "",
+      phone: s.phone || "",
+      email: s.email || "",
+      address: s.address || "",
     };
 
     setFormBoth(nextForm);
@@ -192,7 +193,7 @@ const PublishersPageClient: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     const confirmDelete = window.confirm(
-      "Are you sure you want to delete this publisher? (Soft delete)"
+      "Are you sure you want to delete this supplier? (Soft delete)"
     );
     if (!confirmDelete) return;
 
@@ -200,13 +201,13 @@ const PublishersPageClient: React.FC = () => {
     setImportSummary(null);
     setDeletingId(id);
     try {
-      await api.delete(`/api/publishers/${id}`);
-      await fetchPublishers();
+      await api.delete(`/api/suppliers/${id}`);
+      await fetchSuppliers();
       if (editingId === id) resetForm();
-      setToast({ message: "Publisher deleted successfully.", type: "success" });
+      setToast({ message: "Supplier deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
-      const msg = "Failed to delete publisher.";
+      const msg = "Failed to delete supplier.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -214,12 +215,13 @@ const PublishersPageClient: React.FC = () => {
     }
   };
 
+  // Optional: only enable if you add backend endpoints /api/suppliers/export, /api/suppliers/import
   const handleExport = async () => {
     setError(null);
     setImportSummary(null);
     setExporting(true);
     try {
-      const res = await api.get("/api/publishers/export", {
+      const res = await api.get("/api/suppliers/export", {
         responseType: "blob",
       });
 
@@ -230,16 +232,16 @@ const PublishersPageClient: React.FC = () => {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "publishers.xlsx";
+      a.download = "suppliers.xlsx";
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
 
-      setToast({ message: "Publishers exported successfully.", type: "success" });
+      setToast({ message: "Suppliers exported successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
-      const msg = "Failed to export publishers.";
+      const msg = "Failed to export suppliers.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -259,7 +261,7 @@ const PublishersPageClient: React.FC = () => {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await api.post("/api/publishers/import", formData, {
+      const res = await api.post("/api/suppliers/import", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
@@ -272,13 +274,13 @@ const PublishersPageClient: React.FC = () => {
       }
       setImportSummary(summary);
 
-      setToast({ message: "Publishers imported successfully.", type: "success" });
+      setToast({ message: "Suppliers imported successfully.", type: "success" });
 
-      await fetchPublishers();
+      await fetchSuppliers();
     } catch (err: any) {
       console.error(err);
       const msg =
-        err?.response?.data?.error || "Failed to import publishers from Excel.";
+        err?.response?.data?.error || "Failed to import suppliers from Excel.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -299,7 +301,7 @@ const PublishersPageClient: React.FC = () => {
         const next = addRowRefs.current[index + 1];
         if (next) next.focus();
       } else {
-        if (!loading) savePublisher();
+        if (!loading) saveSupplier();
       }
     };
 
@@ -313,7 +315,7 @@ const PublishersPageClient: React.FC = () => {
         const next = editRowRefs.current[index + 1];
         if (next) next.focus();
       } else {
-        if (!loading) savePublisher();
+        if (!loading) saveSupplier();
       }
     };
 
@@ -337,19 +339,21 @@ const PublishersPageClient: React.FC = () => {
             <span className="text-sm">Back to Dashboard</span>
           </Link>
         </div>
+
         <div className="font-bold flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg animate-pulse">
             <BookOpen className="w-5 h-5" />
           </div>
           <div className="flex flex-col">
             <span className="text-base sm:text-lg tracking-tight">
-              Publisher Management
+              Supplier Management
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Onboard & Organize Partners
+              Onboard & Manage Suppliers
             </span>
           </div>
         </div>
+
         <div className="flex items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
             <span className="font-semibold text-slate-800">
@@ -378,19 +382,21 @@ const PublishersPageClient: React.FC = () => {
               <Sparkles className="w-4 h-4" />
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-              Publisher Directory
+              Supplier Directory
             </h1>
           </div>
+
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleExport}
-              disabled={exporting || listLoading || publishers.length === 0}
+              disabled={exporting || listLoading || suppliers.length === 0}
               className="group flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-xs sm:text-sm"
             >
               <Download className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
               {exporting ? "Exporting..." : "Export Excel"}
             </button>
+
             <label className="group flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 cursor-pointer text-xs sm:text-sm">
               <Upload className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
               <span>{importing ? "Importing..." : "Import Excel"}</span>
@@ -403,6 +409,7 @@ const PublishersPageClient: React.FC = () => {
                 disabled={importing}
               />
             </label>
+
             <span className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
               Use export as template for bulk updates.
             </span>
@@ -422,6 +429,7 @@ const PublishersPageClient: React.FC = () => {
                 </div>
               </div>
             )}
+
             {importSummary && !error && (
               <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm">
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-emerald-700">
@@ -440,8 +448,9 @@ const PublishersPageClient: React.FC = () => {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-indigo-500" />
-              Publishers ({publishers.length})
+              Suppliers ({suppliers.length})
             </h2>
+
             {editingId && (
               <button
                 type="button"
@@ -456,11 +465,11 @@ const PublishersPageClient: React.FC = () => {
           {listLoading ? (
             <div className="flex items-center justify-center py-10 text-xs sm:text-sm text-slate-600">
               <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
-              Loading publishers...
+              Loading suppliers...
             </div>
-          ) : publishers.length === 0 && !editingId ? (
+          ) : suppliers.length === 0 && !editingId ? (
             <div className="text-xs sm:text-sm text-slate-500 py-4 mb-3">
-              Start typing in the row below headers to add your first publisher.
+              Start typing in the row below headers to add your first supplier.
             </div>
           ) : null}
 
@@ -469,7 +478,7 @@ const PublishersPageClient: React.FC = () => {
               <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-20">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
-                    Publisher
+                    Supplier
                   </th>
                   <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
                     Contact Person
@@ -500,7 +509,7 @@ const PublishersPageClient: React.FC = () => {
                       ref={(el) => (addRowRefs.current[0] = el)}
                       onKeyDown={makeAddRowKeyDown(0)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                      placeholder="Publisher name"
+                      placeholder="Supplier name"
                     />
                   </td>
 
@@ -558,7 +567,7 @@ const PublishersPageClient: React.FC = () => {
                     <button
                       type="button"
                       disabled={loading}
-                      onClick={savePublisher}
+                      onClick={saveSupplier}
                       className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
                     >
                       {loading ? "Saving..." : "Add"}
@@ -567,9 +576,9 @@ const PublishersPageClient: React.FC = () => {
                 </tr>
 
                 {/* DATA ROWS */}
-                {publishers.map((p) =>
-                  editingId === p.id ? (
-                    <tr key={p.id} className="bg-yellow-50/70">
+                {suppliers.map((s) =>
+                  editingId === s.id ? (
+                    <tr key={s.id} className="bg-yellow-50/70">
                       <td className="px-3 py-1.5 border-b border-slate-200">
                         <input
                           name="name"
@@ -632,7 +641,7 @@ const PublishersPageClient: React.FC = () => {
                           <button
                             type="button"
                             disabled={loading}
-                            onClick={savePublisher}
+                            onClick={saveSupplier}
                             className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
                           >
                             {loading ? "Saving..." : "Save"}
@@ -649,43 +658,44 @@ const PublishersPageClient: React.FC = () => {
                     </tr>
                   ) : (
                     <tr
-                      key={p.id}
+                      key={s.id}
                       className="hover:bg-slate-50 transition-colors group"
                     >
                       <td className="px-3 py-2 border-b border-slate-200 font-medium text-slate-800">
-                        {p.name || "-"}
+                        {s.name || "-"}
                       </td>
 
                       <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        {p.contact_person || "-"}
+                        {s.contact_person || "-"}
                       </td>
                       <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        {p.phone || "-"}
+                        {s.phone || "-"}
                       </td>
                       <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        {p.email || "-"}
+                        {s.email || "-"}
                       </td>
                       <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        <span className="line-clamp-2">{p.address || "-"}</span>
+                        <span className="line-clamp-2">{s.address || "-"}</span>
                       </td>
+
                       <td className="px-3 py-2 border-b border-slate-200">
                         <div className="flex items-center justify-center gap-2">
                           <button
                             type="button"
-                            onClick={() => handleEdit(p)}
+                            onClick={() => handleEdit(s)}
                             className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80"
-                            aria-label="Edit publisher"
+                            aria-label="Edit supplier"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(p.id)}
-                            disabled={deletingId === p.id}
+                            onClick={() => handleDelete(s.id)}
+                            disabled={deletingId === s.id}
                             className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-                            aria-label="Delete publisher"
+                            aria-label="Delete supplier"
                           >
-                            {deletingId === p.id ? (
+                            {deletingId === s.id ? (
                               <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                             ) : (
                               <Trash2 className="w-3.5 h-3.5" />
@@ -744,4 +754,4 @@ const PublishersPageClient: React.FC = () => {
   );
 };
 
-export default PublishersPageClient;
+export default SuppliersPageClient;

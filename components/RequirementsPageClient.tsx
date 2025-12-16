@@ -21,6 +21,11 @@ type Publisher = {
   name: string;
 };
 
+type Supplier = {
+  id: number;
+  name: string;
+};
+
 type ClassItem = {
   id: number;
   class_name: string;
@@ -46,6 +51,7 @@ type Requirement = {
   id: number;
   school_id: number;
   book_id: number;
+  supplier_id?: number | null;
   class_id?: number | null;
   academic_session?: string | null;
   required_copies: number | string;
@@ -54,12 +60,14 @@ type Requirement = {
   is_locked: boolean;
 
   school?: School | null;
+  supplier?: Supplier | null;
   book?: Book | null;
   class?: ClassItem | null;
 };
 
 type RequirementRowFormState = {
   school_name: string;
+  supplier_name: string; // ✅ NEW
   publisher_name: string;
   book_title: string;
   class_name: string;
@@ -84,21 +92,21 @@ const SESSION_OPTIONS: string[] = (() => {
 
 const emptyRequirementForm: RequirementRowFormState = {
   school_name: "",
+  supplier_name: "",
   publisher_name: "",
   book_title: "",
   class_name: "",
   academic_session: "2025-26",
   required_copies: "",
-  status: "draft",
+  status: "confirmed", // ✅ default confirmed
   is_locked: false,
 };
 
 type SchoolsListResponse = School[] | { data: School[]; meta?: any };
 type BooksListResponse = Book[] | { data: Book[]; meta?: any };
 type ClassesListResponse = ClassItem[] | { data: ClassItem[]; meta?: any };
-type RequirementsListResponse =
-  | Requirement[]
-  | { data: Requirement[]; meta?: any };
+type SuppliersListResponse = Supplier[] | { data: Supplier[]; meta?: any };
+type RequirementsListResponse = Requirement[] | { data: Requirement[]; meta?: any };
 
 const normalizeSchools = (payload: SchoolsListResponse): School[] => {
   if (Array.isArray(payload)) return payload;
@@ -115,6 +123,11 @@ const normalizeClasses = (payload: ClassesListResponse): ClassItem[] => {
   return payload?.data ?? [];
 };
 
+const normalizeSuppliers = (payload: SuppliersListResponse): Supplier[] => {
+  if (Array.isArray(payload)) return payload;
+  return payload?.data ?? [];
+};
+
 const normalizeRequirements = (
   payload: RequirementsListResponse
 ): Requirement[] => {
@@ -122,7 +135,9 @@ const normalizeRequirements = (
   return payload?.data ?? [];
 };
 
-const formatNumber = (value: number | string | null | undefined): string => {
+const formatNumber = (
+  value: number | string | null | undefined
+): string => {
   if (value === null || value === undefined || value === "") return "-";
   const num =
     typeof value === "number"
@@ -134,10 +149,12 @@ const formatNumber = (value: number | string | null | undefined): string => {
   return String(num);
 };
 
-type ToastState = {
-  message: string;
-  type: "success" | "error";
-} | null;
+type ToastState =
+  | {
+      message: string;
+      type: "success" | "error";
+    }
+  | null;
 
 /* ---------- Component ---------- */
 
@@ -149,10 +166,9 @@ const RequirementsPageClient: React.FC = () => {
   const [books, setBooks] = useState<Book[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [publishers, setPublishers] = useState<Publisher[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  const [form, setForm] = useState<RequirementRowFormState>(
-    emptyRequirementForm
-  );
+  const [form, setForm] = useState<RequirementRowFormState>(emptyRequirementForm);
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
@@ -219,6 +235,17 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
+  const fetchSuppliers = async () => {
+    try {
+      const res = await api.get<SuppliersListResponse>("/api/suppliers", {
+        params: { limit: 1000 },
+      });
+      setSuppliers(normalizeSuppliers(res.data));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const fetchRequirements = async (
     query?: string,
     schoolId?: string,
@@ -248,6 +275,7 @@ const RequirementsPageClient: React.FC = () => {
     fetchBooks();
     fetchClasses();
     fetchPublishers();
+    fetchSuppliers();
     fetchRequirements();
   }, []);
 
@@ -263,9 +291,7 @@ const RequirementsPageClient: React.FC = () => {
     const pubName = form.publisher_name.trim().toLowerCase();
     if (!pubName) return books;
     return books.filter(
-      (b) =>
-        b.publisher?.name &&
-        b.publisher.name.toLowerCase().includes(pubName)
+      (b) => b.publisher?.name && b.publisher.name.toLowerCase().includes(pubName)
     );
   };
 
@@ -275,18 +301,18 @@ const RequirementsPageClient: React.FC = () => {
     if (!schools || !schools.length) return;
 
     if (filterSchoolId) {
-      const s = schools.find(
-        (sch) => String(sch.id) === String(filterSchoolId)
-      );
+      const s = schools.find((sch) => String(sch.id) === String(filterSchoolId));
       setForm((prev) => ({
         ...prev,
         school_name: s?.name || "",
+        status: "confirmed", // ✅ keep confirmed
       }));
-      setPendingItems([]); // switching school => clear buffer
+      setPendingItems([]);
     } else {
       setForm((prev) => ({
         ...prev,
         school_name: "",
+        status: "confirmed", // ✅ keep confirmed
       }));
       setPendingItems([]);
     }
@@ -301,6 +327,7 @@ const RequirementsPageClient: React.FC = () => {
   ): Promise<{
     school_id: number;
     book_id: number;
+    supplier_id: number | null;
     class_id: number | null;
     academic_session: string | null;
     required_copies: number;
@@ -309,16 +336,13 @@ const RequirementsPageClient: React.FC = () => {
     is_locked: boolean;
   }> => {
     const schoolName = row.school_name.trim();
+    const supplierName = row.supplier_name.trim();
     const publisherName = row.publisher_name.trim();
     const bookTitle = row.book_title.trim();
     const className = row.class_name.trim();
 
-    if (!schoolName) {
-      throw new Error("School is required.");
-    }
-    if (!bookTitle) {
-      throw new Error("Book title is required.");
-    }
+    if (!schoolName) throw new Error("School is required.");
+    if (!bookTitle) throw new Error("Book title is required.");
 
     /* 1️⃣ School: find or create */
     let schoolId: number;
@@ -334,7 +358,23 @@ const RequirementsPageClient: React.FC = () => {
       setSchools((prev) => [...prev, newSchool]);
     }
 
-    /* 2️⃣ Publisher: optional but needed for new book */
+    /* 2️⃣ Supplier: optional (find or create) */
+    let supplierId: number | null = null;
+    if (supplierName) {
+      const existingSupplier = suppliers.find(
+        (s) => s.name.toLowerCase() === supplierName.toLowerCase()
+      );
+      if (existingSupplier) {
+        supplierId = existingSupplier.id;
+      } else {
+        const resSup = await api.post("/api/suppliers", { name: supplierName });
+        const newSupplier: Supplier = resSup.data;
+        supplierId = newSupplier.id;
+        setSuppliers((prev) => [...prev, newSupplier]);
+      }
+    }
+
+    /* 3️⃣ Publisher: optional but needed for new book */
     let publisherId: number | null = null;
     if (publisherName) {
       const existingPublisher = publishers.find(
@@ -343,16 +383,14 @@ const RequirementsPageClient: React.FC = () => {
       if (existingPublisher) {
         publisherId = existingPublisher.id;
       } else {
-        const resPub = await api.post("/api/publishers", {
-          name: publisherName,
-        });
+        const resPub = await api.post("/api/publishers", { name: publisherName });
         const newPublisher: Publisher = resPub.data;
         publisherId = newPublisher.id;
         setPublishers((prev) => [...prev, newPublisher]);
       }
     }
 
-    /* 3️⃣ Class: optional, create if new */
+    /* 4️⃣ Class: optional, create if new */
     let classId: number | null = null;
     if (className) {
       const existingClass = classes.find(
@@ -377,20 +415,18 @@ const RequirementsPageClient: React.FC = () => {
       }
     }
 
-    /* 4️⃣ Book: find or create */
+    /* 5️⃣ Book: find or create */
     let bookId: number;
     let existingBook: Book | undefined;
+
     if (publisherId) {
       existingBook = books.find(
         (b) =>
           b.title.toLowerCase() === bookTitle.toLowerCase() &&
-          (b.publisher_id === publisherId ||
-            b.publisher?.id === publisherId)
+          (b.publisher_id === publisherId || b.publisher?.id === publisherId)
       );
     } else {
-      existingBook = books.find(
-        (b) => b.title.toLowerCase() === bookTitle.toLowerCase()
-      );
+      existingBook = books.find((b) => b.title.toLowerCase() === bookTitle.toLowerCase());
     }
 
     if (existingBook) {
@@ -417,29 +453,24 @@ const RequirementsPageClient: React.FC = () => {
       setBooks((prev) => [...prev, newBook]);
     }
 
-    /* 5️⃣ Build requirement payload */
-    const payload = {
+    /* 6️⃣ Build requirement payload */
+    return {
       school_id: schoolId,
       book_id: bookId,
+      supplier_id: supplierId,
       class_id: classId,
       academic_session: row.academic_session.trim() || null,
-      required_copies: row.required_copies
-        ? Number(row.required_copies)
-        : 0,
-      status: row.status,
+      required_copies: row.required_copies ? Number(row.required_copies) : 0,
+      status: row.status || "confirmed", // ✅ keep whatever selected, but fallback confirmed
       remarks: null,
       is_locked: row.is_locked,
     };
-
-    return payload;
   };
 
   /* ------------ FORM HANDLERS ------------ */
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
     if (type === "checkbox") {
@@ -452,15 +483,14 @@ const RequirementsPageClient: React.FC = () => {
   const resetForm = () => {
     setForm((prev) => ({
       ...emptyRequirementForm,
-      // keep current school & class in add mode for fast entry
       school_name: prev.school_name,
       class_name: prev.class_name,
       academic_session: prev.academic_session || "2025-26",
+      status: "confirmed", // ✅ always default confirmed
     }));
     setEditingId(null);
   };
 
-  // For EDIT mode: save single row directly to backend
   const saveRequirement = async () => {
     setError(null);
     setLoading(true);
@@ -470,16 +500,10 @@ const RequirementsPageClient: React.FC = () => {
 
       if (editingId) {
         await api.put(`/api/requirements/${editingId}`, payload);
-        setToast({
-          message: "Requirement updated successfully.",
-          type: "success",
-        });
+        setToast({ message: "Requirement updated successfully.", type: "success" });
       } else {
         await api.post("/api/requirements", payload);
-        setToast({
-          message: "Requirement added successfully.",
-          type: "success",
-        });
+        setToast({ message: "Requirement added successfully.", type: "success" });
       }
 
       resetForm();
@@ -490,9 +514,7 @@ const RequirementsPageClient: React.FC = () => {
         err?.message ||
         err?.response?.data?.error ||
         err?.response?.data?.message ||
-        (editingId
-          ? "Failed to update requirement."
-          : "Failed to create requirement.");
+        (editingId ? "Failed to update requirement." : "Failed to create requirement.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -500,7 +522,6 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  // ADD to local buffer (no API call)
   const handleAddPending = () => {
     setError(null);
 
@@ -510,21 +531,18 @@ const RequirementsPageClient: React.FC = () => {
       setToast({ message: msg, type: "error" });
       return;
     }
-
     if (!form.class_name.trim()) {
       const msg = "Class is required.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
-
     if (!form.book_title.trim()) {
       const msg = "Book title is required.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
-
     if (!form.required_copies.trim()) {
       const msg = "Please enter required copies.";
       setError(msg);
@@ -532,28 +550,29 @@ const RequirementsPageClient: React.FC = () => {
       return;
     }
 
-    const newItem: PendingItem = {
-      tempId: Date.now() + Math.random(),
+    // ✅ ensure default confirmed in all cases
+    const itemToAdd: RequirementRowFormState = {
       ...form,
+      status: form.status || "confirmed",
     };
 
-    // ✅ Latest on top
+    const newItem: PendingItem = {
+      tempId: Date.now() + Math.random(),
+      ...itemToAdd,
+    };
+
     setPendingItems((prev) => [newItem, ...prev]);
 
-    // ✅ Toast on add
     setToast({
       message: `Added: ${form.book_title} (${form.required_copies} copies)`,
       type: "success",
     });
 
-    // Clear only book-related fields; keep school + class + session
+    // ✅ After Add to List: ONLY Book should be blank (keep everything else as-is)
     setForm((prev) => ({
       ...prev,
       book_title: "",
-      publisher_name: "",
-      required_copies: "",
-      status: "draft",
-      is_locked: false,
+      status: "confirmed", // ✅ default confirmed after adding
     }));
   };
 
@@ -565,7 +584,6 @@ const RequirementsPageClient: React.FC = () => {
     setPendingItems([]);
   };
 
-  // SAVE ALL buffer items to backend with existing /api/requirements
   const saveAllPending = async () => {
     if (!pendingItems.length) return;
 
@@ -574,34 +592,30 @@ const RequirementsPageClient: React.FC = () => {
 
     try {
       for (const item of pendingItems) {
-        const payload = await prepareRequirementPayload(item);
+        const payload = await prepareRequirementPayload({
+          ...item,
+          status: item.status || "confirmed", // ✅ default confirmed
+        });
         await api.post("/api/requirements", payload);
       }
 
       const count = pendingItems.length;
       setPendingItems([]);
-      // After save, just clear book-related fields
+
+      // ✅ keep form values; clear ONLY Book and keep status confirmed
       setForm((prev) => ({
         ...prev,
         book_title: "",
-        publisher_name: "",
-        required_copies: "",
-        status: "draft",
-        is_locked: false,
+        status: "confirmed",
       }));
 
       await fetchRequirements(search, filterSchoolId, filterSession);
 
-      setToast({
-        message: `Saved ${count} requirement(s) successfully.`,
-        type: "success",
-      });
+      setToast({ message: `Saved ${count} requirement(s) successfully.`, type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg =
-        err?.message ||
-        err?.response?.data?.error ||
-        "Failed to save all requirements.";
+        err?.message || err?.response?.data?.error || "Failed to save all requirements.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -612,10 +626,11 @@ const RequirementsPageClient: React.FC = () => {
   const handleEdit = (r: Requirement) => {
     setError(null);
     setEditingId(r.id);
-    setPendingItems([]); // editing ke time buffer clear
+    setPendingItems([]);
 
     setForm({
       school_name: r.school?.name || "",
+      supplier_name: r.supplier?.name || "",
       publisher_name: r.book?.publisher?.name || "",
       book_title: r.book?.title || "",
       class_name: r.class?.class_name || "",
@@ -624,15 +639,13 @@ const RequirementsPageClient: React.FC = () => {
         r.required_copies !== null && r.required_copies !== undefined
           ? String(r.required_copies)
           : "",
-      status: r.status || "draft",
+      status: (r.status as any) || "confirmed", // ✅ fallback confirmed
       is_locked: r.is_locked,
     });
   };
 
   const handleDelete = async (id: number) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this requirement?"
-    );
+    const confirmDelete = window.confirm("Are you sure you want to delete this requirement?");
     if (!confirmDelete) return;
 
     setError(null);
@@ -644,10 +657,7 @@ const RequirementsPageClient: React.FC = () => {
         resetForm();
       }
       await fetchRequirements(search, filterSchoolId, filterSession);
-      setToast({
-        message: "Requirement deleted successfully.",
-        type: "success",
-      });
+      setToast({ message: "Requirement deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg = "Failed to delete requirement.";
@@ -664,26 +674,20 @@ const RequirementsPageClient: React.FC = () => {
     const value = e.target.value;
     setSearch(value);
 
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
     searchTimeoutRef.current = setTimeout(() => {
       fetchRequirements(value, filterSchoolId, filterSession);
     }, 400);
   };
 
-  const handleSchoolFilterChange = (
-    e: React.ChangeEvent<HTMLSelectElement>
-  ) => {
+  const handleSchoolFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setFilterSchoolId(value);
     fetchRequirements(search, value, filterSession);
   };
 
-  const handleSessionFilterChange = (
-    e: React.ChangeEvent<HTMLSelectElement>
-  ) => {
+  const handleSessionFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setFilterSession(value);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -702,9 +706,7 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -723,13 +725,12 @@ const RequirementsPageClient: React.FC = () => {
       const errorCount = Array.isArray(errors) ? errors.length : 0;
 
       setToast({
-        message: `Import: ${created ?? 0} new, ${
-          updated ?? 0
-        } updated, ${errorCount} error(s).`,
+        message: `Import: ${created ?? 0} new, ${updated ?? 0} updated, ${errorCount} error(s).`,
         type: "success",
       });
 
       await fetchRequirements(search, filterSchoolId, filterSession);
+      await fetchSuppliers();
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -768,10 +769,7 @@ const RequirementsPageClient: React.FC = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
 
-      setToast({
-        message: "Requirements exported successfully.",
-        type: "success",
-      });
+      setToast({ message: "Requirements exported successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg = "Failed to export requirements.";
@@ -800,13 +798,9 @@ const RequirementsPageClient: React.FC = () => {
       });
 
       const url = window.URL.createObjectURL(blob);
-      // open in new tab for direct print
       window.open(url, "_blank");
 
-      setToast({
-        message: "PDF generated successfully.",
-        type: "success",
-      });
+      setToast({ message: "PDF generated successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg = "Failed to generate PDF.";
@@ -883,9 +877,7 @@ const RequirementsPageClient: React.FC = () => {
         {/* Current school strip */}
         <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-xl px-4 py-2 flex items-center justify-between text-[11px] sm:text-xs shadow-sm">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">
-              Current school:
-            </span>
+            <span className="font-semibold text-slate-700">Current school:</span>
             <span className="text-slate-900 font-medium">
               {currentSchoolName
                 ? currentSchoolName
@@ -894,8 +886,7 @@ const RequirementsPageClient: React.FC = () => {
           </div>
           {currentSchoolName && (
             <span className="text-slate-500 hidden sm:block">
-              Keep changing Book / Copies and click Add to List. Finally, use
-              Save All on the right side.
+              Keep changing Book / Copies and click Add to List. Finally, use Save All on the right side.
             </span>
           )}
         </section>
@@ -914,7 +905,6 @@ const RequirementsPageClient: React.FC = () => {
 
         {/* MAIN: FIRST FORM */}
         <section className="space-y-4">
-          {/* ADD / EDIT FORM (TOP) */}
           <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
             <div className="flex items-center justify-between mb-3">
               <div className="flex flex-col gap-0.5">
@@ -922,8 +912,7 @@ const RequirementsPageClient: React.FC = () => {
                   {editingId ? "Edit Requirement" : "Add Requirements (buffer)"}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Select school above, then enter Class, Book, Publisher &
-                  Copies.{" "}
+                  Select school above, then enter Class, Book, Publisher, Supplier & Copies.{" "}
                   {!editingId
                     ? "Use Add to List to add multiple books. Use Save All button on the right panel to commit them."
                     : "Save will update this particular row immediately."}
@@ -940,15 +929,11 @@ const RequirementsPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* Form content wrapper: inputs left (less), pending right (more) on lg+ */}
             <div className="flex flex-col lg:flex-row gap-4">
-              {/* Inputs panel – narrower on large screens */}
               <div className="w-full lg:w-5/12 space-y-3 text-[11px] sm:text-xs">
                 {/* School */}
                 <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">
-                    School
-                  </label>
+                  <label className="block font-medium text-slate-700">School</label>
                   <input
                     list="schoolOptions"
                     name="school_name"
@@ -970,24 +955,20 @@ const RequirementsPageClient: React.FC = () => {
 
                 {/* Class */}
                 <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">
-                    Class
-                  </label>
+                  <label className="block font-medium text-slate-700">Class</label>
                   <input
                     list="classOptions"
                     name="class_name"
                     value={form.class_name}
                     onChange={handleChange}
                     className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select class (e.g. 1st, 2nd, 6th A)"
+                    placeholder="Type or select class"
                   />
                 </div>
 
                 {/* Book */}
                 <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">
-                    Book
-                  </label>
+                  <label className="block font-medium text-slate-700">Book</label>
                   <input
                     list="bookOptions"
                     name="book_title"
@@ -1000,9 +981,7 @@ const RequirementsPageClient: React.FC = () => {
 
                 {/* Publisher */}
                 <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">
-                    Publisher
-                  </label>
+                  <label className="block font-medium text-slate-700">Publisher</label>
                   <input
                     list="publisherOptions"
                     name="publisher_name"
@@ -1016,12 +995,26 @@ const RequirementsPageClient: React.FC = () => {
                   </p>
                 </div>
 
+                {/* Supplier */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Supplier (optional)</label>
+                  <input
+                    list="supplierOptions"
+                    name="supplier_name"
+                    value={form.supplier_name}
+                    onChange={handleChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="Type or select supplier"
+                  />
+                  <p className="text-[10px] text-slate-500">
+                    This is saved on requirement (not from publisher).
+                  </p>
+                </div>
+
                 {/* Session + Copies */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">
-                      Session
-                    </label>
+                    <label className="block font-medium text-slate-700">Session</label>
                     <select
                       name="academic_session"
                       value={form.academic_session}
@@ -1038,9 +1031,7 @@ const RequirementsPageClient: React.FC = () => {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">
-                      Required copies
-                    </label>
+                    <label className="block font-medium text-slate-700">Required copies</label>
                     <input
                       name="required_copies"
                       type="number"
@@ -1056,9 +1047,7 @@ const RequirementsPageClient: React.FC = () => {
                 {/* Status + Lock */}
                 <div className="grid grid-cols-2 gap-3 items-center">
                   <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">
-                      Status
-                    </label>
+                    <label className="block font-medium text-slate-700">Status</label>
                     <select
                       name="status"
                       value={form.status}
@@ -1083,7 +1072,7 @@ const RequirementsPageClient: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Buttons (no Save All here now) */}
+                {/* Buttons */}
                 <div className="flex flex-wrap items-center gap-2 pt-2">
                   {editingId ? (
                     <>
@@ -1123,9 +1112,7 @@ const RequirementsPageClient: React.FC = () => {
                       {pendingItems.length > 0 && (
                         <span className="text-[11px] text-slate-500">
                           {pendingItems.length} book(s) in list. Use{" "}
-                          <span className="font-semibold text-emerald-600">
-                            Save All
-                          </span>{" "}
+                          <span className="font-semibold text-emerald-600">Save All</span>{" "}
                           on the Selected Books panel.
                         </span>
                       )}
@@ -1134,7 +1121,7 @@ const RequirementsPageClient: React.FC = () => {
                 </div>
               </div>
 
-              {/* Pending panel – wider on large screens */}
+              {/* Pending panel */}
               {showPendingPanel && (
                 <div className="w-full lg:w-7/12">
                   <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
@@ -1144,8 +1131,7 @@ const RequirementsPageClient: React.FC = () => {
                           Selected Books (Pending)
                         </h4>
                         <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
-                          {pendingItems.length} item
-                          {pendingItems.length > 1 ? "s" : ""}
+                          {pendingItems.length} item{pendingItems.length > 1 ? "s" : ""}
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -1155,9 +1141,7 @@ const RequirementsPageClient: React.FC = () => {
                           onClick={saveAllPending}
                           className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[10px] sm:text-[11px] font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
                         >
-                          {loading
-                            ? "Saving..."
-                            : `Save All (${pendingItems.length})`}
+                          {loading ? "Saving..." : `Save All (${pendingItems.length})`}
                         </button>
                         <button
                           type="button"
@@ -1169,6 +1153,7 @@ const RequirementsPageClient: React.FC = () => {
                         </button>
                       </div>
                     </div>
+
                     <div className="overflow-auto max-h-60 rounded-lg border border-slate-200/80 bg-slate-50">
                       <table className="w-full text-[10px] sm:text-[11px] border-collapse">
                         <thead className="bg-slate-100 sticky top-0 z-10">
@@ -1181,6 +1166,9 @@ const RequirementsPageClient: React.FC = () => {
                             </th>
                             <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
                               Pub
+                            </th>
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
+                              Sup
                             </th>
                             <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
                               Sess
@@ -1215,6 +1203,11 @@ const RequirementsPageClient: React.FC = () => {
                                   {item.publisher_name || "-"}
                                 </span>
                               </td>
+                              <td className="px-1 py-1 border-b border-slate-200">
+                                <span className="truncate inline-block max-w-[100px] text-slate-700">
+                                  {item.supplier_name || "-"}
+                                </span>
+                              </td>
                               <td className="px-1 py-1 border-b border-slate-200 text-center">
                                 {item.academic_session || "-"}
                               </td>
@@ -1229,9 +1222,7 @@ const RequirementsPageClient: React.FC = () => {
                                       : "bg-amber-50 text-amber-700 border border-amber-200"
                                   }`}
                                 >
-                                  {item.status === "confirmed"
-                                    ? "Conf"
-                                    : "Draft"}
+                                  {item.status === "confirmed" ? "Conf" : "Draft"}
                                 </span>
                               </td>
                               <td className="px-1 py-1 border-b border-slate-200 text-center">
@@ -1264,7 +1255,7 @@ const RequirementsPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* datalists needed for form */}
+            {/* datalists */}
             <datalist id="schoolOptions">
               {schools.map((s) => (
                 <option key={s.id} value={s.name} />
@@ -1274,6 +1265,12 @@ const RequirementsPageClient: React.FC = () => {
             <datalist id="publisherOptions">
               {publishers.map((p) => (
                 <option key={p.id} value={p.name} />
+              ))}
+            </datalist>
+
+            <datalist id="supplierOptions">
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.name} />
               ))}
             </datalist>
 
@@ -1290,7 +1287,7 @@ const RequirementsPageClient: React.FC = () => {
             </datalist>
           </div>
 
-          {/* FILTERS + IMPORT/EXPORT – just above listing */}
+          {/* FILTERS + EXCEL */}
           <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-md px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow">
@@ -1308,7 +1305,6 @@ const RequirementsPageClient: React.FC = () => {
 
             <div className="flex flex-col gap-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                {/* Search */}
                 <input
                   type="text"
                   value={search}
@@ -1317,7 +1313,6 @@ const RequirementsPageClient: React.FC = () => {
                   placeholder="Search by school / book..."
                 />
 
-                {/* School filter */}
                 <select
                   value={filterSchoolId}
                   onChange={handleSchoolFilterChange}
@@ -1331,7 +1326,6 @@ const RequirementsPageClient: React.FC = () => {
                   ))}
                 </select>
 
-                {/* Session filter */}
                 <select
                   value={filterSession}
                   onChange={handleSessionFilterChange}
@@ -1346,7 +1340,6 @@ const RequirementsPageClient: React.FC = () => {
                 </select>
               </div>
 
-              {/* Hidden file input */}
               <input
                 type="file"
                 accept=".xlsx,.xls"
@@ -1356,7 +1349,6 @@ const RequirementsPageClient: React.FC = () => {
               />
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Import */}
                 <button
                   type="button"
                   onClick={triggerImport}
@@ -1367,7 +1359,6 @@ const RequirementsPageClient: React.FC = () => {
                   <span>{importLoading ? "Importing..." : "Import Excel"}</span>
                 </button>
 
-                {/* Export */}
                 <button
                   type="button"
                   onClick={handleExport}
@@ -1378,7 +1369,6 @@ const RequirementsPageClient: React.FC = () => {
                   <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
                 </button>
 
-                {/* Print PDF */}
                 <button
                   type="button"
                   onClick={handlePrintPdf}
@@ -1397,7 +1387,7 @@ const RequirementsPageClient: React.FC = () => {
             </div>
           </section>
 
-          {/* LISTING (BOTTOM) */}
+          {/* LISTING */}
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
@@ -1413,8 +1403,7 @@ const RequirementsPageClient: React.FC = () => {
               </div>
             ) : requirements.length === 0 ? (
               <div className="text-xs sm:text-sm text-slate-500 py-3 mb-2">
-                No requirements yet. Select a school & use the form above to add
-                your first record.
+                No requirements yet. Select a school & use the form above to add your first record.
               </div>
             ) : null}
 
@@ -1433,6 +1422,9 @@ const RequirementsPageClient: React.FC = () => {
                     </th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
                       Publisher
+                    </th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                      Supplier
                     </th>
                     <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
                       Session
@@ -1453,10 +1445,7 @@ const RequirementsPageClient: React.FC = () => {
                 </thead>
                 <tbody>
                   {requirements.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="hover:bg-slate-50 transition-colors"
-                    >
+                    <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                       <td className="border-b border-slate-200 px-3 py-2 align-top">
                         <div className="font-semibold truncate max-w-[220px] text-slate-800">
                           {r.school?.name || "-"}
@@ -1473,6 +1462,11 @@ const RequirementsPageClient: React.FC = () => {
                       <td className="border-b border-slate-200 px-3 py-2 align-top">
                         <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
                           {r.book?.publisher?.name || "-"}
+                        </div>
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 align-top">
+                        <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
+                          {r.supplier?.name || "-"}
                         </div>
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">
@@ -1505,7 +1499,6 @@ const RequirementsPageClient: React.FC = () => {
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 align-top">
                         <div className="flex items-center justify-center gap-2">
-                          {/* Edit */}
                           <button
                             type="button"
                             onClick={() => handleEdit(r)}
@@ -1515,7 +1508,6 @@ const RequirementsPageClient: React.FC = () => {
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* Delete */}
                           <button
                             type="button"
                             onClick={() => handleDelete(r.id)}
@@ -1544,9 +1536,7 @@ const RequirementsPageClient: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success"
-              ? "bg-emerald-600 text-white"
-              : "bg-rose-600 text-white"
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}
