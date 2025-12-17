@@ -13,6 +13,7 @@ import {
   Eye,
   ChevronLeft,
   FileText,
+  X,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -125,8 +126,6 @@ const getOrderItems = (order: SchoolOrder | any): SchoolOrderItem[] => {
   if (Array.isArray(order.SchoolOrderItems)) return order.SchoolOrderItems as SchoolOrderItem[];
   return [];
 };
-
-const safeStr = (v: any) => String(v ?? "").trim();
 
 const formatDate = (value?: string | null) => {
   if (!value) return "-";
@@ -733,10 +732,11 @@ const SchoolOrdersPageClient: React.FC = () => {
         {/* Toolbar */}
         <div className="px-3 pb-2">
           <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-2 text-[11px]">
+            {/* ✅ Bigger Filter Session */}
             <select
               value={filterSession}
               onChange={(e) => setFilterSession(e.target.value)}
-              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[120px]"
               title="Session"
             >
               <option value="">Session</option>
@@ -750,7 +750,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <select
               value={filterSchoolId}
               onChange={(e) => setFilterSchoolId(e.target.value)}
-              className="border border-slate-300 rounded-lg px-2 py-1 bg-white min-w-[180px]"
+              className="border border-slate-300 rounded-xl px-2 py-1 bg-white min-w-[180px]"
               title="School"
             >
               <option value="">School</option>
@@ -779,10 +779,11 @@ const SchoolOrdersPageClient: React.FC = () => {
 
             <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
+            {/* ✅ Bigger Generate Session */}
             <select
               value={academicSession}
               onChange={(e) => setAcademicSession(e.target.value)}
-              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[120px]"
               title="Generate Session"
             >
               {SESSION_OPTIONS.map((s) => (
@@ -792,33 +793,46 @@ const SchoolOrdersPageClient: React.FC = () => {
               ))}
             </select>
 
+            {/* ✅ Bigger + Colorful Generate */}
             <button
               type="submit"
               disabled={generating}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-indigo-600 text-white disabled:opacity-60"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold text-white
+                         bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600
+                         hover:brightness-110 active:brightness-95
+                         shadow-sm hover:shadow
+                         focus:outline-none focus:ring-2 focus:ring-violet-400 focus:ring-offset-2
+                         disabled:opacity-60 disabled:shadow-none"
               title="Generate"
             >
               {generating ? (
                 <>
-                  <RefreshCcw className="w-3 h-3 animate-spin" />
-                  Gen...
+                  <RefreshCcw className="w-4 h-4 animate-spin" />
+                  Generating...
                 </>
               ) : (
                 <>
-                  <PlusCircle className="w-3 h-3" />
+                  <PlusCircle className="w-4 h-4" />
                   Generate
                 </>
               )}
             </button>
 
+            {/* ✅ Bigger + Colorful Refresh */}
             <button
               type="button"
               onClick={fetchOrders}
               disabled={loading}
-              className="inline-flex items-center gap-1 px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold
+                         text-emerald-800 border border-emerald-200
+                         bg-gradient-to-r from-emerald-50 to-cyan-50
+                         hover:from-emerald-100 hover:to-cyan-100
+                         shadow-sm hover:shadow
+                         focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2
+                         disabled:opacity-60 disabled:shadow-none"
               title="Refresh"
             >
-              <RefreshCcw className="w-3 h-3" />
+              <RefreshCcw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </button>
 
@@ -889,9 +903,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Supplier
                           </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Session
-                          </th>
+
+                          {/* ✅ Removed Session column from listing */}
+
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Order No (Edit)
                           </th>
@@ -931,12 +945,10 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 {row.supplierName}
                               </td>
 
-                              <td className="border-b border-slate-200 px-2 py-2 text-slate-600">
-                                {order.academic_session || "-"}
-                              </td>
+                              {/* ✅ Removed Session cell from listing */}
 
                               <td className="border-b border-slate-200 px-2 py-2">
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-2">
                                   <input
                                     value={draft}
                                     onChange={(e) =>
@@ -945,16 +957,16 @@ const SchoolOrdersPageClient: React.FC = () => {
                                         [order.id]: e.target.value,
                                       }))
                                     }
-                                    className="w-36 border border-slate-300 rounded-md px-2 py-1 text-[11px]"
+                                    className="w-40 border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
                                     placeholder={`#${order.id}`}
                                   />
                                   <button
                                     type="button"
                                     onClick={() => handleSaveOrderNoFromListing(order.id)}
                                     disabled={savingThis}
-                                    className="text-[11px] px-2 py-1 rounded-md bg-slate-900 text-white disabled:opacity-60"
+                                    className="text-[12px] px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
                                   >
-                                    {savingThis ? "..." : "Save"}
+                                    {savingThis ? "Saving..." : "Save"}
                                   </button>
                                 </div>
                               </td>
@@ -1023,389 +1035,430 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* Modal */}
+      {/* ✅ Bigger Modal (still laptop-safe) */}
       {viewOrder && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="px-3 py-2 border-b bg-slate-50 flex flex-col gap-2">
-              {(() => {
-                const school = getOrderSchool(viewOrder);
-                const items = getOrderItems(viewOrder);
+        <div className="fixed inset-0 z-40 bg-black/50">
+          {/* overlay scroll area */}
+          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[1100px]">
+              <div
+                className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col
+                              max-h-[92vh]"
+              >
+                {/* Header */}
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
+                  {(() => {
+                    const school = getOrderSchool(viewOrder);
+                    const items = getOrderItems(viewOrder);
 
-                const supplierName =
-                  viewOrder.supplier?.name ||
-                  (viewOrder.supplier_id ? `Supplier #${viewOrder.supplier_id}` : "Supplier");
+                    const supplierName =
+                      viewOrder.supplier?.name ||
+                      (viewOrder.supplier_id ? `Supplier #${viewOrder.supplier_id}` : "Supplier");
 
-                const supplierPhone =
-                  viewOrder.supplier?.phone ||
-                  "";
-                const supplierEmail =
-                  viewOrder.supplier?.email ||
-                  "";
-                const supplierAddress =
-                  viewOrder.supplier?.address ||
-                  viewOrder.supplier?.address_line1 ||
-                  viewOrder.supplier?.full_address ||
-                  "";
+                    const supplierPhone = viewOrder.supplier?.phone || "";
+                    const supplierEmail = viewOrder.supplier?.email || "";
+                    const supplierAddress =
+                      viewOrder.supplier?.address ||
+                      viewOrder.supplier?.address_line1 ||
+                      viewOrder.supplier?.full_address ||
+                      "";
 
-                const totalOrdered = totalQtyFromItems(items);
-                const totalReceived = totalReceivedFromItems(items);
-                const totalPending = Math.max(totalOrdered - totalReceived, 0);
+                    const totalOrdered = totalQtyFromItems(items);
+                    const totalReceived = totalReceivedFromItems(items);
+                    const totalPending = Math.max(totalOrdered - totalReceived, 0);
 
-                return (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Package className="w-4 h-4 text-indigo-600" />
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold truncate">
-                            {school?.name || "School"}{" "}
-                            <span className="text-xs text-slate-500 font-normal">
-                              ({viewOrder.academic_session || "-"})
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-600 truncate">
-                            Supplier: <span className="font-semibold text-slate-900">{supplierName}</span>
-                            {supplierPhone ? ` • ${supplierPhone}` : ""}
-                            {supplierEmail ? ` • ${supplierEmail}` : ""}
-                          </div>
-                          {supplierAddress ? (
-                            <div className="text-[11px] text-slate-500 truncate">
-                              {supplierAddress}
+                    return (
+                      <>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className="h-10 w-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                              <Package className="w-5 h-5" />
                             </div>
-                          ) : null}
+
+                            <div className="min-w-0">
+                              <div className="text-base font-semibold truncate">
+                                {school?.name || "School"}{" "}
+                                <span className="text-xs text-slate-500 font-normal">
+                                  ({viewOrder.academic_session || "-"})
+                                </span>
+                              </div>
+
+                              <div className="text-xs text-slate-700 truncate mt-0.5">
+                                Supplier:{" "}
+                                <span className="font-semibold text-slate-900">{supplierName}</span>
+                                {supplierPhone ? ` • ${supplierPhone}` : ""}
+                                {supplierEmail ? ` • ${supplierEmail}` : ""}
+                              </div>
+
+                              {supplierAddress ? (
+                                <div className="text-[11px] text-slate-500 truncate">
+                                  {supplierAddress}
+                                </div>
+                              ) : null}
+
+                              <div className="mt-1 text-[12px] text-slate-700">
+                                <span className="font-semibold">O:</span> {totalOrdered}{" "}
+                                <span className="mx-1 text-slate-400">•</span>
+                                <span className="font-semibold">R:</span> {totalReceived}{" "}
+                                <span className="mx-1 text-slate-400">•</span>
+                                <span className="font-semibold">P:</span> {totalPending}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Right actions + Close */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => handleViewPdf(viewOrder)}
+                              className="text-[12px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-2"
+                            >
+                              <FileText className="w-4 h-4" /> PDF
+                            </button>
+
+                            <button
+                              onClick={() => handleSendEmail(viewOrder)}
+                              disabled={sendingOrderId === viewOrder.id}
+                              className="text-[12px] px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-2 disabled:opacity-60"
+                            >
+                              <Send className="w-4 h-4" />{" "}
+                              {sendingOrderId === viewOrder.id ? "Sending..." : "Email"}
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setViewOrder(null);
+                                setIsReceiving(false);
+                              }}
+                              className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                              title="Close"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="flex flex-wrap items-center gap-1">
-                        <div className="text-[11px] text-slate-600 mr-2">
-                          O:{totalOrdered} • R:{totalReceived} • P:{totalPending}
-                        </div>
+                        {/* Meta grid */}
+                        <div className="mt-3 grid grid-cols-12 gap-3 items-end">
+                          <div className="col-span-12 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">Order No</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={baseOrderNoDraft}
+                                onChange={(e) => setBaseOrderNoDraft(e.target.value)}
+                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleSaveBaseOrderNo}
+                                disabled={savingBaseOrderNo}
+                                className="text-[12px] px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                              >
+                                {savingBaseOrderNo ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
 
-                        <button
-                          onClick={() => handleViewPdf(viewOrder)}
-                          className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1"
-                        >
-                          <FileText className="w-3 h-3" /> PDF
-                        </button>
+                          {/* Transport Option 1 */}
+                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">
+                              Transport (Option 1)
+                            </label>
+                            <select
+                              value={metaTransportId}
+                              onChange={(e) => setMetaTransportId(e.target.value)}
+                              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            >
+                              <option value="">-- Select --</option>
+                              {transports.map((t) => (
+                                <option key={t.id} value={String(t.id)}>
+                                  {t.name}
+                                  {t.city ? ` (${t.city})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                        <button
-                          onClick={() => handleSendEmail(viewOrder)}
-                          disabled={sendingOrderId === viewOrder.id}
-                          className="text-[11px] px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 disabled:opacity-60"
-                        >
-                          <Send className="w-3 h-3" /> {sendingOrderId === viewOrder.id ? "..." : "Email"}
-                        </button>
-                      </div>
-                    </div>
+                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">
+                              Through (Option 1)
+                            </label>
+                            <input
+                              value={metaTransportThrough}
+                              onChange={(e) => setMetaTransportThrough(e.target.value)}
+                              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder="DTDC / By Bus..."
+                            />
+                          </div>
 
-                    {/* Order No + Meta */}
-                    <div className="grid grid-cols-12 gap-2 items-end">
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Order No</label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={baseOrderNoDraft}
-                            onChange={(e) => setBaseOrderNoDraft(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleSaveBaseOrderNo}
-                            disabled={savingBaseOrderNo}
-                            className="text-[11px] px-2 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
-                          >
-                            {savingBaseOrderNo ? "..." : "Save"}
-                          </button>
-                        </div>
-                      </div>
+                          {/* Notes */}
+                          <div className="col-span-12 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">Notes</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={metaNotes}
+                                onChange={(e) => setMetaNotes(e.target.value)}
+                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                placeholder="This will print in footer (highlighted)..."
+                              />
+                              <button
+                                type="button"
+                                onClick={handleMetaSave}
+                                disabled={metaSaving}
+                                className="text-[12px] px-4 py-2 rounded-xl text-white font-semibold
+                                           bg-gradient-to-r from-indigo-600 to-blue-600
+                                           hover:brightness-110 active:brightness-95
+                                           disabled:opacity-60"
+                              >
+                                {metaSaving ? "Saving..." : "Save"}
+                              </button>
+                            </div>
+                          </div>
 
-                      {/* Transport Option 1 */}
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Transport (Option 1)</label>
-                        <select
-                          value={metaTransportId}
-                          onChange={(e) => setMetaTransportId(e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white"
-                        >
-                          <option value="">-- Select --</option>
-                          {transports.map((t) => (
-                            <option key={t.id} value={String(t.id)}>
-                              {t.name}
-                              {t.city ? ` (${t.city})` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          {/* Transport Option 2 */}
+                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">
+                              Transport (Option 2)
+                            </label>
+                            <select
+                              value={metaTransportId2}
+                              onChange={(e) => setMetaTransportId2(e.target.value)}
+                              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            >
+                              <option value="">-- Select --</option>
+                              {transports.map((t) => (
+                                <option key={t.id} value={String(t.id)}>
+                                  {t.name}
+                                  {t.city ? ` (${t.city})` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Through (Option 1)</label>
-                        <input
-                          value={metaTransportThrough}
-                          onChange={(e) => setMetaTransportThrough(e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
-                          placeholder="DTDC / By Bus..."
-                        />
-                      </div>
+                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                            <label className="block text-[11px] text-slate-600 mb-1">
+                              Through (Option 2)
+                            </label>
+                            <input
+                              value={metaTransportThrough2}
+                              onChange={(e) => setMetaTransportThrough2(e.target.value)}
+                              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder="Optional..."
+                            />
+                          </div>
 
-                      {/* Notes + Save */}
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Notes</label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            value={metaNotes}
-                            onChange={(e) => setMetaNotes(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
-                            placeholder="This will print in footer (highlighted)..."
-                          />
-                          <button
-                            type="button"
-                            onClick={handleMetaSave}
-                            disabled={metaSaving}
-                            className="text-[11px] px-2 py-1 rounded-lg bg-indigo-600 text-white disabled:opacity-60"
-                          >
-                            {metaSaving ? "..." : "Save"}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Transport Option 2 */}
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Transport (Option 2)</label>
-                        <select
-                          value={metaTransportId2}
-                          onChange={(e) => setMetaTransportId2(e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white"
-                        >
-                          <option value="">-- Select --</option>
-                          {transports.map((t) => (
-                            <option key={t.id} value={String(t.id)}>
-                              {t.name}
-                              {t.city ? ` (${t.city})` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="col-span-12 md:col-span-3">
-                        <label className="block text-[10px] text-slate-500 mb-1">Through (Option 2)</label>
-                        <input
-                          value={metaTransportThrough2}
-                          onChange={(e) => setMetaTransportThrough2(e.target.value)}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px]"
-                          placeholder="Optional..."
-                        />
-                      </div>
-
-                      <div className="col-span-12 md:col-span-6">
-                        <div className="flex flex-wrap items-center gap-2 pt-1">
-                          {viewOrder.status !== "cancelled" && (
-                            <>
-                              {!isReceiving ? (
-                                <button
-                                  onClick={startReceiving}
-                                  className="text-[11px] px-3 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700"
-                                >
-                                  Receive
-                                </button>
-                              ) : (
+                          {/* Receive controls */}
+                          <div className="col-span-12 lg:col-span-6">
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              {viewOrder.status !== "cancelled" && (
                                 <>
-                                  <button
-                                    onClick={handleReceiveSave}
-                                    disabled={savingReceive}
-                                    className="text-[11px] px-3 py-1 rounded-lg bg-slate-900 text-white disabled:opacity-60"
-                                  >
-                                    {savingReceive ? "..." : "Save Receive"}
-                                  </button>
-                                  <button
-                                    onClick={() => setIsReceiving(false)}
-                                    disabled={savingReceive}
-                                    className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white disabled:opacity-60"
-                                  >
-                                    Cancel
-                                  </button>
+                                  {!isReceiving ? (
+                                    <button
+                                      onClick={startReceiving}
+                                      className="text-[12px] px-4 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
+                                    >
+                                      Receive
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <button
+                                        onClick={handleReceiveSave}
+                                        disabled={savingReceive}
+                                        className="text-[12px] px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                                      >
+                                        {savingReceive ? "Saving..." : "Save Receive"}
+                                      </button>
+                                      <button
+                                        onClick={() => setIsReceiving(false)}
+                                        disabled={savingReceive}
+                                        className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  )}
+
+                                  {!isReceiving && (
+                                    <button
+                                      onClick={handleCancelOrder}
+                                      disabled={savingReceive}
+                                      className="text-[12px] px-4 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60 font-semibold"
+                                      >
+                                      Cancel Order
+                                    </button>
+                                  )}
                                 </>
                               )}
 
-                              {!isReceiving && (
-                                <button
-                                  onClick={handleCancelOrder}
-                                  disabled={savingReceive}
-                                  className="text-[11px] px-3 py-1 rounded-lg border border-red-300 bg-red-50 text-red-700 disabled:opacity-60"
-                                >
-                                  Cancel Order
-                                </button>
-                              )}
-                            </>
-                          )}
-
-                          <button
-                            onClick={() => {
-                              setViewOrder(null);
-                              setIsReceiving(false);
-                            }}
-                            className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white"
-                          >
-                            Close
-                          </button>
+                              <button
+                                onClick={() => {
+                                  setViewOrder(null);
+                                  setIsReceiving(false);
+                                }}
+                                className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
                         </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Body */}
+                <div className="p-3 overflow-auto text-xs flex-1 bg-white">
+                  {(() => {
+                    const items = getOrderItems(viewOrder);
+                    const school = getOrderSchool(viewOrder);
+                    if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
+
+                    return (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs border-collapse">
+                          <thead className="bg-slate-100">
+                            <tr>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left w-36">School</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left w-40">Publisher</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left">Book</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left w-20">Class</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Subject</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Code/ISBN</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-right w-16">O</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-right w-20">R</th>
+                              <th className="border-b border-slate-200 px-2 py-2 text-right w-16">P</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              type PublisherGroup = {
+                                key: string;
+                                publisherName: string;
+                                items: SchoolOrderItem[];
+                              };
+
+                              const groupsMap = new Map<string, PublisherGroup>();
+
+                              items.forEach((item) => {
+                                const p = item.book?.publisher;
+                                const pid =
+                                  p?.id ??
+                                  (item.book?.publisher_id ? Number(item.book.publisher_id) : 0);
+                                const key = pid ? String(pid) : "no_publisher";
+                                const publisherName =
+                                  p?.name || (pid ? `Publisher #${pid}` : "No Publisher");
+
+                                if (!groupsMap.has(key)) {
+                                  groupsMap.set(key, { key, publisherName, items: [item] });
+                                } else {
+                                  groupsMap.get(key)!.items.push(item);
+                                }
+                              });
+
+                              const groups = Array.from(groupsMap.values());
+                              const totalRows = groups.reduce((sum, g) => sum + g.items.length, 0);
+                              let schoolCellRendered = false;
+
+                              return groups.map((group) => (
+                                <React.Fragment key={group.key}>
+                                  {group.items.map((item, idxInGroup) => {
+                                    const ordered = Number(item.total_order_qty) || 0;
+                                    const rawVal = receiveForm[item.id] ?? String(item.received_qty ?? 0);
+
+                                    const numericReceived = Number(rawVal) >= 0 ? Number(rawVal) : 0;
+                                    const effectiveReceived = isNaN(numericReceived)
+                                      ? 0
+                                      : Math.min(numericReceived, ordered);
+
+                                    const backendReceived = Number(item.received_qty ?? 0) || 0;
+                                    const displayReceived = isReceiving ? effectiveReceived : backendReceived;
+
+                                    const pendingWhenNotEditing =
+                                      item.pending_qty != null
+                                        ? Math.max(Number(item.pending_qty) || 0, 0)
+                                        : Math.max(ordered - backendReceived, 0);
+
+                                    const pending = isReceiving
+                                      ? Math.max(ordered - effectiveReceived, 0)
+                                      : pendingWhenNotEditing;
+
+                                    const showSchoolCell = !schoolCellRendered;
+                                    const showPublisherCell = idxInGroup === 0;
+                                    if (showSchoolCell) schoolCellRendered = true;
+
+                                    return (
+                                      <tr key={item.id} className="hover:bg-slate-50">
+                                        {showSchoolCell && (
+                                          <td
+                                            rowSpan={totalRows}
+                                            className="border-b border-slate-200 px-2 py-2 align-top text-[12px] font-semibold"
+                                          >
+                                            {school?.name || "-"}
+                                            {school?.city ? (
+                                              <span className="block text-[11px] text-slate-500 font-normal">
+                                                {school.city}
+                                              </span>
+                                            ) : null}
+                                          </td>
+                                        )}
+
+                                        {showPublisherCell && (
+                                          <td
+                                            rowSpan={group.items.length}
+                                            className="border-b border-slate-200 px-2 py-2 align-top text-[12px] font-medium text-indigo-700"
+                                          >
+                                            {group.publisherName}
+                                          </td>
+                                        )}
+
+                                        <td className="border-b border-slate-200 px-2 py-2">
+                                          {item.book?.title || `Book #${item.book_id}`}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2">
+                                          {item.book?.class_name || "-"}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2">
+                                          {item.book?.subject || "-"}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2">
+                                          {item.book?.code || item.book?.isbn || "-"}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                          {ordered}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                          {isReceiving ? (
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={ordered}
+                                              value={rawVal}
+                                              onChange={(e) => handleReceiveChange(item.id, e.target.value)}
+                                              className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                            />
+                                          ) : (
+                                            displayReceived
+                                          )}
+                                        </td>
+                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                          {pending}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </React.Fragment>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
                       </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
+                    );
+                  })()}
+                </div>
+              </div>
 
-            {/* Body */}
-            <div className="p-2 overflow-auto text-xs flex-1">
-              {(() => {
-                const items = getOrderItems(viewOrder);
-                const school = getOrderSchool(viewOrder);
-                if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
-
-                return (
-                  <div className="border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-xs border-collapse">
-                      <thead className="bg-slate-100">
-                        <tr>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-36">School</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-40">Publisher</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left">Book</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-20">Class</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-24">Subject</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-left w-24">Code/ISBN</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right w-16">O</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right w-20">R</th>
-                          <th className="border-b border-slate-200 px-2 py-1 text-right w-16">P</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(() => {
-                          // Group by publisher just for neat display (order is already supplier-wise)
-                          type PublisherGroup = {
-                            key: string;
-                            publisherName: string;
-                            items: SchoolOrderItem[];
-                          };
-
-                          const groupsMap = new Map<string, PublisherGroup>();
-
-                          items.forEach((item) => {
-                            const p = item.book?.publisher;
-                            const pid =
-                              p?.id ??
-                              (item.book?.publisher_id ? Number(item.book.publisher_id) : 0);
-                            const key = pid ? String(pid) : "no_publisher";
-                            const publisherName =
-                              p?.name || (pid ? `Publisher #${pid}` : "No Publisher");
-
-                            if (!groupsMap.has(key)) {
-                              groupsMap.set(key, { key, publisherName, items: [item] });
-                            } else {
-                              groupsMap.get(key)!.items.push(item);
-                            }
-                          });
-
-                          const groups = Array.from(groupsMap.values());
-                          const totalRows = groups.reduce((sum, g) => sum + g.items.length, 0);
-                          let schoolCellRendered = false;
-
-                          return groups.map((group) => (
-                            <React.Fragment key={group.key}>
-                              {group.items.map((item, idxInGroup) => {
-                                const ordered = Number(item.total_order_qty) || 0;
-                                const rawVal = receiveForm[item.id] ?? String(item.received_qty ?? 0);
-
-                                const numericReceived = Number(rawVal) >= 0 ? Number(rawVal) : 0;
-                                const effectiveReceived = isNaN(numericReceived)
-                                  ? 0
-                                  : Math.min(numericReceived, ordered);
-
-                                const backendReceived = Number(item.received_qty ?? 0) || 0;
-                                const displayReceived = isReceiving ? effectiveReceived : backendReceived;
-
-                                const pendingWhenNotEditing =
-                                  item.pending_qty != null
-                                    ? Math.max(Number(item.pending_qty) || 0, 0)
-                                    : Math.max(ordered - backendReceived, 0);
-
-                                const pending = isReceiving
-                                  ? Math.max(ordered - effectiveReceived, 0)
-                                  : pendingWhenNotEditing;
-
-                                const showSchoolCell = !schoolCellRendered;
-                                const showPublisherCell = idxInGroup === 0;
-                                if (showSchoolCell) schoolCellRendered = true;
-
-                                return (
-                                  <tr key={item.id} className="hover:bg-slate-50">
-                                    {showSchoolCell && (
-                                      <td
-                                        rowSpan={totalRows}
-                                        className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-semibold"
-                                      >
-                                        {school?.name || "-"}
-                                        {school?.city ? (
-                                          <span className="block text-[10px] text-slate-500 font-normal">
-                                            {school.city}
-                                          </span>
-                                        ) : null}
-                                      </td>
-                                    )}
-
-                                    {showPublisherCell && (
-                                      <td
-                                        rowSpan={group.items.length}
-                                        className="border-b border-slate-200 px-2 py-1 align-top text-[11px] font-medium text-indigo-700"
-                                      >
-                                        {group.publisherName}
-                                      </td>
-                                    )}
-
-                                    <td className="border-b border-slate-200 px-2 py-1">
-                                      {item.book?.title || `Book #${item.book_id}`}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1">
-                                      {item.book?.class_name || "-"}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1">
-                                      {item.book?.subject || "-"}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1">
-                                      {item.book?.code || item.book?.isbn || "-"}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                      {ordered}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                      {isReceiving ? (
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          max={ordered}
-                                          value={rawVal}
-                                          onChange={(e) => handleReceiveChange(item.id, e.target.value)}
-                                          className="w-16 border border-slate-300 rounded-md px-1 py-0.5 text-right text-[11px]"
-                                        />
-                                      ) : (
-                                        displayReceived
-                                      )}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-2 py-1 text-right">
-                                      {pending}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </React.Fragment>
-                          ));
-                        })()}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })()}
+              {/* small footer spacing for very small screens */}
+              <div className="h-2" />
             </div>
           </div>
         </div>

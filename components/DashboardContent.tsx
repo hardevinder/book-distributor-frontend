@@ -13,7 +13,8 @@ import {
   ChevronRight,
   Sparkles,
   Truck,
-  Users, // ✅ added
+  Users,
+  ClipboardList, // ✅ Availability icon
 } from "lucide-react";
 
 const DashboardContent: React.FC = () => {
@@ -23,9 +24,9 @@ const DashboardContent: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden">
       {/* Animated Background Elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000" />
+        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000" />
       </div>
 
       {/* TOP BAR */}
@@ -55,6 +56,7 @@ const DashboardContent: React.FC = () => {
               </span>
             )}
           </div>
+
           <button
             onClick={logout}
             className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
@@ -77,6 +79,7 @@ const DashboardContent: React.FC = () => {
               Welcome Back
             </h2>
           </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
             <h1 className="text-xl sm:text-2xl font-bold text-slate-800">
               Module 1 – Order & Purchase Mastery
@@ -85,6 +88,7 @@ const DashboardContent: React.FC = () => {
               Live & Updated
             </span>
           </div>
+
           <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
             Dive into the heart of book distribution. Configure your company
             header, manage masters, fulfill school needs, and keep your
@@ -124,7 +128,7 @@ const DashboardContent: React.FC = () => {
               </div>
             </Link>
 
-            {/* ✅ Suppliers (BEFORE Publishers) */}
+            {/* Suppliers */}
             <Link
               href="/suppliers"
               className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
@@ -365,6 +369,34 @@ const DashboardContent: React.FC = () => {
                   Dispatch
                 </span>
                 <ChevronRight className="w-4 h-4 text-sky-500 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            {/* ✅ Availability (ROUTE FIXED) */}
+            <Link
+              href="/school-orders/availability"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-slate-500/5 to-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-indigo-700 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <ClipboardList className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Availability
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Check school-wise book availability instantly. View Required
+                    vs Available with reserved/issued breakdown.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-slate-700 font-medium">
+                  Check Stock
+                </span>
+                <ChevronRight className="w-4 h-4 text-slate-700 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
 
