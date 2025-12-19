@@ -14,7 +14,8 @@ import {
   Sparkles,
   Truck,
   Users,
-  ClipboardList, // ✅ Availability icon
+  ClipboardList,
+  Boxes, // ✅ Bundles icon
 } from "lucide-react";
 
 const DashboardContent: React.FC = () => {
@@ -372,7 +373,7 @@ const DashboardContent: React.FC = () => {
               </div>
             </Link>
 
-            {/* ✅ Availability (ROUTE FIXED) */}
+            {/* Availability */}
             <Link
               href="/school-orders/availability"
               className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
@@ -397,6 +398,34 @@ const DashboardContent: React.FC = () => {
                   Check Stock
                 </span>
                 <ChevronRight className="w-4 h-4 text-slate-700 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
+
+            {/* ✅ Bundles (NEW) */}
+            <Link
+              href="/bundles"
+              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/5 to-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="relative flex items-start gap-3 mb-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-600 to-indigo-700 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
+                  <Boxes className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">
+                    Bundles (Kits)
+                  </h3>
+                  <p className="text-slate-600 text-sm leading-relaxed">
+                    Create class/school-wise kits with pricing. Reserve stock,
+                    then issue bundles to deduct inventory cleanly.
+                  </p>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <span className="text-xs text-fuchsia-700 font-medium">
+                  Build Bundles
+                </span>
+                <ChevronRight className="w-4 h-4 text-fuchsia-700 group-hover:translate-x-1 transition-transform" />
               </div>
             </Link>
 
