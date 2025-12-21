@@ -59,7 +59,7 @@ type BookStatus = {
 };
 
 const SESSION_OPTIONS = (() => {
-  const base = 2025;
+  const base = 2026;
   const arr: string[] = [];
   for (let i = 0; i <= 5; i++) {
     const y1 = base + i;

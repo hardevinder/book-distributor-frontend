@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 import {
@@ -15,11 +15,345 @@ import {
   Truck,
   Users,
   ClipboardList,
-  Boxes, // ✅ Bundles icon
+  Boxes,
+  PackageCheck,
+  FileText, // ✅ for Bundle Dispatches
 } from "lucide-react";
+
+/* ---------------- UI Helpers ---------------- */
+
+type DashCard = {
+  title: string;
+  desc: string;
+  href: string;
+  icon: React.ReactNode;
+  pill: string;
+  accent:
+    | "emerald"
+    | "amber"
+    | "indigo"
+    | "cyan"
+    | "blue"
+    | "teal"
+    | "purple"
+    | "sky"
+    | "slate"
+    | "fuchsia"
+    | "rose";
+};
+
+const accentMap: Record<
+  DashCard["accent"],
+  {
+    bg: string;
+    glow: string;
+    pillBg: string;
+    pillText: string;
+    chevron: string;
+    iconBg: string;
+  }
+> = {
+  emerald: {
+    bg: "from-emerald-500/10 to-teal-500/10",
+    glow: "from-emerald-500/20 to-teal-500/20",
+    pillBg: "from-emerald-100 to-teal-100",
+    pillText: "text-emerald-700 border-emerald-200",
+    chevron: "text-emerald-600",
+    iconBg: "from-emerald-500 to-teal-600",
+  },
+  amber: {
+    bg: "from-amber-500/10 to-orange-500/10",
+    glow: "from-amber-500/20 to-orange-500/20",
+    pillBg: "from-amber-100 to-orange-100",
+    pillText: "text-amber-700 border-amber-200",
+    chevron: "text-amber-600",
+    iconBg: "from-amber-500 to-orange-600",
+  },
+  indigo: {
+    bg: "from-indigo-500/10 to-purple-500/10",
+    glow: "from-indigo-500/20 to-purple-500/20",
+    pillBg: "from-indigo-100 to-purple-100",
+    pillText: "text-indigo-700 border-indigo-200",
+    chevron: "text-indigo-600",
+    iconBg: "from-indigo-500 to-purple-600",
+  },
+  cyan: {
+    bg: "from-cyan-500/10 to-sky-500/10",
+    glow: "from-cyan-500/20 to-sky-500/20",
+    pillBg: "from-cyan-100 to-sky-100",
+    pillText: "text-cyan-700 border-cyan-200",
+    chevron: "text-cyan-700",
+    iconBg: "from-cyan-500 to-sky-600",
+  },
+  blue: {
+    bg: "from-blue-500/10 to-sky-500/10",
+    glow: "from-blue-500/20 to-sky-500/20",
+    pillBg: "from-blue-100 to-sky-100",
+    pillText: "text-blue-700 border-blue-200",
+    chevron: "text-blue-700",
+    iconBg: "from-blue-500 to-sky-600",
+  },
+  teal: {
+    bg: "from-teal-500/10 to-emerald-500/10",
+    glow: "from-teal-500/20 to-emerald-500/20",
+    pillBg: "from-teal-100 to-emerald-100",
+    pillText: "text-teal-700 border-teal-200",
+    chevron: "text-teal-700",
+    iconBg: "from-teal-500 to-emerald-600",
+  },
+  purple: {
+    bg: "from-purple-500/10 to-violet-500/10",
+    glow: "from-purple-500/20 to-violet-500/20",
+    pillBg: "from-purple-100 to-violet-100",
+    pillText: "text-purple-700 border-purple-200",
+    chevron: "text-purple-700",
+    iconBg: "from-purple-500 to-violet-600",
+  },
+  sky: {
+    bg: "from-sky-500/10 to-cyan-500/10",
+    glow: "from-sky-500/20 to-cyan-500/20",
+    pillBg: "from-sky-100 to-cyan-100",
+    pillText: "text-sky-700 border-sky-200",
+    chevron: "text-sky-700",
+    iconBg: "from-sky-500 to-cyan-600",
+  },
+  slate: {
+    bg: "from-slate-500/10 to-indigo-500/10",
+    glow: "from-slate-500/20 to-indigo-500/20",
+    pillBg: "from-slate-100 to-indigo-100",
+    pillText: "text-slate-700 border-slate-200",
+    chevron: "text-slate-700",
+    iconBg: "from-slate-700 to-indigo-700",
+  },
+  fuchsia: {
+    bg: "from-fuchsia-500/10 to-indigo-500/10",
+    glow: "from-fuchsia-500/20 to-indigo-500/20",
+    pillBg: "from-fuchsia-100 to-indigo-100",
+    pillText: "text-fuchsia-700 border-fuchsia-200",
+    chevron: "text-fuchsia-700",
+    iconBg: "from-fuchsia-600 to-indigo-700",
+  },
+  rose: {
+    bg: "from-rose-500/10 to-red-500/10",
+    glow: "from-rose-500/20 to-red-500/20",
+    pillBg: "from-rose-100 to-red-100",
+    pillText: "text-rose-700 border-rose-200",
+    chevron: "text-rose-700",
+    iconBg: "from-rose-500 to-red-600",
+  },
+};
+
+function StatPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-2xl bg-white/70 backdrop-blur-md border border-slate-200/60 px-4 py-3 shadow-sm">
+      <span className="text-xs font-medium text-slate-500">{label}</span>
+      <span className="text-sm font-semibold text-slate-800">{value}</span>
+    </div>
+  );
+}
+
+function DashCardUI({ card }: { card: DashCard }) {
+  const a = accentMap[card.accent];
+
+  return (
+    <Link
+      href={card.href}
+      className="group relative rounded-2xl border border-slate-200/60 bg-white/75 backdrop-blur-md p-6 shadow-lg hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300 overflow-hidden"
+    >
+      {/* soft gradient wash */}
+      <div
+        className={`absolute inset-0 bg-gradient-to-br ${a.bg} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
+      />
+      {/* corner glow */}
+      <div
+        className={`absolute -top-24 -right-24 h-48 w-48 rounded-full bg-gradient-to-br ${a.glow} blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
+      />
+
+      <div className="relative flex items-start gap-4">
+        <div
+          className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${a.iconBg} text-white shadow-lg group-hover:rotate-6 transition-transform duration-300`}
+        >
+          {card.icon}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="font-bold text-lg text-slate-900 tracking-tight">
+              {card.title}
+            </h3>
+            <span
+              className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border bg-gradient-to-r ${a.pillBg} ${a.pillText} font-semibold`}
+            >
+              {card.pill}
+            </span>
+          </div>
+
+          <p className="mt-1 text-sm text-slate-600 leading-relaxed line-clamp-3">
+            {card.desc}
+          </p>
+
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-700 transition-colors">
+              Open
+            </span>
+            <ChevronRight
+              className={`w-4 h-4 ${a.chevron} group-hover:translate-x-1 transition-transform`}
+            />
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+/* ---------------- Page ---------------- */
 
 const DashboardContent: React.FC = () => {
   const { user, logout } = useAuth();
+
+  const cards = useMemo<DashCard[]>(
+    () => [
+      // Masters / Setup
+      {
+        title: "Company Profile",
+        desc: "Maintain company name, address, GST, logo & contact. Used across PDFs (POs, invoices, delivery notes).",
+        href: "/company-profile",
+        icon: <Building2 className="w-6 h-6" />,
+        pill: "Setup",
+        accent: "emerald",
+      },
+      {
+        title: "Suppliers",
+        desc: "Manage your supplier directory with contacts and business details to streamline procurement.",
+        href: "/suppliers",
+        icon: <Users className="w-6 h-6" />,
+        pill: "Master",
+        accent: "amber",
+      },
+      {
+        title: "Publishers",
+        desc: "Onboard publishers and connect them with your catalog for cleaner purchase workflows.",
+        href: "/publishers",
+        icon: <Building2 className="w-6 h-6" />,
+        pill: "Master",
+        accent: "indigo",
+      },
+      {
+        title: "Transports",
+        desc: "Maintain transporter/courier list for purchase orders and delivery documentation.",
+        href: "/transports",
+        icon: <Truck className="w-6 h-6" />,
+        pill: "Master",
+        accent: "cyan",
+      },
+      {
+        title: "Classes",
+        desc: "Define classes and mapping structure for precise textbook requirements and kits.",
+        href: "/classes",
+        icon: <GraduationCap className="w-6 h-6" />,
+        pill: "Master",
+        accent: "blue",
+      },
+      {
+        title: "Schools",
+        desc: "Manage school profiles and track yearly demand for accurate planning and distribution.",
+        href: "/schools",
+        icon: <Building2 className="w-6 h-6" />,
+        pill: "Master",
+        accent: "teal",
+      },
+      {
+        title: "Distributors",
+        desc: "Create distributor records and manage distribution partners for issuing and dispatch tracking.",
+        href: "/distributors",
+        icon: <Users className="w-6 h-6" />,
+        pill: "Module 2",
+        accent: "rose",
+      },
+
+      // Catalog / Demand
+      {
+        title: "Books",
+        desc: "Maintain catalog with class/subject/publisher/supplier + pricing for accurate totals and reports.",
+        href: "/books",
+        icon: <BookOpen className="w-6 h-6" />,
+        pill: "Catalog",
+        accent: "purple",
+      },
+      {
+        title: "Requirements",
+        desc: "Capture school-wise requirements with Excel import/export for fast bulk entry.",
+        href: "/requirements",
+        icon: <Receipt className="w-6 h-6" />,
+        pill: "Demand",
+        accent: "amber",
+      },
+
+      // Orders
+      {
+        title: "Publisher Orders",
+        desc: "Generate consolidated POs from requirements and coordinate quickly with publishers.",
+        href: "/publisher-orders",
+        icon: <Package className="w-6 h-6" />,
+        pill: "Orders",
+        accent: "emerald",
+      },
+      {
+        title: "School Orders",
+        desc: "Generate school-wise orders, share order emails and track received vs pending.",
+        href: "/school-orders",
+        icon: <Package className="w-6 h-6" />,
+        pill: "Orders",
+        accent: "sky",
+      },
+
+      // Inventory / Bundles
+      {
+        title: "Availability",
+        desc: "View school-wise required vs available with reserved/issued breakdown to plan distribution.",
+        href: "/school-orders/availability",
+        icon: <ClipboardList className="w-6 h-6" />,
+        pill: "Stock",
+        accent: "slate",
+      },
+      {
+        title: "Bundles (Kits)",
+        desc: "Create class/school-wise kits with pricing. Reserve stock, then issue bundles to deduct inventory.",
+        href: "/bundles",
+        icon: <Boxes className="w-6 h-6" />,
+        pill: "Module 2",
+        accent: "fuchsia",
+      },
+      {
+        title: "Issue Bundles",
+        desc: "Issue reserved bundles to school/distributor and generate clean inventory deductions with issue slip.",
+        href: "/issue-bundles",
+        icon: <PackageCheck className="w-6 h-6" />,
+        pill: "Dispatch",
+        accent: "cyan",
+      },
+
+      // ✅ NEW: Bundle Dispatches
+      {
+        title: "Bundle Dispatches",
+        desc: "Create & track dispatch entries for issued bundles. Generate Dispatch Challan / Delivery Note PDFs and manage status.",
+        href: "/bundle-dispatches",
+        icon: <FileText className="w-6 h-6" />,
+        pill: "Dispatch",
+        accent: "indigo",
+      },
+
+      {
+        title: "Stock & Inventory",
+        desc: "Track real-time stock levels and inventory movements for accurate reporting and control.",
+        href: "/stock",
+        icon: <Layers className="w-6 h-6" />,
+        pill: "Inventory",
+        accent: "emerald",
+      },
+    ],
+    []
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden">
@@ -31,28 +365,29 @@ const DashboardContent: React.FC = () => {
       </div>
 
       {/* TOP BAR */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-lg">
-        <div className="font-bold flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg animate-pulse">
+      <header className="relative z-10 flex items-center justify-between px-6 py-4 bg-white/90 backdrop-blur-md border-b border-slate-200/60 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
             <BookOpen className="w-5 h-5" />
           </div>
-          <div className="flex flex-col">
-            <span className="text-base sm:text-lg tracking-tight">
-              BookFlow Dashboard
+
+          <div className="flex flex-col leading-tight">
+            <span className="text-base sm:text-lg font-extrabold tracking-tight">
+              Book Distribution Panel
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Streamline Orders, Purchases & Stock
+              Orders • Inventory • Bundles • Dispatch
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-4 text-sm">
-          <div className="flex flex-col items-end">
+          <div className="hidden sm:flex flex-col items-end">
             <span className="font-semibold text-slate-800">
               {user?.name || "User"}
             </span>
             {user?.role && (
-              <span className="text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
+              <span className="mt-0.5 text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-semibold">
                 {user.role}
               </span>
             )}
@@ -60,402 +395,114 @@ const DashboardContent: React.FC = () => {
 
           <button
             onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
+            className="flex items-center gap-2 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-[1.03] transition-all duration-200"
           >
             Logout
-            <ChevronRight className="w-3 h-3" />
+            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
       </header>
 
       {/* MAIN CONTENT */}
       <main className="relative z-10 p-6 lg:p-8">
-        {/* Heading */}
+        {/* Hero */}
         <section className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md">
-              <Sparkles className="w-4 h-4" />
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-              Welcome Back
-            </h2>
-          </div>
+          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md">
+                  <Sparkles className="w-4.5 h-4.5" />
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-extrabold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
+                  Welcome back, {user?.name?.split(" ")?.[0] || "Gurman"}
+                </h2>
+              </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-800">
-              Module 1 – Order & Purchase Mastery
-            </h1>
-            <span className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-700 border border-emerald-200 font-medium">
-              Live & Updated
+              <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
+                Manage masters, build requirements, generate orders, maintain inventory, create bundles (kits),
+                and issue/dispatch — all from one clean dashboard.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full lg:w-[520px]">
+              <StatPill label="Module-1" value="Orders & Masters" />
+              <StatPill label="Module-2" value="Inventory & Bundles" />
+              <StatPill label="Status" value="Live & Updated" />
+            </div>
+          </div>
+        </section>
+
+        {/* Quick Actions */}
+        <section className="mb-6">
+          <div className="rounded-3xl border border-slate-200/60 bg-white/70 backdrop-blur-md shadow-sm p-4 sm:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
+                  Quick Actions
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Jump to the most used screens.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  href="/requirements"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Requirements
+                </Link>
+                <Link
+                  href="/school-orders"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  School Orders
+                </Link>
+                <Link
+                  href="/bundles"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Bundles
+                </Link>
+                <Link
+                  href="/issue-bundles"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Issue Bundles
+                </Link>
+                {/* ✅ NEW quick action */}
+                <Link
+                  href="/bundle-dispatches"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Bundle Dispatches
+                </Link>
+                <Link
+                  href="/stock"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Stock
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* GRID */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+              Modules & Masters
+            </h3>
+            <span className="text-xs text-slate-500">
+              {cards.length} sections
             </span>
           </div>
 
-          <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-            Dive into the heart of book distribution. Configure your company
-            header, manage masters, fulfill school needs, and keep your
-            inventory in perfect sync—all in one intuitive hub.
-          </p>
-        </section>
-
-        {/* GRID OF MODULE CARDS */}
-        <section>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Company Profile */}
-            <Link
-              href="/company-profile"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-teal-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Building2 className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Company Profile
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Maintain your own company name, address, GST & logo. This
-                    header will print on purchase orders, invoices and other
-                    PDFs.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-emerald-700 font-medium">
-                  Configure Header
-                </span>
-                <ChevronRight className="w-4 h-4 text-emerald-600 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Suppliers */}
-            <Link
-              href="/suppliers"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Users className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Suppliers
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Manage your supplier directory. Add supplier details and
-                    keep procurement contacts organized.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-amber-700 font-medium">
-                  Manage Suppliers
-                </span>
-                <ChevronRight className="w-4 h-4 text-amber-600 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Publishers */}
-            <Link
-              href="/publishers"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Building2 className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Publishers
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Discover and onboard top publishers. Link them effortlessly
-                    to your catalog and streamline order fulfillment.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-indigo-600 font-medium">
-                  Explore Now
-                </span>
-                <ChevronRight className="w-4 h-4 text-indigo-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Transports */}
-            <Link
-              href="/transports"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-sky-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-sky-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Truck className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Transports
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Maintain your transporter / courier master. Use it on
-                    purchase orders and delivery notes for smooth dispatches.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-cyan-600 font-medium">
-                  Configure
-                </span>
-                <ChevronRight className="w-4 h-4 text-cyan-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Classes */}
-            <Link
-              href="/classes"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-sky-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-sky-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <GraduationCap className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Classes
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Curate a dynamic class roster. Map textbooks precisely to
-                    grades and subjects for seamless requirements.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-blue-600 font-medium">Dive In</span>
-                <ChevronRight className="w-4 h-4 text-blue-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Schools */}
-            <Link
-              href="/schools"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-teal-500/5 to-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Building2 className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Schools
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Profile educational institutions. Monitor and forecast their
-                    yearly book demands with precision.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-teal-600 font-medium">Manage</span>
-                <ChevronRight className="w-4 h-4 text-teal-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Books */}
-            <Link
-              href="/books"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-violet-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-violet-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Books
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Build your ultimate library catalog. Track classes,
-                    subjects, publishers, pricing, and more.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-purple-600 font-medium">
-                  Catalog
-                </span>
-                <ChevronRight className="w-4 h-4 text-purple-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Requirements */}
-            <Link
-              href="/requirements"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-orange-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Receipt className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Requirements
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Gather school-specific needs. Leverage Excel imports/exports
-                    for bulk efficiency.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-amber-600 font-medium">Track</span>
-                <ChevronRight className="w-4 h-4 text-amber-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Publisher Orders */}
-            <Link
-              href="/publisher-orders"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-teal-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-green-500 to-teal-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Package className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Publisher Orders
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Consolidate demands into smart POs. Automate emails for
-                    swift publisher coordination.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-green-600 font-medium">Order</span>
-                <ChevronRight className="w-4 h-4 text-green-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* School Orders */}
-            <Link
-              href="/school-orders"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-sky-500/5 to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-cyan-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Package className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    School Orders
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Generate school-wise orders from requirements. Send order
-                    emails and track received vs pending at school level.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-sky-600 font-medium">
-                  Dispatch
-                </span>
-                <ChevronRight className="w-4 h-4 text-sky-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Availability */}
-            <Link
-              href="/school-orders/availability"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-500/5 to-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-slate-700 to-indigo-700 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <ClipboardList className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Availability
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Check school-wise book availability instantly. View Required
-                    vs Available with reserved/issued breakdown.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-slate-700 font-medium">
-                  Check Stock
-                </span>
-                <ChevronRight className="w-4 h-4 text-slate-700 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* ✅ Bundles (NEW) */}
-            <Link
-              href="/bundles"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/5 to-indigo-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-600 to-indigo-700 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Boxes className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Bundles (Kits)
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Create class/school-wise kits with pricing. Reserve stock,
-                    then issue bundles to deduct inventory cleanly.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-fuchsia-700 font-medium">
-                  Build Bundles
-                </span>
-                <ChevronRight className="w-4 h-4 text-fuchsia-700 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
-
-            {/* Stock & Inventory */}
-            <Link
-              href="/stock"
-              className="group relative border-0 bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-300 overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              <div className="relative flex items-start gap-3 mb-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 text-white shadow-lg group-hover:rotate-12 transition-transform duration-300">
-                  <Layers className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-slate-800 mb-1">
-                    Stock & Inventory
-                  </h3>
-                  <p className="text-slate-600 text-sm leading-relaxed">
-                    Real-time visibility into stock levels. Auto-sync with
-                    orders and receipts for accuracy.
-                  </p>
-                </div>
-              </div>
-              <div className="relative flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                <span className="text-xs text-emerald-600 font-medium">
-                  Monitor
-                </span>
-                <ChevronRight className="w-4 h-4 text-emerald-500 group-hover:translate-x-1 transition-transform" />
-              </div>
-            </Link>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+            {cards.map((c) => (
+              <DashCardUI key={c.href} card={c} />
+            ))}
           </div>
         </section>
       </main>
@@ -466,10 +513,10 @@ const DashboardContent: React.FC = () => {
             transform: translate(0px, 0px) scale(1);
           }
           33% {
-            transform: translate(30px, -50px) scale(1.1);
+            transform: translate(30px, -50px) scale(1.08);
           }
           66% {
-            transform: translate(-20px, 20px) scale(0.9);
+            transform: translate(-20px, 20px) scale(0.92);
           }
           100% {
             transform: translate(0px, 0px) scale(1);

@@ -79,8 +79,12 @@ type RequirementRowFormState = {
 
 type PendingItem = RequirementRowFormState & { tempId: number };
 
+/* ---------- Session Defaults ---------- */
+
+const DEFAULT_SESSION = "2026-27"; // ✅ default session wanted
+
 const SESSION_OPTIONS: string[] = (() => {
-  const base = 2025;
+  const base = 2026; // ✅ was 2025
   const arr: string[] = [];
   for (let i = 0; i <= 5; i++) {
     const y1 = base + i;
@@ -96,7 +100,7 @@ const emptyRequirementForm: RequirementRowFormState = {
   publisher_name: "",
   book_title: "",
   class_name: "",
-  academic_session: "2025-26",
+  academic_session: DEFAULT_SESSION, // ✅ was "2025-26"
   required_copies: "",
   status: "confirmed", // ✅ default confirmed
   is_locked: false,
@@ -135,9 +139,7 @@ const normalizeRequirements = (
   return payload?.data ?? [];
 };
 
-const formatNumber = (
-  value: number | string | null | undefined
-): string => {
+const formatNumber = (value: number | string | null | undefined): string => {
   if (value === null || value === undefined || value === "") return "-";
   const num =
     typeof value === "number"
@@ -306,6 +308,7 @@ const RequirementsPageClient: React.FC = () => {
         ...prev,
         school_name: s?.name || "",
         status: "confirmed", // ✅ keep confirmed
+        // (keep whatever session is already selected in form)
       }));
       setPendingItems([]);
     } else {
@@ -426,7 +429,9 @@ const RequirementsPageClient: React.FC = () => {
           (b.publisher_id === publisherId || b.publisher?.id === publisherId)
       );
     } else {
-      existingBook = books.find((b) => b.title.toLowerCase() === bookTitle.toLowerCase());
+      existingBook = books.find(
+        (b) => b.title.toLowerCase() === bookTitle.toLowerCase()
+      );
     }
 
     if (existingBook) {
@@ -461,7 +466,7 @@ const RequirementsPageClient: React.FC = () => {
       class_id: classId,
       academic_session: row.academic_session.trim() || null,
       required_copies: row.required_copies ? Number(row.required_copies) : 0,
-      status: row.status || "confirmed", // ✅ keep whatever selected, but fallback confirmed
+      status: row.status || "confirmed",
       remarks: null,
       is_locked: row.is_locked,
     };
@@ -485,8 +490,8 @@ const RequirementsPageClient: React.FC = () => {
       ...emptyRequirementForm,
       school_name: prev.school_name,
       class_name: prev.class_name,
-      academic_session: prev.academic_session || "2025-26",
-      status: "confirmed", // ✅ always default confirmed
+      academic_session: prev.academic_session || DEFAULT_SESSION, // ✅ was "2025-26"
+      status: "confirmed",
     }));
     setEditingId(null);
   };
@@ -550,7 +555,6 @@ const RequirementsPageClient: React.FC = () => {
       return;
     }
 
-    // ✅ ensure default confirmed in all cases
     const itemToAdd: RequirementRowFormState = {
       ...form,
       status: form.status || "confirmed",
@@ -568,11 +572,10 @@ const RequirementsPageClient: React.FC = () => {
       type: "success",
     });
 
-    // ✅ After Add to List: ONLY Book should be blank (keep everything else as-is)
     setForm((prev) => ({
       ...prev,
       book_title: "",
-      status: "confirmed", // ✅ default confirmed after adding
+      status: "confirmed",
     }));
   };
 
@@ -594,7 +597,7 @@ const RequirementsPageClient: React.FC = () => {
       for (const item of pendingItems) {
         const payload = await prepareRequirementPayload({
           ...item,
-          status: item.status || "confirmed", // ✅ default confirmed
+          status: item.status || "confirmed",
         });
         await api.post("/api/requirements", payload);
       }
@@ -602,7 +605,6 @@ const RequirementsPageClient: React.FC = () => {
       const count = pendingItems.length;
       setPendingItems([]);
 
-      // ✅ keep form values; clear ONLY Book and keep status confirmed
       setForm((prev) => ({
         ...prev,
         book_title: "",
@@ -611,7 +613,10 @@ const RequirementsPageClient: React.FC = () => {
 
       await fetchRequirements(search, filterSchoolId, filterSession);
 
-      setToast({ message: `Saved ${count} requirement(s) successfully.`, type: "success" });
+      setToast({
+        message: `Saved ${count} requirement(s) successfully.`,
+        type: "success",
+      });
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -634,18 +639,20 @@ const RequirementsPageClient: React.FC = () => {
       publisher_name: r.book?.publisher?.name || "",
       book_title: r.book?.title || "",
       class_name: r.class?.class_name || "",
-      academic_session: r.academic_session || "2025-26",
+      academic_session: r.academic_session || DEFAULT_SESSION, // ✅ was "2025-26"
       required_copies:
         r.required_copies !== null && r.required_copies !== undefined
           ? String(r.required_copies)
           : "",
-      status: (r.status as any) || "confirmed", // ✅ fallback confirmed
+      status: (r.status as any) || "confirmed",
       is_locked: r.is_locked,
     });
   };
 
   const handleDelete = async (id: number) => {
-    const confirmDelete = window.confirm("Are you sure you want to delete this requirement?");
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete this requirement?"
+    );
     if (!confirmDelete) return;
 
     setError(null);
@@ -706,7 +713,9 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -886,7 +895,8 @@ const RequirementsPageClient: React.FC = () => {
           </div>
           {currentSchoolName && (
             <span className="text-slate-500 hidden sm:block">
-              Keep changing Book / Copies and click Add to List. Finally, use Save All on the right side.
+              Keep changing Book / Copies and click Add to List. Finally, use Save All
+              on the right side.
             </span>
           )}
         </section>
@@ -1294,9 +1304,7 @@ const RequirementsPageClient: React.FC = () => {
                 <Sparkles className="w-3.5 h-3.5" />
               </div>
               <div className="flex flex-col">
-                <span className="text-sm font-semibold text-slate-800">
-                  Filters & Excel
-                </span>
+                <span className="text-sm font-semibold text-slate-800">Filters & Excel</span>
                 <span className="text-[11px] text-slate-500">
                   Filter requirements below or import / export Excel / print PDF.
                 </span>
@@ -1536,7 +1544,9 @@ const RequirementsPageClient: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}

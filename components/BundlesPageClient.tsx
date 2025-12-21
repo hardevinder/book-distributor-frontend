@@ -72,7 +72,7 @@ type BundleRow = {
 };
 
 const SESSION_OPTIONS = (() => {
-  const base = 2025;
+  const base = 2026;
   const arr: string[] = [];
   for (let i = 0; i <= 5; i++) {
     const y1 = base + i;
@@ -106,7 +106,9 @@ const BundlesPageClient: React.FC = () => {
 
   const [schools, setSchools] = useState<School[]>([]);
   const [schoolId, setSchoolId] = useState<number | "">("");
-  const [session, setSession] = useState<string>("");
+  const DEFAULT_SESSION = "2026-27";
+  const [session, setSession] = useState<string>(DEFAULT_SESSION);
+
 
   const [loadingAvl, setLoadingAvl] = useState(false);
   const [avl, setAvl] = useState<AvailabilityResponse | null>(null);
