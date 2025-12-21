@@ -68,11 +68,11 @@ const DistributorsPageClient: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Excel-style refs
-  const addRowRefs = useRef<(HTMLInputElement | HTMLTextAreaElement | null)[]>(
+  // ✅ Excel-style refs (typed)
+  const addRowRefs = useRef<Array<HTMLInputElement | HTMLTextAreaElement | null>>(
     []
   );
-  const editRowRefs = useRef<(HTMLInputElement | HTMLTextAreaElement | null)[]>(
+  const editRowRefs = useRef<Array<HTMLInputElement | HTMLTextAreaElement | null>>(
     []
   );
 
@@ -115,9 +115,7 @@ const DistributorsPageClient: React.FC = () => {
         ? raw.rows
         : [];
 
-      const sorted = [...list].sort(
-        (a, b) => (b.id || 0) - (a.id || 0)
-      );
+      const sorted = [...list].sort((a, b) => (b.id || 0) - (a.id || 0));
       setDistributors(sorted);
     } catch (err: any) {
       console.error(err);
@@ -531,7 +529,9 @@ const DistributorsPageClient: React.FC = () => {
                       name="name"
                       value={form.name}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[0] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[0] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(0)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Distributor name"
@@ -543,7 +543,9 @@ const DistributorsPageClient: React.FC = () => {
                       name="mobile"
                       value={form.mobile || ""}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[1] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[1] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(1)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Mobile"
@@ -556,7 +558,9 @@ const DistributorsPageClient: React.FC = () => {
                       type="email"
                       value={form.email || ""}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[2] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[2] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(2)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Email"
@@ -568,7 +572,9 @@ const DistributorsPageClient: React.FC = () => {
                       name="city"
                       value={form.city || ""}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[3] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[3] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(3)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="City"
@@ -580,7 +586,9 @@ const DistributorsPageClient: React.FC = () => {
                       name="address"
                       value={form.address || ""}
                       onChange={handleChange}
-                      ref={(el) => (addRowRefs.current[4] = el)}
+                      ref={(el) => {
+                        addRowRefs.current[4] = el;
+                      }}
                       onKeyDown={makeAddRowKeyDown(4)}
                       className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
                       rows={1}
@@ -609,7 +617,9 @@ const DistributorsPageClient: React.FC = () => {
                           name="name"
                           value={form.name}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[0] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[0] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(0)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -620,7 +630,9 @@ const DistributorsPageClient: React.FC = () => {
                           name="mobile"
                           value={form.mobile || ""}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[1] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[1] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(1)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -632,7 +644,9 @@ const DistributorsPageClient: React.FC = () => {
                           type="email"
                           value={form.email || ""}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[2] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[2] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(2)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -643,7 +657,9 @@ const DistributorsPageClient: React.FC = () => {
                           name="city"
                           value={form.city || ""}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[3] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[3] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(3)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
@@ -654,7 +670,9 @@ const DistributorsPageClient: React.FC = () => {
                           name="address"
                           value={form.address || ""}
                           onChange={handleChange}
-                          ref={(el) => (editRowRefs.current[4] = el)}
+                          ref={(el) => {
+                            editRowRefs.current[4] = el;
+                          }}
                           onKeyDown={makeEditRowKeyDown(4)}
                           className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
                           rows={1}
