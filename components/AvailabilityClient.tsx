@@ -25,11 +25,20 @@ type School = {
   name: string;
 };
 
+type PartyMini = {
+  id: number;
+  name: string;
+};
+
 type BookRow = {
   book_id: number;
   title: string;
   subject?: string | null;
   code?: string | null;
+
+  // ✅ NEW (from backend)
+  publisher?: PartyMini | null;
+  supplier?: PartyMini | null;
 
   required_qty: number;
   available_qty: number;
@@ -171,7 +180,9 @@ const AvailabilityClient: React.FC = () => {
     let filtered = classes
       .map((cls) => {
         const books = (cls.books || []).filter((b) => {
-          const hay = `${b.title || ""} ${b.subject || ""} ${b.code || ""}`.toLowerCase();
+          const pub = b.publisher?.name || "";
+          const sup = b.supplier?.name || "";
+          const hay = `${b.title || ""} ${b.subject || ""} ${b.code || ""} ${pub} ${sup}`.toLowerCase();
           return hay.includes(query);
         });
         return { ...cls, books };
@@ -327,7 +338,7 @@ const AvailabilityClient: React.FC = () => {
                   className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
                     q ? "pr-10" : "pr-4"
                   }`}
-                  placeholder="Title / subject / code…"
+                  placeholder="Title / subject / code / publisher / supplier…"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                 />
@@ -534,8 +545,8 @@ const AvailabilityClient: React.FC = () => {
                           <table className="w-full text-sm border-collapse">
                             <thead className="bg-slate-100 sticky top-0">
                               <tr>
-                                <th className="border-b-2 border-slate-300 px-4 py-3 text-left font-bold text-slate-800 min-w-[300px]">
-                                  Book
+                                <th className="border-b-2 border-slate-300 px-4 py-3 text-left font-bold text-slate-800 min-w-[360px]">
+                                  Book (Publisher / Supplier)
                                 </th>
                                 <th className="border-b-2 border-slate-300 px-4 py-3 text-center font-bold text-slate-800 w-28">
                                   Required
@@ -576,6 +587,9 @@ const AvailabilityClient: React.FC = () => {
                                   statusText = `Short by ${st.shortBy}`;
                                 }
 
+                                const pubName = b.publisher?.name ? safeStr(b.publisher.name) : "";
+                                const supName = b.supplier?.name ? safeStr(b.supplier.name) : "";
+
                                 return (
                                   <tr
                                     key={b.book_id}
@@ -589,9 +603,29 @@ const AvailabilityClient: React.FC = () => {
                                   >
                                     <td className="px-4 py-3">
                                       <div className="font-semibold text-slate-900">{b.title}</div>
-                                      <div className="text-xs text-slate-500 mt-0.5">
-                                        {b.subject && <span>{b.subject}</span>}
-                                        {b.code && <span>{b.subject ? " • " : ""}{b.code}</span>}
+
+                                      <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
+                                        <div>
+                                          {b.subject && <span>{b.subject}</span>}
+                                          {b.code && <span>{b.subject ? " • " : ""}{b.code}</span>}
+                                        </div>
+
+                                        {(pubName || supName) && (
+                                          <div className="flex flex-wrap gap-x-2 gap-y-1">
+                                            {pubName && (
+                                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-slate-200 bg-white text-slate-700">
+                                                <span className="text-slate-500 mr-1">Pub:</span>
+                                                <span className="font-medium">{pubName}</span>
+                                              </span>
+                                            )}
+                                            {supName && (
+                                              <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-slate-200 bg-white text-slate-700">
+                                                <span className="text-slate-500 mr-1">Sup:</span>
+                                                <span className="font-medium">{supName}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                     </td>
 
