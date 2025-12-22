@@ -650,17 +650,22 @@ const SchoolOrdersPageClient: React.FC = () => {
     setReceiveForm((prev) => ({ ...prev, [itemId]: value }));
   };
 
+  // ✅ FIXED: no duplicate keys (unit_price etc)
   const handlePriceChange = (itemId: number, field: keyof PriceDraft, value: string) => {
-    setPriceForm((prev) => ({
-      ...prev,
-      [itemId]: {
-        unit_price: prev[itemId]?.unit_price ?? "",
-        discount_pct: prev[itemId]?.discount_pct ?? "",
-        discount_amt: prev[itemId]?.discount_amt ?? "",
-        ...prev[itemId],
-        [field]: value,
-      },
-    }));
+    setPriceForm((prev) => {
+      const cur = prev[itemId] ?? { unit_price: "", discount_pct: "", discount_amt: "" };
+
+      return {
+        ...prev,
+        [itemId]: {
+          ...cur,
+          unit_price: cur.unit_price ?? "",
+          discount_pct: cur.discount_pct ?? "",
+          discount_amt: cur.discount_amt ?? "",
+          [field]: value,
+        },
+      };
+    });
   };
 
   const handleChargesChange = (field: keyof typeof chargesForm, value: string) => {
@@ -1665,7 +1670,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <thead className="bg-slate-100">
                               <tr>
                                 <th className="border-b border-slate-200 px-2 py-2 text-left w-36">School</th>
-                                {/* ✅ CHANGED: Supplier column instead of Publisher */}
                                 <th className="border-b border-slate-200 px-2 py-2 text-left w-52">Supplier</th>
                                 <th className="border-b border-slate-200 px-2 py-2 text-left">Book</th>
                                 <th className="border-b border-slate-200 px-2 py-2 text-left w-20">Class</th>
