@@ -67,7 +67,7 @@ type Requirement = {
 
 type RequirementRowFormState = {
   school_name: string;
-  supplier_name: string; // ✅ NEW
+  supplier_name: string; // ✅ supplier (auto by publisher, can change)
   publisher_name: string;
   book_title: string;
   class_name: string;
@@ -100,9 +100,9 @@ const emptyRequirementForm: RequirementRowFormState = {
   publisher_name: "",
   book_title: "",
   class_name: "",
-  academic_session: DEFAULT_SESSION, // ✅ was "2025-26"
+  academic_session: DEFAULT_SESSION,
   required_copies: "",
-  status: "confirmed", // ✅ default confirmed
+  status: "confirmed",
   is_locked: false,
 };
 
@@ -132,9 +132,7 @@ const normalizeSuppliers = (payload: SuppliersListResponse): Supplier[] => {
   return payload?.data ?? [];
 };
 
-const normalizeRequirements = (
-  payload: RequirementsListResponse
-): Requirement[] => {
+const normalizeRequirements = (payload: RequirementsListResponse): Requirement[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
@@ -193,6 +191,9 @@ const RequirementsPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
+  // ✅ NEW: track if supplier manually changed (to stop auto overriding)
+  const [supplierTouched, setSupplierTouched] = useState(false);
+
   /* ------------ FETCH HELPERS ------------ */
 
   const fetchSchools = async () => {
@@ -248,11 +249,7 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const fetchRequirements = async (
-    query?: string,
-    schoolId?: string,
-    session?: string
-  ) => {
+  const fetchRequirements = async (query?: string, schoolId?: string, session?: string) => {
     setListLoading(true);
     try {
       const params: any = {};
@@ -307,21 +304,39 @@ const RequirementsPageClient: React.FC = () => {
       setForm((prev) => ({
         ...prev,
         school_name: s?.name || "",
-        status: "confirmed", // ✅ keep confirmed
-        // (keep whatever session is already selected in form)
+        status: "confirmed",
       }));
       setPendingItems([]);
     } else {
       setForm((prev) => ({
         ...prev,
         school_name: "",
-        status: "confirmed", // ✅ keep confirmed
+        status: "confirmed",
       }));
       setPendingItems([]);
     }
+
+    // ✅ reset supplier auto-fill behaviour when school changes
+    setSupplierTouched(false);
   }, [filterSchoolId, schools, editingId]);
 
   const isSchoolLockedToFilter = !!filterSchoolId;
+
+  /**
+   * ✅ Auto-fill Supplier from Publisher by default
+   * - If user hasn't manually edited supplier, supplier_name = publisher_name
+   * - If user edits supplier once, don't override
+   */
+  useEffect(() => {
+    const pub = form.publisher_name.trim();
+    if (!pub) return;
+    if (supplierTouched) return;
+
+    setForm((prev) => ({
+      ...prev,
+      supplier_name: pub,
+    }));
+  }, [form.publisher_name, supplierTouched]);
 
   /* ------------ COMMON PREP HELPER ------------ */
 
@@ -339,10 +354,12 @@ const RequirementsPageClient: React.FC = () => {
     is_locked: boolean;
   }> => {
     const schoolName = row.school_name.trim();
-    const supplierName = row.supplier_name.trim();
     const publisherName = row.publisher_name.trim();
     const bookTitle = row.book_title.trim();
     const className = row.class_name.trim();
+
+    // ✅ Supplier default: if supplier empty, use publisher
+    const supplierName = (row.supplier_name || row.publisher_name).trim();
 
     if (!schoolName) throw new Error("School is required.");
     if (!bookTitle) throw new Error("Book title is required.");
@@ -361,7 +378,7 @@ const RequirementsPageClient: React.FC = () => {
       setSchools((prev) => [...prev, newSchool]);
     }
 
-    /* 2️⃣ Supplier: optional (find or create) */
+    /* 2️⃣ Supplier: optional but auto-defaulted from publisher */
     let supplierId: number | null = null;
     if (supplierName) {
       const existingSupplier = suppliers.find(
@@ -429,9 +446,7 @@ const RequirementsPageClient: React.FC = () => {
           (b.publisher_id === publisherId || b.publisher?.id === publisherId)
       );
     } else {
-      existingBook = books.find(
-        (b) => b.title.toLowerCase() === bookTitle.toLowerCase()
-      );
+      existingBook = books.find((b) => b.title.toLowerCase() === bookTitle.toLowerCase());
     }
 
     if (existingBook) {
@@ -478,6 +493,13 @@ const RequirementsPageClient: React.FC = () => {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
+
+    // ✅ supplier manual override tracking
+    if (name === "supplier_name") {
+      if (value.trim()) setSupplierTouched(true);
+      else setSupplierTouched(false); // if cleared, allow auto-fill again
+    }
+
     if (type === "checkbox") {
       setForm((prev) => ({ ...prev, [name]: checked }));
     } else {
@@ -486,11 +508,12 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   const resetForm = () => {
+    setSupplierTouched(false);
     setForm((prev) => ({
       ...emptyRequirementForm,
       school_name: prev.school_name,
       class_name: prev.class_name,
-      academic_session: prev.academic_session || DEFAULT_SESSION, // ✅ was "2025-26"
+      academic_session: prev.academic_session || DEFAULT_SESSION,
       status: "confirmed",
     }));
     setEditingId(null);
@@ -555,8 +578,10 @@ const RequirementsPageClient: React.FC = () => {
       return;
     }
 
+    // ✅ ensure supplier default applies in pending too
     const itemToAdd: RequirementRowFormState = {
       ...form,
+      supplier_name: form.supplier_name?.trim() ? form.supplier_name : form.publisher_name,
       status: form.status || "confirmed",
     };
 
@@ -571,6 +596,9 @@ const RequirementsPageClient: React.FC = () => {
       message: `Added: ${form.book_title} (${form.required_copies} copies)`,
       type: "success",
     });
+
+    // ✅ after adding, allow auto-fill again for next row
+    setSupplierTouched(false);
 
     setForm((prev) => ({
       ...prev,
@@ -597,6 +625,7 @@ const RequirementsPageClient: React.FC = () => {
       for (const item of pendingItems) {
         const payload = await prepareRequirementPayload({
           ...item,
+          supplier_name: item.supplier_name?.trim() ? item.supplier_name : item.publisher_name,
           status: item.status || "confirmed",
         });
         await api.post("/api/requirements", payload);
@@ -604,6 +633,8 @@ const RequirementsPageClient: React.FC = () => {
 
       const count = pendingItems.length;
       setPendingItems([]);
+
+      setSupplierTouched(false);
 
       setForm((prev) => ({
         ...prev,
@@ -633,13 +664,16 @@ const RequirementsPageClient: React.FC = () => {
     setEditingId(r.id);
     setPendingItems([]);
 
+    // ✅ editing implies supplier is intentionally set
+    setSupplierTouched(true);
+
     setForm({
       school_name: r.school?.name || "",
       supplier_name: r.supplier?.name || "",
       publisher_name: r.book?.publisher?.name || "",
       book_title: r.book?.title || "",
       class_name: r.class?.class_name || "",
-      academic_session: r.academic_session || DEFAULT_SESSION, // ✅ was "2025-26"
+      academic_session: r.academic_session || DEFAULT_SESSION,
       required_copies:
         r.required_copies !== null && r.required_copies !== undefined
           ? String(r.required_copies)
@@ -650,9 +684,7 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this requirement?"
-    );
+    const confirmDelete = window.confirm("Are you sure you want to delete this requirement?");
     if (!confirmDelete) return;
 
     setError(null);
@@ -713,9 +745,7 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1007,17 +1037,17 @@ const RequirementsPageClient: React.FC = () => {
 
                 {/* Supplier */}
                 <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Supplier (optional)</label>
+                  <label className="block font-medium text-slate-700">Supplier</label>
                   <input
                     list="supplierOptions"
                     name="supplier_name"
                     value={form.supplier_name}
                     onChange={handleChange}
                     className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select supplier"
+                    placeholder="Auto from Publisher (you can change)"
                   />
                   <p className="text-[10px] text-slate-500">
-                    This is saved on requirement (not from publisher).
+                    Default = Publisher. If books come from another supplier, change it here.
                   </p>
                 </div>
 

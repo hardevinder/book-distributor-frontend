@@ -45,6 +45,14 @@ type SchoolOrderItem = {
   total_order_qty: number | string;
   received_qty: number | string;
   pending_qty?: number | string | null;
+
+  // ✅ commercial fields (optional from backend)
+  unit_price?: number | string | null;
+  discount_pct?: number | string | null;
+  discount_amt?: number | string | null;
+  net_unit_price?: number | string | null;
+  line_amount?: number | string | null;
+
   book?: {
     id: number;
     title: string;
@@ -88,6 +96,43 @@ type SchoolOrder = {
 
   // Notes (highlighted in PDF footer)
   notes?: string | null;
+
+  // ✅ order-level commercial fields
+  freight_charges?: number | string | null;
+  packing_charges?: number | string | null;
+  other_charges?: number | string | null;
+  overall_discount?: number | string | null;
+  round_off?: number | string | null;
+};
+
+/* ---------- ✅ Supplier Ledger Types (UPDATED) ---------- */
+
+type SupplierBalanceResponse = {
+  supplier: SupplierLite;
+  debit_total: number;
+  credit_total: number;
+  balance: number;
+};
+
+type SupplierLedgerTxn = {
+  id: number;
+  txn_date: string;
+  txn_type: string;
+  ref_table?: string | null;
+  ref_id?: number | null;
+  ref_no?: string | null;
+  narration?: string | null;
+  debit: number;
+  credit: number;
+  running_balance?: number;
+};
+
+type SupplierLedgerResponse = {
+  supplier: SupplierLite;
+  txns: SupplierLedgerTxn[];
+  debit_total: number;
+  credit_total: number;
+  balance: number;
 };
 
 /* ---------- Session Options ---------- */
@@ -195,7 +240,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const [academicSession, setAcademicSession] = useState("2025-26");
+  const [academicSession, setAcademicSession] = useState("2026-27");
   const [filterSession, setFilterSession] = useState("");
   const [filterSchoolId, setFilterSchoolId] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -203,7 +248,28 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [viewOrder, setViewOrder] = useState<SchoolOrder | null>(null);
   const [isReceiving, setIsReceiving] = useState(false);
   const [savingReceive, setSavingReceive] = useState(false);
+
+  // qty inputs
   const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
+
+  // price/discount inputs per item
+  type PriceDraft = { unit_price: string; discount_pct: string; discount_amt: string };
+  const [priceForm, setPriceForm] = useState<Record<number, PriceDraft>>({});
+
+  // order-level charges drafts
+  const [chargesForm, setChargesForm] = useState<{
+    freight_charges: string;
+    packing_charges: string;
+    other_charges: string;
+    overall_discount: string;
+    round_off: string;
+  }>({
+    freight_charges: "",
+    packing_charges: "",
+    other_charges: "",
+    overall_discount: "",
+    round_off: "",
+  });
 
   const [metaSaving, setMetaSaving] = useState(false);
 
@@ -225,6 +291,162 @@ const SchoolOrdersPageClient: React.FC = () => {
   // Listing base order no edit
   const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>({});
   const [savingOrderNoId, setSavingOrderNoId] = useState<number | null>(null);
+
+  /* ---------- ✅ Supplier Balance & Ledger State (UPDATED) ---------- */
+
+  const [supplierBalances, setSupplierBalances] = useState<
+    Record<number, SupplierBalanceResponse | null>
+  >({});
+  const [supplierBalLoading, setSupplierBalLoading] = useState<Record<number, boolean>>({});
+
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+
+  const [ledgerSupplier, setLedgerSupplier] = useState<SupplierLite | null>(null);
+  const [ledgerRows, setLedgerRows] = useState<SupplierLedgerTxn[]>([]);
+  const [ledgerTotals, setLedgerTotals] = useState<{ debit: number; credit: number; balance: number } | null>(
+    null
+  );
+
+  const [ledgerFrom, setLedgerFrom] = useState<string>("");
+  const [ledgerTo, setLedgerTo] = useState<string>("");
+
+  const num = (v: any) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+
+  const clampNonNeg = (v: any) => Math.max(num(v), 0);
+
+  const fmtMoney = (n: any) => {
+    const v = Number.isFinite(Number(n)) ? Number(n) : 0;
+    return v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const balChip = (bal: number) => {
+    if (bal > 0) return "bg-amber-50 text-amber-800 border border-amber-200";
+    if (bal < 0) return "bg-emerald-50 text-emerald-800 border border-emerald-200";
+    return "bg-slate-50 text-slate-700 border border-slate-200";
+  };
+
+  const fetchSupplierBalance = async (supplierId: number) => {
+    if (!supplierId) return;
+    if (supplierBalances[supplierId] !== undefined) return;
+
+    setSupplierBalLoading((p) => ({ ...p, [supplierId]: true }));
+    try {
+      const res = await api.get(`/api/suppliers/${supplierId}/balance`);
+      const data = res?.data as SupplierBalanceResponse;
+      setSupplierBalances((p) => ({ ...p, [supplierId]: data }));
+    } catch (e) {
+      console.error("supplier balance fetch error:", e);
+      setSupplierBalances((p) => ({ ...p, [supplierId]: null }));
+    } finally {
+      setSupplierBalLoading((p) => ({ ...p, [supplierId]: false }));
+    }
+  };
+
+  const openLedger = async (supplier: SupplierLite) => {
+    setLedgerOpen(true);
+    setLedgerSupplier(supplier);
+    setLedgerRows([]);
+    setLedgerTotals(null);
+    setLedgerError(null);
+
+    setLedgerLoading(true);
+    try {
+      const params: any = {};
+      if (ledgerFrom) params.from = ledgerFrom;
+      if (ledgerTo) params.to = ledgerTo;
+      params.limit = 300;
+
+      const res = await api.get(`/api/suppliers/${supplier.id}/ledger`, { params });
+      const data = res?.data as SupplierLedgerResponse;
+
+      setLedgerRows(Array.isArray(data?.txns) ? data.txns : []);
+      setLedgerTotals({
+        debit: Number(data?.debit_total) || 0,
+        credit: Number(data?.credit_total) || 0,
+        balance: Number(data?.balance) || 0,
+      });
+    } catch (e: any) {
+      console.error("supplier ledger fetch error:", e);
+      setLedgerError(e?.response?.data?.error || "Failed to load ledger");
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  /* ---------- Commercial calc helpers ---------- */
+
+  const computeItemNetRate = (unitPrice: number, discPct: number, discAmt: number) => {
+    const up = clampNonNeg(unitPrice);
+    const pct = clampNonNeg(discPct);
+    const da = clampNonNeg(discAmt);
+
+    const pctOff = (up * pct) / 100;
+    const net = Math.max(up - pctOff - da, 0);
+    return net;
+  };
+
+  const computeTotalsForModal = useMemo(() => {
+    if (!viewOrder) return null;
+
+    const items = getOrderItems(viewOrder);
+
+    let qtyReceivedTotal = 0;
+    let itemsGross = 0;
+    let itemsDiscount = 0;
+    let itemsNet = 0;
+
+    items.forEach((it) => {
+      const ordered = num(it.total_order_qty);
+      const rawQty = receiveForm[it.id] ?? String(it.received_qty ?? 0);
+      const qty = Math.min(Math.max(num(rawQty), 0), ordered);
+
+      const draft = priceForm[it.id];
+      const unitPrice = num(draft?.unit_price ?? it.unit_price ?? 0);
+      const discPct = num(draft?.discount_pct ?? it.discount_pct ?? 0);
+      const discAmt = num(draft?.discount_amt ?? it.discount_amt ?? 0);
+
+      const gross = unitPrice * qty;
+      const netRate = computeItemNetRate(unitPrice, discPct, discAmt);
+      const net = netRate * qty;
+
+      const disc = Math.max(gross - net, 0);
+
+      qtyReceivedTotal += qty;
+      itemsGross += gross;
+      itemsDiscount += disc;
+      itemsNet += net;
+    });
+
+    const freight = num(chargesForm.freight_charges ?? viewOrder.freight_charges ?? 0);
+    const packing = num(chargesForm.packing_charges ?? viewOrder.packing_charges ?? 0);
+    const other = num(chargesForm.other_charges ?? viewOrder.other_charges ?? 0);
+    const overallDisc = num(chargesForm.overall_discount ?? viewOrder.overall_discount ?? 0);
+    const roundOff = num(chargesForm.round_off ?? viewOrder.round_off ?? 0);
+
+    const chargesTotal = clampNonNeg(freight) + clampNonNeg(packing) + clampNonNeg(other);
+    const subTotal = itemsNet + chargesTotal;
+    const grand = subTotal - clampNonNeg(overallDisc) + (Number.isFinite(roundOff) ? roundOff : 0);
+
+    return {
+      qtyReceivedTotal,
+      itemsGross,
+      itemsDiscount,
+      itemsNet,
+      chargesTotal,
+      subTotal,
+      overallDisc,
+      roundOff,
+      grand,
+      freight,
+      packing,
+      other,
+    };
+  }, [viewOrder, receiveForm, priceForm, chargesForm]);
 
   /* ---------- Data fetching ---------- */
 
@@ -261,7 +483,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setOrders(list || []);
 
-      // keep drafts in sync (do not overwrite user typing if already set)
       setOrderNoDrafts((prev) => {
         const next = { ...prev };
         (list || []).forEach((o) => {
@@ -271,10 +492,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       });
     } catch (err: any) {
       console.error(err);
-      setError(
-        err?.response?.data?.message ||
-          "Failed to load school orders. Please try again."
-      );
+      setError(err?.response?.data?.message || "Failed to load school orders. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -314,7 +532,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ Supplier-wise: no publisher_id now
   const handleSendEmail = async (order: SchoolOrder) => {
     if (!order.id) {
       setError("Order ID missing.");
@@ -338,7 +555,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ Supplier-wise PDF
   const handleViewPdf = async (order: SchoolOrder) => {
     if (!order.id) return;
     setError(null);
@@ -348,7 +564,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       const path = `/api/school-orders/${order.id}/pdf`;
       const res = await api.get(path, { responseType: "blob" });
 
-      const contentType = res.headers?.["content-type"] || "";
+      const contentType = (res.headers as any)?.["content-type"] || "";
       if (!contentType.includes("application/pdf")) {
         const blob = res.data as Blob;
         const text = await blob.text().catch(() => "");
@@ -370,9 +586,31 @@ const SchoolOrdersPageClient: React.FC = () => {
     setSavingReceive(false);
 
     const items = getOrderItems(order);
-    const initial: Record<number, string> = {};
-    items.forEach((it) => (initial[it.id] = String(it.received_qty ?? 0)));
-    setReceiveForm(initial);
+
+    // qty init
+    const initialQty: Record<number, string> = {};
+    items.forEach((it) => (initialQty[it.id] = String(it.received_qty ?? 0)));
+    setReceiveForm(initialQty);
+
+    // price init
+    const initialPrice: Record<number, PriceDraft> = {};
+    items.forEach((it) => {
+      initialPrice[it.id] = {
+        unit_price: String(it.unit_price ?? ""),
+        discount_pct: String(it.discount_pct ?? ""),
+        discount_amt: String(it.discount_amt ?? ""),
+      };
+    });
+    setPriceForm(initialPrice);
+
+    // charges init
+    setChargesForm({
+      freight_charges: String(order.freight_charges ?? ""),
+      packing_charges: String(order.packing_charges ?? ""),
+      other_charges: String(order.other_charges ?? ""),
+      overall_discount: String(order.overall_discount ?? ""),
+      round_off: String(order.round_off ?? ""),
+    });
 
     setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
     setMetaTransportThrough(order.transport_through || "");
@@ -382,19 +620,51 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     setMetaNotes(order.notes || "");
     setBaseOrderNoDraft(order.order_no || "");
+
+    // ✅ supplier ledger (single supplier)
+    if (order.supplier_id) fetchSupplierBalance(Number(order.supplier_id));
   };
 
   const startReceiving = () => {
     if (!viewOrder) return;
     const items = getOrderItems(viewOrder);
-    const initial: Record<number, string> = {};
-    items.forEach((it) => (initial[it.id] = String(it.received_qty ?? 0)));
-    setReceiveForm(initial);
+
+    const initialQty: Record<number, string> = {};
+    items.forEach((it) => (initialQty[it.id] = String(it.received_qty ?? 0)));
+    setReceiveForm(initialQty);
+
+    const initialPrice: Record<number, PriceDraft> = {};
+    items.forEach((it) => {
+      initialPrice[it.id] = {
+        unit_price: String(it.unit_price ?? ""),
+        discount_pct: String(it.discount_pct ?? ""),
+        discount_amt: String(it.discount_amt ?? ""),
+      };
+    });
+    setPriceForm(initialPrice);
+
     setIsReceiving(true);
   };
 
   const handleReceiveChange = (itemId: number, value: string) => {
     setReceiveForm((prev) => ({ ...prev, [itemId]: value }));
+  };
+
+  const handlePriceChange = (itemId: number, field: keyof PriceDraft, value: string) => {
+    setPriceForm((prev) => ({
+      ...prev,
+      [itemId]: {
+        unit_price: prev[itemId]?.unit_price ?? "",
+        discount_pct: prev[itemId]?.discount_pct ?? "",
+        discount_amt: prev[itemId]?.discount_amt ?? "",
+        ...prev[itemId],
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleChargesChange = (field: keyof typeof chargesForm, value: string) => {
+    setChargesForm((p) => ({ ...p, [field]: value }));
   };
 
   const handleReceiveSave = async () => {
@@ -405,18 +675,46 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       const items = getOrderItems(viewOrder);
+
       const itemsPayload = items.map((it) => {
         const raw = receiveForm[it.id];
-        let num = Number(raw ?? it.received_qty ?? 0);
-        if (isNaN(num) || num < 0) num = 0;
+        let rcv = Number(raw ?? it.received_qty ?? 0);
+        if (isNaN(rcv) || rcv < 0) rcv = 0;
+
         const ordered = Number(it.total_order_qty) || 0;
-        if (num > ordered) num = ordered;
-        return { item_id: it.id, received_qty: num };
+        if (rcv > ordered) rcv = ordered;
+
+        const draft = priceForm[it.id] || { unit_price: "", discount_pct: "", discount_amt: "" };
+        const unit_price = num(draft.unit_price ?? it.unit_price ?? 0);
+        const discount_pct = num(draft.discount_pct ?? it.discount_pct ?? 0);
+        const discount_amt = num(draft.discount_amt ?? it.discount_amt ?? 0);
+
+        const net_unit_price = computeItemNetRate(unit_price, discount_pct, discount_amt);
+        const line_amount = net_unit_price * rcv;
+
+        return {
+          item_id: it.id,
+          received_qty: rcv,
+          unit_price,
+          discount_pct,
+          discount_amt,
+          net_unit_price,
+          line_amount,
+        };
       });
+
+      const chargesPayload = {
+        freight_charges: num(chargesForm.freight_charges ?? viewOrder.freight_charges ?? 0),
+        packing_charges: num(chargesForm.packing_charges ?? viewOrder.packing_charges ?? 0),
+        other_charges: num(chargesForm.other_charges ?? viewOrder.other_charges ?? 0),
+        overall_discount: num(chargesForm.overall_discount ?? viewOrder.overall_discount ?? 0),
+        round_off: num(chargesForm.round_off ?? viewOrder.round_off ?? 0),
+      };
 
       const res = await api.post(`/api/school-orders/${viewOrder.id}/receive`, {
         status: "auto",
         items: itemsPayload,
+        charges: chargesPayload,
       });
 
       setInfo(res.data?.message || "Saved.");
@@ -438,6 +736,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         ...prev,
         [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
       }));
+
+      // ✅ refresh supplier balance after receiving
+      if (updatedOrder.supplier_id) {
+        setSupplierBalances((p) => ({ ...p, [Number(updatedOrder.supplier_id)]: undefined as any }));
+        fetchSupplierBalance(Number(updatedOrder.supplier_id));
+      }
 
       await fetchOrders();
     } catch (err: any) {
@@ -535,7 +839,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // Modal Save
   const handleSaveBaseOrderNo = async () => {
     if (!viewOrder) return;
 
@@ -567,7 +870,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // Listing Save
   const handleSaveOrderNoFromListing = async (orderId: number) => {
     const newNo = String(orderNoDrafts[orderId] || "").trim();
     if (!newNo) {
@@ -660,8 +962,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       const supplierId = Number(order.supplier_id);
       const supplierName =
-        order.supplier?.name ||
-        (supplierId ? `Supplier #${supplierId}` : "Supplier");
+        order.supplier?.name || (supplierId ? `Supplier #${supplierId}` : "Supplier");
 
       const ordTotal = totalQtyFromItems(items);
       const recTotal = totalReceivedFromItems(items);
@@ -682,7 +983,6 @@ const SchoolOrdersPageClient: React.FC = () => {
       else existing.rows.push(row);
     });
 
-    // stable ordering inside school: by supplier name
     return Array.from(map.entries()).map(([schoolId, value]) => ({
       schoolId,
       school: value.school,
@@ -732,7 +1032,6 @@ const SchoolOrdersPageClient: React.FC = () => {
         {/* Toolbar */}
         <div className="px-3 pb-2">
           <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-2 text-[11px]">
-            {/* ✅ Bigger Filter Session */}
             <select
               value={filterSession}
               onChange={(e) => setFilterSession(e.target.value)}
@@ -779,7 +1078,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
             <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
 
-            {/* ✅ Bigger Generate Session */}
             <select
               value={academicSession}
               onChange={(e) => setAcademicSession(e.target.value)}
@@ -793,7 +1091,6 @@ const SchoolOrdersPageClient: React.FC = () => {
               ))}
             </select>
 
-            {/* ✅ Bigger + Colorful Generate */}
             <button
               type="submit"
               disabled={generating}
@@ -818,7 +1115,6 @@ const SchoolOrdersPageClient: React.FC = () => {
               )}
             </button>
 
-            {/* ✅ Bigger + Colorful Refresh */}
             <button
               type="button"
               onClick={fetchOrders}
@@ -903,9 +1199,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Supplier
                           </th>
-
-                          {/* ✅ Removed Session column from listing */}
-
                           <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
                             Order No (Edit)
                           </th>
@@ -944,8 +1237,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                               <td className="border-b border-slate-200 px-2 py-2 font-medium">
                                 {row.supplierName}
                               </td>
-
-                              {/* ✅ Removed Session cell from listing */}
 
                               <td className="border-b border-slate-200 px-2 py-2">
                                 <div className="flex items-center gap-2">
@@ -1035,16 +1326,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* ✅ Bigger Modal (still laptop-safe) */}
+      {/* ✅ Modal */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 bg-black/50">
-          {/* overlay scroll area */}
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
-            <div className="mx-auto w-full max-w-[1100px]">
-              <div
-                className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col
-                              max-h-[92vh]"
-              >
+            <div className="mx-auto w-full max-w-[1200px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
                 {/* Header */}
                 <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
                   {(() => {
@@ -1066,6 +1353,13 @@ const SchoolOrdersPageClient: React.FC = () => {
                     const totalOrdered = totalQtyFromItems(items);
                     const totalReceived = totalReceivedFromItems(items);
                     const totalPending = Math.max(totalOrdered - totalReceived, 0);
+
+                    const supBal = viewOrder.supplier_id
+                      ? supplierBalances[Number(viewOrder.supplier_id)]
+                      : null;
+                    const supBalLoading = viewOrder.supplier_id
+                      ? !!supplierBalLoading[Number(viewOrder.supplier_id)]
+                      : false;
 
                     return (
                       <>
@@ -1096,17 +1390,70 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 </div>
                               ) : null}
 
-                              <div className="mt-1 text-[12px] text-slate-700">
-                                <span className="font-semibold">O:</span> {totalOrdered}{" "}
-                                <span className="mx-1 text-slate-400">•</span>
-                                <span className="font-semibold">R:</span> {totalReceived}{" "}
-                                <span className="mx-1 text-slate-400">•</span>
-                                <span className="font-semibold">P:</span> {totalPending}
+                              <div className="mt-1 text-[12px] text-slate-700 flex flex-wrap items-center gap-2">
+                                <span>
+                                  <span className="font-semibold">O:</span> {totalOrdered}
+                                </span>
+                                <span className="text-slate-400">•</span>
+                                <span>
+                                  <span className="font-semibold">R:</span> {totalReceived}
+                                </span>
+                                <span className="text-slate-400">•</span>
+                                <span>
+                                  <span className="font-semibold">P:</span> {totalPending}
+                                </span>
+
+                                {viewOrder.supplier_id ? (
+                                  <>
+                                    <span className="text-slate-400">•</span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                        supBalLoading
+                                          ? "bg-slate-50 text-slate-600 border border-slate-200"
+                                          : supBal
+                                          ? balChip(Number(supBal.balance) || 0)
+                                          : "bg-slate-50 text-slate-600 border border-slate-200"
+                                      }`}
+                                    >
+                                      {supBalLoading
+                                        ? "Balance: loading..."
+                                        : supBal
+                                        ? `Bal: ₹${fmtMoney(supBal.balance)}`
+                                        : "Bal: -"}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openLedger({
+                                          id: Number(viewOrder.supplier_id),
+                                          name: supplierName,
+                                          phone: viewOrder.supplier?.phone || null,
+                                          email: viewOrder.supplier?.email || null,
+                                          address: viewOrder.supplier?.address || null,
+                                          address_line1: viewOrder.supplier?.address_line1 || null,
+                                          full_address: viewOrder.supplier?.full_address || null,
+                                        })
+                                      }
+                                      className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                                    >
+                                      Ledger
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => fetchSupplierBalance(Number(viewOrder.supplier_id))}
+                                      className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                                      title="Refresh balance"
+                                    >
+                                      <RefreshCcw className="w-3 h-3" />
+                                    </button>
+                                  </>
+                                ) : null}
                               </div>
                             </div>
                           </div>
 
-                          {/* Right actions + Close */}
                           <div className="flex items-center gap-2 shrink-0">
                             <button
                               onClick={() => handleViewPdf(viewOrder)}
@@ -1158,7 +1505,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Transport Option 1 */}
                           <div className="col-span-12 md:col-span-6 lg:col-span-3">
                             <label className="block text-[11px] text-slate-600 mb-1">
                               Transport (Option 1)
@@ -1190,7 +1536,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                             />
                           </div>
 
-                          {/* Notes */}
                           <div className="col-span-12 lg:col-span-3">
                             <label className="block text-[11px] text-slate-600 mb-1">Notes</label>
                             <div className="flex items-center gap-2">
@@ -1214,7 +1559,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Transport Option 2 */}
                           <div className="col-span-12 md:col-span-6 lg:col-span-3">
                             <label className="block text-[11px] text-slate-600 mb-1">
                               Transport (Option 2)
@@ -1256,7 +1600,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       onClick={startReceiving}
                                       className="text-[12px] px-4 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
                                     >
-                                      Receive
+                                      Receive + Prices
                                     </button>
                                   ) : (
                                     <>
@@ -1282,7 +1626,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       onClick={handleCancelOrder}
                                       disabled={savingReceive}
                                       className="text-[12px] px-4 py-2 rounded-xl border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60 font-semibold"
-                                      >
+                                    >
                                       Cancel Order
                                     </button>
                                   )}
@@ -1314,151 +1658,594 @@ const SchoolOrdersPageClient: React.FC = () => {
                     if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
 
                     return (
-                      <div className="border border-slate-200 rounded-xl overflow-hidden">
-                        <table className="w-full text-xs border-collapse">
-                          <thead className="bg-slate-100">
-                            <tr>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left w-36">School</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left w-40">Publisher</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left">Book</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left w-20">Class</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Subject</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Code/ISBN</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-right w-16">O</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-right w-20">R</th>
-                              <th className="border-b border-slate-200 px-2 py-2 text-right w-16">P</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(() => {
-                              type PublisherGroup = {
-                                key: string;
-                                publisherName: string;
-                                items: SchoolOrderItem[];
-                              };
+                      <div className="space-y-3">
+                        {/* Items table */}
+                        <div className="border border-slate-200 rounded-xl overflow-hidden">
+                          <table className="w-full text-xs border-collapse">
+                            <thead className="bg-slate-100">
+                              <tr>
+                                <th className="border-b border-slate-200 px-2 py-2 text-left w-36">School</th>
+                                {/* ✅ CHANGED: Supplier column instead of Publisher */}
+                                <th className="border-b border-slate-200 px-2 py-2 text-left w-52">Supplier</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-left">Book</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-left w-20">Class</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Subject</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-left w-24">Code/ISBN</th>
 
-                              const groupsMap = new Map<string, PublisherGroup>();
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-14">O</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-18">R</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-14">P</th>
 
-                              items.forEach((item) => {
-                                const p = item.book?.publisher;
-                                const pid =
-                                  p?.id ??
-                                  (item.book?.publisher_id ? Number(item.book.publisher_id) : 0);
-                                const key = pid ? String(pid) : "no_publisher";
-                                const publisherName =
-                                  p?.name || (pid ? `Publisher #${pid}` : "No Publisher");
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Rate</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-20">Disc%</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-20">Disc₹</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Net Rate</th>
+                                <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(() => {
+                                const totalRows = items.length;
+                                let schoolCellRendered = false;
+                                let supplierCellRendered = false;
 
-                                if (!groupsMap.has(key)) {
-                                  groupsMap.set(key, { key, publisherName, items: [item] });
-                                } else {
-                                  groupsMap.get(key)!.items.push(item);
-                                }
-                              });
+                                const supplierId = Number(viewOrder.supplier_id || 0);
+                                const supplierName =
+                                  viewOrder.supplier?.name ||
+                                  (supplierId ? `Supplier #${supplierId}` : "Supplier");
 
-                              const groups = Array.from(groupsMap.values());
-                              const totalRows = groups.reduce((sum, g) => sum + g.items.length, 0);
-                              let schoolCellRendered = false;
+                                const supBal = supplierId ? supplierBalances[supplierId] : null;
+                                const isBalLoading = supplierId ? !!supplierBalLoading[supplierId] : false;
 
-                              return groups.map((group) => (
-                                <React.Fragment key={group.key}>
-                                  {group.items.map((item, idxInGroup) => {
-                                    const ordered = Number(item.total_order_qty) || 0;
-                                    const rawVal = receiveForm[item.id] ?? String(item.received_qty ?? 0);
+                                return items.map((item) => {
+                                  const ordered = Number(item.total_order_qty) || 0;
 
-                                    const numericReceived = Number(rawVal) >= 0 ? Number(rawVal) : 0;
-                                    const effectiveReceived = isNaN(numericReceived)
-                                      ? 0
-                                      : Math.min(numericReceived, ordered);
+                                  const rawQty = receiveForm[item.id] ?? String(item.received_qty ?? 0);
+                                  const qtyNum = Math.min(Math.max(num(rawQty), 0), ordered);
 
-                                    const backendReceived = Number(item.received_qty ?? 0) || 0;
-                                    const displayReceived = isReceiving ? effectiveReceived : backendReceived;
+                                  const backendReceived = Number(item.received_qty ?? 0) || 0;
+                                  const displayReceived = isReceiving ? qtyNum : backendReceived;
 
-                                    const pendingWhenNotEditing =
-                                      item.pending_qty != null
-                                        ? Math.max(Number(item.pending_qty) || 0, 0)
-                                        : Math.max(ordered - backendReceived, 0);
+                                  const pendingWhenNotEditing =
+                                    item.pending_qty != null
+                                      ? Math.max(Number(item.pending_qty) || 0, 0)
+                                      : Math.max(ordered - backendReceived, 0);
 
-                                    const pending = isReceiving
-                                      ? Math.max(ordered - effectiveReceived, 0)
-                                      : pendingWhenNotEditing;
+                                  const pending = isReceiving
+                                    ? Math.max(ordered - qtyNum, 0)
+                                    : pendingWhenNotEditing;
 
-                                    const showSchoolCell = !schoolCellRendered;
-                                    const showPublisherCell = idxInGroup === 0;
-                                    if (showSchoolCell) schoolCellRendered = true;
+                                  const showSchoolCell = !schoolCellRendered;
+                                  const showSupplierCell = !supplierCellRendered;
 
-                                    return (
-                                      <tr key={item.id} className="hover:bg-slate-50">
-                                        {showSchoolCell && (
-                                          <td
-                                            rowSpan={totalRows}
-                                            className="border-b border-slate-200 px-2 py-2 align-top text-[12px] font-semibold"
-                                          >
-                                            {school?.name || "-"}
-                                            {school?.city ? (
-                                              <span className="block text-[11px] text-slate-500 font-normal">
-                                                {school.city}
-                                              </span>
+                                  if (showSchoolCell) schoolCellRendered = true;
+                                  if (showSupplierCell) supplierCellRendered = true;
+
+                                  const draft = priceForm[item.id] || {
+                                    unit_price: String(item.unit_price ?? ""),
+                                    discount_pct: String(item.discount_pct ?? ""),
+                                    discount_amt: String(item.discount_amt ?? ""),
+                                  };
+
+                                  const unitPrice = num(draft.unit_price ?? 0);
+                                  const discPct = num(draft.discount_pct ?? 0);
+                                  const discAmt = num(draft.discount_amt ?? 0);
+                                  const netRate = computeItemNetRate(unitPrice, discPct, discAmt);
+                                  const amount = netRate * (isReceiving ? qtyNum : backendReceived);
+
+                                  return (
+                                    <tr key={item.id} className="hover:bg-slate-50">
+                                      {showSchoolCell && (
+                                        <td
+                                          rowSpan={totalRows}
+                                          className="border-b border-slate-200 px-2 py-2 align-top text-[12px] font-semibold"
+                                        >
+                                          {school?.name || "-"}
+                                          {school?.city ? (
+                                            <span className="block text-[11px] text-slate-500 font-normal">
+                                              {school.city}
+                                            </span>
+                                          ) : null}
+                                        </td>
+                                      )}
+
+                                      {showSupplierCell && (
+                                        <td
+                                          rowSpan={totalRows}
+                                          className="border-b border-slate-200 px-2 py-2 align-top"
+                                        >
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                              <div className="text-[12px] font-medium text-indigo-700 truncate">
+                                                {supplierName}
+                                              </div>
+
+                                              {supplierId ? (
+                                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                                  <span
+                                                    className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                                      isBalLoading
+                                                        ? "bg-slate-50 text-slate-600 border border-slate-200"
+                                                        : supBal
+                                                        ? balChip(Number(supBal.balance) || 0)
+                                                        : "bg-slate-50 text-slate-600 border border-slate-200"
+                                                    }`}
+                                                  >
+                                                    {isBalLoading
+                                                      ? "Balance: loading..."
+                                                      : supBal
+                                                      ? `Bal: ₹${fmtMoney(supBal.balance)}`
+                                                      : "Bal: -"}
+                                                  </span>
+
+                                                  <button
+                                                    type="button"
+                                                    disabled={!supplierId}
+                                                    onClick={() =>
+                                                      openLedger({
+                                                        id: supplierId,
+                                                        name: supplierName,
+                                                        phone: viewOrder.supplier?.phone || null,
+                                                        email: viewOrder.supplier?.email || null,
+                                                        address: viewOrder.supplier?.address || null,
+                                                        address_line1: viewOrder.supplier?.address_line1 || null,
+                                                        full_address: viewOrder.supplier?.full_address || null,
+                                                      })
+                                                    }
+                                                    className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                                                  >
+                                                    Ledger
+                                                  </button>
+                                                </div>
+                                              ) : (
+                                                <div className="text-[11px] text-slate-500 mt-1">
+                                                  No supplier linked
+                                                </div>
+                                              )}
+                                            </div>
+
+                                            {supplierId ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => fetchSupplierBalance(supplierId)}
+                                                className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 shrink-0"
+                                                title="Refresh balance"
+                                              >
+                                                <RefreshCcw className="w-3 h-3" />
+                                              </button>
                                             ) : null}
-                                          </td>
-                                        )}
+                                          </div>
+                                        </td>
+                                      )}
 
-                                        {showPublisherCell && (
-                                          <td
-                                            rowSpan={group.items.length}
-                                            className="border-b border-slate-200 px-2 py-2 align-top text-[12px] font-medium text-indigo-700"
-                                          >
-                                            {group.publisherName}
-                                          </td>
-                                        )}
+                                      <td className="border-b border-slate-200 px-2 py-2">
+                                        {item.book?.title || `Book #${item.book_id}`}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-2">
+                                        {item.book?.class_name || "-"}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-2">
+                                        {item.book?.subject || "-"}
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-2">
+                                        {item.book?.code || item.book?.isbn || "-"}
+                                      </td>
 
-                                        <td className="border-b border-slate-200 px-2 py-2">
-                                          {item.book?.title || `Book #${item.book_id}`}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2">
-                                          {item.book?.class_name || "-"}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2">
-                                          {item.book?.subject || "-"}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2">
-                                          {item.book?.code || item.book?.isbn || "-"}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
-                                          {ordered}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
-                                          {isReceiving ? (
-                                            <input
-                                              type="number"
-                                              min={0}
-                                              max={ordered}
-                                              value={rawVal}
-                                              onChange={(e) => handleReceiveChange(item.id, e.target.value)}
-                                              className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                                            />
-                                          ) : (
-                                            displayReceived
-                                          )}
-                                        </td>
-                                        <td className="border-b border-slate-200 px-2 py-2 text-right">
-                                          {pending}
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </React.Fragment>
-                              ));
-                            })()}
-                          </tbody>
-                        </table>
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {ordered}
+                                      </td>
+
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {isReceiving ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={ordered}
+                                            value={rawQty}
+                                            onChange={(e) => handleReceiveChange(item.id, e.target.value)}
+                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                          />
+                                        ) : (
+                                          displayReceived
+                                        )}
+                                      </td>
+
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {pending}
+                                      </td>
+
+                                      {/* Rate */}
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {isReceiving ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={draft.unit_price}
+                                            onChange={(e) =>
+                                              handlePriceChange(item.id, "unit_price", e.target.value)
+                                            }
+                                            className="w-24 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                            placeholder="0"
+                                          />
+                                        ) : (
+                                          <span className="text-slate-700">
+                                            {fmtMoney(num(item.unit_price))}
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      {/* Disc% */}
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {isReceiving ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={draft.discount_pct}
+                                            onChange={(e) =>
+                                              handlePriceChange(item.id, "discount_pct", e.target.value)
+                                            }
+                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                            placeholder="0"
+                                          />
+                                        ) : (
+                                          <span className="text-slate-700">
+                                            {fmtMoney(num(item.discount_pct))}
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      {/* Disc₹ */}
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                        {isReceiving ? (
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={draft.discount_amt}
+                                            onChange={(e) =>
+                                              handlePriceChange(item.id, "discount_amt", e.target.value)
+                                            }
+                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                            placeholder="0"
+                                          />
+                                        ) : (
+                                          <span className="text-slate-700">
+                                            {fmtMoney(num(item.discount_amt))}
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      {/* Net Rate */}
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right font-medium">
+                                        {fmtMoney(netRate)}
+                                      </td>
+
+                                      {/* Amount */}
+                                      <td className="border-b border-slate-200 px-2 py-2 text-right font-semibold">
+                                        ₹{fmtMoney(amount)}
+                                      </td>
+                                    </tr>
+                                  );
+                                });
+                              })()}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Charges + Summary */}
+                        <div className="grid grid-cols-12 gap-3">
+                          <div className="col-span-12 lg:col-span-7 border border-slate-200 rounded-xl p-3">
+                            <div className="text-sm font-semibold text-slate-800 mb-2">
+                              Charges / Discounts
+                            </div>
+
+                            <div className="grid grid-cols-12 gap-2">
+                              <div className="col-span-12 md:col-span-4">
+                                <label className="block text-[11px] text-slate-600 mb-1">
+                                  Freight / Transport
+                                </label>
+                                <input
+                                  disabled={!isReceiving}
+                                  type="number"
+                                  value={chargesForm.freight_charges}
+                                  onChange={(e) => handleChargesChange("freight_charges", e.target.value)}
+                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <div className="col-span-12 md:col-span-4">
+                                <label className="block text-[11px] text-slate-600 mb-1">Packing</label>
+                                <input
+                                  disabled={!isReceiving}
+                                  type="number"
+                                  value={chargesForm.packing_charges}
+                                  onChange={(e) => handleChargesChange("packing_charges", e.target.value)}
+                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <div className="col-span-12 md:col-span-4">
+                                <label className="block text-[11px] text-slate-600 mb-1">
+                                  Other Charges
+                                </label>
+                                <input
+                                  disabled={!isReceiving}
+                                  type="number"
+                                  value={chargesForm.other_charges}
+                                  onChange={(e) => handleChargesChange("other_charges", e.target.value)}
+                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <div className="col-span-12 md:col-span-4">
+                                <label className="block text-[11px] text-slate-600 mb-1">
+                                  Overall Discount (₹)
+                                </label>
+                                <input
+                                  disabled={!isReceiving}
+                                  type="number"
+                                  value={chargesForm.overall_discount}
+                                  onChange={(e) =>
+                                    handleChargesChange("overall_discount", e.target.value)
+                                  }
+                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <div className="col-span-12 md:col-span-4">
+                                <label className="block text-[11px] text-slate-600 mb-1">
+                                  Round Off (₹)
+                                </label>
+                                <input
+                                  disabled={!isReceiving}
+                                  type="number"
+                                  value={chargesForm.round_off}
+                                  onChange={(e) => handleChargesChange("round_off", e.target.value)}
+                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
+                                  placeholder="0"
+                                />
+                              </div>
+
+                              <div className="col-span-12 md:col-span-4 flex items-end">
+                                <div className="text-[11px] text-slate-500">
+                                  * Charges fields edit only in Receiving mode.
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="col-span-12 lg:col-span-5 border border-slate-200 rounded-xl p-3 bg-slate-50">
+                            <div className="text-sm font-semibold text-slate-800 mb-2">Summary</div>
+
+                            {computeTotalsForModal ? (
+                              <div className="space-y-1 text-[12px]">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Items Gross</span>
+                                  <span className="font-medium">
+                                    ₹{fmtMoney(computeTotalsForModal.itemsGross)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Items Discount</span>
+                                  <span className="font-medium">
+                                    ₹{fmtMoney(computeTotalsForModal.itemsDiscount)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-700 font-semibold">Items Net</span>
+                                  <span className="font-semibold">
+                                    ₹{fmtMoney(computeTotalsForModal.itemsNet)}
+                                  </span>
+                                </div>
+
+                                <div className="h-px bg-slate-200 my-2" />
+
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Charges Total</span>
+                                  <span className="font-medium">
+                                    ₹{fmtMoney(computeTotalsForModal.chargesTotal)}
+                                  </span>
+                                </div>
+
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Sub Total</span>
+                                  <span className="font-medium">
+                                    ₹{fmtMoney(computeTotalsForModal.subTotal)}
+                                  </span>
+                                </div>
+
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Overall Discount</span>
+                                  <span className="font-medium">
+                                    - ₹{fmtMoney(computeTotalsForModal.overallDisc)}
+                                  </span>
+                                </div>
+
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Round Off</span>
+                                  <span className="font-medium">
+                                    {computeTotalsForModal.roundOff >= 0 ? "+" : "-"} ₹
+                                    {fmtMoney(Math.abs(computeTotalsForModal.roundOff))}
+                                  </span>
+                                </div>
+
+                                <div className="h-px bg-slate-200 my-2" />
+
+                                <div className="flex justify-between text-[13px]">
+                                  <span className="font-semibold text-slate-900">Grand Total</span>
+                                  <span className="font-extrabold text-slate-900">
+                                    ₹{fmtMoney(computeTotalsForModal.grand)}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-slate-500 text-sm">—</div>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     );
                   })()}
                 </div>
               </div>
 
-              {/* small footer spacing for very small screens */}
               <div className="h-2" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- ✅ Ledger Modal (UPDATED to Supplier) ---------- */}
+      {ledgerOpen && ledgerSupplier && (
+        <div className="fixed inset-0 z-50 bg-black/50">
+          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[980px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">
+                      Supplier Ledger:{" "}
+                      <span className="text-indigo-700">{ledgerSupplier.name}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1">
+                      Use dates if you want to filter.
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setLedgerOpen(false)}
+                    className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="px-4 py-3 border-b flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-1">From</label>
+                    <input
+                      type="date"
+                      value={ledgerFrom}
+                      onChange={(e) => setLedgerFrom(e.target.value)}
+                      className="border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-600 mb-1">To</label>
+                    <input
+                      type="date"
+                      value={ledgerTo}
+                      onChange={(e) => setLedgerTo(e.target.value)}
+                      className="border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => openLedger(ledgerSupplier)}
+                    disabled={ledgerLoading}
+                    className="text-[12px] px-4 py-2 rounded-xl text-white font-semibold
+                               bg-gradient-to-r from-indigo-600 to-blue-600
+                               hover:brightness-110 active:brightness-95
+                               disabled:opacity-60"
+                  >
+                    {ledgerLoading ? "Loading..." : "Apply"}
+                  </button>
+
+                  <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px]">
+                    {ledgerTotals ? (
+                      <>
+                        <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-700">
+                          DR: ₹{fmtMoney(ledgerTotals.debit)}
+                        </span>
+                        <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-700">
+                          CR: ₹{fmtMoney(ledgerTotals.credit)}
+                        </span>
+                        <span className={`px-2 py-1 rounded-full ${balChip(ledgerTotals.balance)}`}>
+                          Bal: ₹{fmtMoney(ledgerTotals.balance)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3">
+                  {ledgerError ? (
+                    <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                      {ledgerError}
+                    </div>
+                  ) : null}
+
+                  {ledgerLoading ? (
+                    <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                      Loading ledger...
+                    </div>
+                  ) : ledgerRows.length === 0 ? (
+                    <div className="p-6 text-sm text-slate-500">No transactions.</div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs border-collapse">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="border-b border-slate-200 px-2 py-2 text-left w-28">Date</th>
+                            <th className="border-b border-slate-200 px-2 py-2 text-left w-28">Type</th>
+                            <th className="border-b border-slate-200 px-2 py-2 text-left">Narration</th>
+                            <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Debit</th>
+                            <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Credit</th>
+                            <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Running</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ledgerRows.map((r) => (
+                            <tr key={r.id} className="hover:bg-slate-50">
+                              <td className="border-b border-slate-200 px-2 py-2 text-slate-700">
+                                {formatDate(r.txn_date)}
+                              </td>
+                              <td className="border-b border-slate-200 px-2 py-2 text-slate-700">
+                                {r.txn_type || "-"}
+                              </td>
+                              <td className="border-b border-slate-200 px-2 py-2">
+                                <div className="text-slate-800">{r.narration || r.ref_no || "-"}</div>
+                                {r.ref_no ? (
+                                  <div className="text-[11px] text-slate-500">Ref: {r.ref_no}</div>
+                                ) : null}
+                              </td>
+                              <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                {Number(r.debit) ? fmtMoney(r.debit) : "-"}
+                              </td>
+                              <td className="border-b border-slate-200 px-2 py-2 text-right">
+                                {Number(r.credit) ? fmtMoney(r.credit) : "-"}
+                              </td>
+                              <td className="border-b border-slate-200 px-2 py-2 text-right font-medium">
+                                {r.running_balance != null ? fmtMoney(r.running_balance) : "-"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="px-4 py-3 border-t bg-slate-50 flex justify-end">
+                  <button
+                    onClick={() => setLedgerOpen(false)}
+                    className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-3" />
             </div>
           </div>
         </div>

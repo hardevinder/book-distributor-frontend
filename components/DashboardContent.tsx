@@ -17,7 +17,8 @@ import {
   ClipboardList,
   Boxes,
   PackageCheck,
-  FileText, // ✅ for Bundle Dispatches
+  FileText, // ✅ Bundle Dispatches
+  ScrollText, // ✅ Supplier Receipts
 } from "lucide-react";
 
 /* ---------------- UI Helpers ---------------- */
@@ -307,6 +308,16 @@ const DashboardContent: React.FC = () => {
         accent: "sky",
       },
 
+      // ✅ NEW: Supplier Receipts
+      {
+        title: "Supplier Receipts",
+        desc: "Track supplier-wise receipts created on receiving stock. Review items, rates, discounts and receipt totals.",
+        href: "/supplier-receipts",
+        icon: <ScrollText className="w-6 h-6" />,
+        pill: "Receipts",
+        accent: "teal",
+      },
+
       // Inventory / Bundles
       {
         title: "Availability",
@@ -333,7 +344,7 @@ const DashboardContent: React.FC = () => {
         accent: "cyan",
       },
 
-      // ✅ NEW: Bundle Dispatches
+      // Bundle Dispatches
       {
         title: "Bundle Dispatches",
         desc: "Create & track dispatch entries for issued bundles. Generate Dispatch Challan / Delivery Note PDFs and manage status.",
@@ -459,6 +470,12 @@ const DashboardContent: React.FC = () => {
                   School Orders
                 </Link>
                 <Link
+                  href="/supplier-receipts"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Supplier Receipts
+                </Link>
+                <Link
                   href="/bundles"
                   className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
                 >
@@ -470,7 +487,6 @@ const DashboardContent: React.FC = () => {
                 >
                   Issue Bundles
                 </Link>
-                {/* ✅ NEW quick action */}
                 <Link
                   href="/bundle-dispatches"
                   className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
@@ -494,9 +510,7 @@ const DashboardContent: React.FC = () => {
             <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
               Modules & Masters
             </h3>
-            <span className="text-xs text-slate-500">
-              {cards.length} sections
-            </span>
+            <span className="text-xs text-slate-500">{cards.length} sections</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
