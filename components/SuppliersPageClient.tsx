@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -12,7 +12,12 @@ import {
   BookOpen,
   ChevronLeft,
   Sparkles,
+  ScrollText, // ✅ Ledger
+  IndianRupee, // ✅ Payment
+  X,
 } from "lucide-react";
+
+/* ---------------- Types ---------------- */
 
 type Supplier = {
   id: number;
@@ -23,6 +28,33 @@ type Supplier = {
   address?: string;
   is_active?: boolean;
 };
+
+type BalanceResponse = {
+  supplier: {
+    id: number;
+    name: string;
+  };
+  debit_total: number;
+  credit_total: number;
+  balance: number;
+};
+
+type LedgerRow = {
+  date?: string | null;
+  ref_no?: string | null;
+  description?: string | null;
+  debit?: number | string | null;
+  credit?: number | string | null;
+  balance?: number | string | null;
+
+  txn_date?: string | null;
+  narration?: string | null;
+  running_balance?: number | string | null;
+  createdAt?: string | null;
+  txn_type?: string | null;
+};
+
+/* ---------------- Helpers ---------------- */
 
 const emptyForm: Omit<Supplier, "id"> = {
   name: "",
@@ -39,6 +71,35 @@ type ToastState =
     }
   | null;
 
+const num = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
+
+const fmtMoney = (n: any) => {
+  const v = Number.isFinite(Number(n)) ? Number(n) : 0;
+  return v.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+/* ---------------- Component ---------------- */
+
 const SuppliersPageClient: React.FC = () => {
   const { user, logout } = useAuth();
 
@@ -53,7 +114,7 @@ const SuppliersPageClient: React.FC = () => {
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // (Optional) keep same buttons; will work once backend endpoints exist
+  // (Optional) import/export
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
@@ -74,7 +135,33 @@ const SuppliersPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  // ✅ keep state + ref in sync whenever we set form
+  /* ---------------- ✅ Payment Popup State ---------------- */
+
+  const [payOpen, setPayOpen] = useState(false);
+  const [paySupplier, setPaySupplier] = useState<Supplier | null>(null);
+  const [paySaving, setPaySaving] = useState(false);
+  const [payErr, setPayErr] = useState<string | null>(null);
+
+  const [payForm, setPayForm] = useState({
+    payment_date: "",
+    amount: "",
+    payment_mode: "BANK",
+    ref_no: "",
+    notes: "",
+  });
+
+  /* ---------------- ✅ Ledger Popup State ---------------- */
+
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [ledgerSupplier, setLedgerSupplier] = useState<Supplier | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceRow, setBalanceRow] = useState<BalanceResponse | null>(null);
+
+  /* ---------------- Helpers: set form + ref ---------------- */
+
   const setFormBoth = (
     updater:
       | typeof emptyForm
@@ -89,6 +176,8 @@ const SuppliersPageClient: React.FC = () => {
       return next;
     });
   };
+
+  /* ---------------- Fetch Suppliers ---------------- */
 
   const fetchSuppliers = async () => {
     setListLoading(true);
@@ -118,6 +207,8 @@ const SuppliersPageClient: React.FC = () => {
     const id = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(id);
   }, [toast]);
+
+  /* ---------------- Supplier CRUD ---------------- */
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -154,7 +245,6 @@ const SuppliersPageClient: React.FC = () => {
         await api.put(`/api/suppliers/${editingId}`, payload);
         setToast({ message: "Supplier updated successfully.", type: "success" });
       } else {
-        // ✅ this will auto-create publisher on backend (your supplierController.create)
         await api.post("/api/suppliers", payload);
         setToast({ message: "Supplier added successfully.", type: "success" });
       }
@@ -217,7 +307,8 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  // Optional: only enable if you add backend endpoints /api/suppliers/export, /api/suppliers/import
+  /* ---------------- Optional: Export/Import ---------------- */
+
   const handleExport = async () => {
     setError(null);
     setImportSummary(null);
@@ -291,7 +382,7 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------- Excel-like key handlers ---------- */
+  /* ---------------- Excel-like key handlers ---------------- */
 
   const makeAddRowKeyDown =
     (index: number) =>
@@ -320,6 +411,138 @@ const SuppliersPageClient: React.FC = () => {
         if (!loading) saveSupplier();
       }
     };
+
+  /* ---------------- ✅ Payment Popup handlers ---------------- */
+
+  const openPaymentPopup = (s: Supplier) => {
+    setPaySupplier(s);
+    setPayErr(null);
+    setPayOpen(true);
+    setPayForm({
+      payment_date: "",
+      amount: "",
+      payment_mode: "BANK",
+      ref_no: "",
+      notes: "",
+    });
+  };
+
+  const submitPaymentPopup = async () => {
+    if (!paySupplier?.id) return;
+
+    const amount = clamp(num(payForm.amount), 0, 999999999);
+    if (!amount || amount <= 0) {
+      setPayErr("Enter valid amount.");
+      return;
+    }
+
+    setPaySaving(true);
+    setPayErr(null);
+
+    try {
+      const payload: any = {
+        amount,
+        pay_date: payForm.payment_date || undefined, // ✅ backend expects pay_date
+        payment_mode: payForm.payment_mode?.trim() || null,
+        ref_no: payForm.ref_no?.trim() || null,
+        notes: payForm.notes?.trim() || null,
+      };
+
+      await api.post(`/api/suppliers/${paySupplier.id}/payments`, payload);
+
+      setToast({ message: "Payment saved successfully.", type: "success" });
+      setPayOpen(false);
+
+      // if ledger popup is open for same supplier, refresh ledger & balance
+      if (ledgerOpen && ledgerSupplier?.id === paySupplier.id) {
+        await openLedgerPopup(paySupplier);
+      }
+    } catch (e: any) {
+      console.error(e);
+      setPayErr(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          "Payment create failed."
+      );
+    } finally {
+      setPaySaving(false);
+    }
+  };
+
+  /* ---------------- ✅ Ledger Popup handlers ---------------- */
+
+  const fetchBalance = async (supplierId: number) => {
+    setBalanceLoading(true);
+    try {
+      const res = await api.get<BalanceResponse>(
+        `/api/suppliers/${supplierId}/balance`
+      );
+      setBalanceRow((res?.data as any) || null);
+    } catch (e) {
+      console.error("balance load error:", e);
+      setBalanceRow(null);
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
+
+  const openLedgerPopup = async (s: Supplier) => {
+    if (!s?.id) return;
+
+    setLedgerSupplier(s);
+    setLedgerOpen(true);
+    setLedgerLoading(true);
+    setLedgerError(null);
+    setLedgerRows([]);
+    setBalanceRow(null);
+
+    try {
+      // run in parallel
+      await Promise.all([
+        (async () => {
+          const res = await api.get(`/api/suppliers/${s.id}/ledger`);
+
+          const raw =
+            (res.data as any)?.rows ??
+            (res.data as any)?.ledger ??
+            (res.data as any)?.txns ??
+            (res.data as any)?.transactions ??
+            (Array.isArray(res.data) ? res.data : []);
+
+          const list = Array.isArray(raw) ? raw : [];
+
+          const mapped: LedgerRow[] = list.map((x: any) => ({
+            date:
+              x.date ?? x.txn_date ?? x.transaction_date ?? x.createdAt ?? null,
+            ref_no: x.ref_no ?? x.reference_no ?? x.refNo ?? null,
+            description:
+              x.description ?? x.narration ?? x.remarks ?? x.txn_type ?? null,
+            debit: x.debit ?? 0,
+            credit: x.credit ?? 0,
+            balance:
+              x.balance ??
+              x.running_balance ??
+              x.closing_balance ??
+              x.after_balance ??
+              null,
+          }));
+
+          setLedgerRows(mapped);
+        })(),
+        fetchBalance(s.id),
+      ]);
+    } catch (e: any) {
+      console.error(e);
+      setLedgerError(e?.response?.data?.error || "Failed to load ledger");
+      setLedgerRows([]);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  /* ---------------- UI ---------------- */
+
+  const visibleSuppliers = useMemo(() => suppliers, [suppliers]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
@@ -351,7 +574,7 @@ const SuppliersPageClient: React.FC = () => {
               Supplier Management
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Onboard & Manage Suppliers
+              Onboard • Payments • Ledger
             </span>
           </div>
         </div>
@@ -388,7 +611,7 @@ const SuppliersPageClient: React.FC = () => {
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               type="button"
               onClick={handleExport}
@@ -450,7 +673,7 @@ const SuppliersPageClient: React.FC = () => {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-indigo-500" />
-              Suppliers ({suppliers.length})
+              Suppliers ({visibleSuppliers.length})
             </h2>
 
             {editingId && (
@@ -469,7 +692,7 @@ const SuppliersPageClient: React.FC = () => {
               <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
               Loading suppliers...
             </div>
-          ) : suppliers.length === 0 && !editingId ? (
+          ) : visibleSuppliers.length === 0 && !editingId ? (
             <div className="text-xs sm:text-sm text-slate-500 py-4 mb-3">
               Start typing in the row below headers to add your first supplier.
             </div>
@@ -588,7 +811,7 @@ const SuppliersPageClient: React.FC = () => {
                 </tr>
 
                 {/* DATA ROWS */}
-                {suppliers.map((s) =>
+                {visibleSuppliers.map((s) =>
                   editingId === s.id ? (
                     <tr key={s.id} className="bg-yellow-50/70">
                       <td className="px-3 py-1.5 border-b border-slate-200">
@@ -702,20 +925,47 @@ const SuppliersPageClient: React.FC = () => {
 
                       <td className="px-3 py-2 border-b border-slate-200">
                         <div className="flex items-center justify-center gap-2">
+                          {/* ✅ Ledger popup */}
+                          <button
+                            type="button"
+                            onClick={() => openLedgerPopup(s)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-slate-700 to-slate-900 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all opacity-90"
+                            title="View Ledger"
+                            aria-label="View Ledger"
+                          >
+                            <ScrollText className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* ✅ Payment popup */}
+                          <button
+                            type="button"
+                            onClick={() => openPaymentPopup(s)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all opacity-90"
+                            title="Add Payment"
+                            aria-label="Add Payment"
+                          >
+                            <IndianRupee className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Edit */}
                           <button
                             type="button"
                             onClick={() => handleEdit(s)}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all opacity-80"
                             aria-label="Edit supplier"
+                            title="Edit"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
+
+                          {/* Delete */}
                           <button
                             type="button"
                             onClick={() => handleDelete(s.id)}
                             disabled={deletingId === s.id}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                             aria-label="Delete supplier"
+                            title="Delete"
                           >
                             {deletingId === s.id ? (
                               <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -734,7 +984,7 @@ const SuppliersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* Toast */}
+      {/* ---------------- Toast ---------------- */}
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
@@ -744,6 +994,295 @@ const SuppliersPageClient: React.FC = () => {
           }`}
         >
           {toast.message}
+        </div>
+      )}
+
+      {/* ---------------- ✅ Payment Modal ---------------- */}
+      {payOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50">
+          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[900px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-emerald-50 flex items-start justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">
+                      Add Supplier Payment (Credit)
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1 truncate">
+                      Supplier:{" "}
+                      <span className="font-semibold text-slate-900">
+                        {paySupplier?.name || "-"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setPayOpen(false)}
+                    className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  {payErr && (
+                    <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                      {payErr}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-12 gap-3">
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Payment Date
+                      </label>
+                      <input
+                        type="date"
+                        value={payForm.payment_date}
+                        onChange={(e) =>
+                          setPayForm((p) => ({
+                            ...p,
+                            payment_date: e.target.value,
+                          }))
+                        }
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Amount *
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={payForm.amount}
+                        onChange={(e) =>
+                          setPayForm((p) => ({ ...p, amount: e.target.value }))
+                        }
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Mode
+                      </label>
+                      <select
+                        value={payForm.payment_mode}
+                        onChange={(e) =>
+                          setPayForm((p) => ({
+                            ...p,
+                            payment_mode: e.target.value,
+                          }))
+                        }
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                      >
+                        <option value="BANK">BANK</option>
+                        <option value="CASH">CASH</option>
+                        <option value="UPI">UPI</option>
+                        <option value="CHEQUE">CHEQUE</option>
+                        <option value="NEFT">NEFT</option>
+                        <option value="RTGS">RTGS</option>
+                      </select>
+                    </div>
+
+                    <div className="col-span-12 md:col-span-8">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Ref No (UTR/Cheque/Txn)
+                      </label>
+                      <input
+                        value={payForm.ref_no}
+                        onChange={(e) =>
+                          setPayForm((p) => ({ ...p, ref_no: e.target.value }))
+                        }
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
+                        placeholder="Optional..."
+                      />
+                    </div>
+
+                    <div className="col-span-12">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Notes
+                      </label>
+                      <input
+                        value={payForm.notes}
+                        onChange={(e) =>
+                          setPayForm((p) => ({ ...p, notes: e.target.value }))
+                        }
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
+                        placeholder="Optional..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-4 py-3 border-t bg-slate-50 flex justify-end gap-2">
+                  <button
+                    onClick={() => setPayOpen(false)}
+                    className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitPaymentPopup}
+                    disabled={paySaving}
+                    className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                  >
+                    {paySaving ? "Saving..." : "Save Payment"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-3" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- ✅ Ledger Modal ---------------- */}
+      {ledgerOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50">
+          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[1100px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">
+                      Supplier Ledger
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1 truncate">
+                      {ledgerSupplier?.name || "-"}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setLedgerOpen(false)}
+                    className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-4">
+                  {/* Balance row */}
+                  <div className="mb-4 grid grid-cols-12 gap-3">
+                    <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-slate-50">
+                      <div className="text-[11px] text-slate-600">
+                        Debit Total
+                      </div>
+                      <div className="mt-1 text-sm font-extrabold">
+                        ₹{fmtMoney(balanceRow?.debit_total ?? 0)}
+                      </div>
+                    </div>
+                    <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-slate-50">
+                      <div className="text-[11px] text-slate-600">
+                        Credit Total
+                      </div>
+                      <div className="mt-1 text-sm font-extrabold">
+                        ₹{fmtMoney(balanceRow?.credit_total ?? 0)}
+                      </div>
+                    </div>
+                    <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-white">
+                      <div className="text-[11px] text-slate-600">
+                        Balance (Debit - Credit)
+                      </div>
+                      <div className="mt-1 text-sm font-extrabold">
+                        ₹{fmtMoney(balanceRow?.balance ?? 0)}
+                      </div>
+                      {balanceLoading && (
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Loading balance...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {ledgerError && (
+                    <div className="mb-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                      {ledgerError}
+                    </div>
+                  )}
+
+                  {ledgerLoading ? (
+                    <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                      Loading ledger...
+                    </div>
+                  ) : ledgerRows.length === 0 ? (
+                    <div className="p-6 text-sm text-slate-500">
+                      No ledger entries.
+                    </div>
+                  ) : (
+                    <div className="overflow-auto border border-slate-200 rounded-xl">
+                      <table className="w-full text-xs border-collapse">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">
+                              Date
+                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">
+                              Ref
+                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">
+                              Description
+                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">
+                              Debit
+                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">
+                              Credit
+                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">
+                              Balance
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ledgerRows.map((r, i) => (
+                            <tr key={i} className="hover:bg-slate-50">
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                {formatDate(r.date || null)}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                {r.ref_no || "-"}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2">
+                                {r.description || "-"}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                ₹{fmtMoney(r.debit)}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                ₹{fmtMoney(r.credit)}
+                              </td>
+                              <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                {r.balance == null
+                                  ? "-"
+                                  : `₹${fmtMoney(r.balance)}`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={() => setLedgerOpen(false)}
+                      className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-3" />
+            </div>
+          </div>
         </div>
       )}
 

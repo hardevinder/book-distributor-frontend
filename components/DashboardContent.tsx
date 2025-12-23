@@ -19,6 +19,7 @@ import {
   PackageCheck,
   FileText, // ✅ Bundle Dispatches
   ScrollText, // ✅ Supplier Receipts
+  IndianRupee, // ✅ Supplier Payments
 } from "lucide-react";
 
 /* ---------------- UI Helpers ---------------- */
@@ -308,7 +309,7 @@ const DashboardContent: React.FC = () => {
         accent: "sky",
       },
 
-      // ✅ NEW: Supplier Receipts
+      // ✅ Supplier Receipts
       {
         title: "Supplier Receipts",
         desc: "Track supplier-wise receipts created on receiving stock. Review items, rates, discounts and receipt totals.",
@@ -316,6 +317,16 @@ const DashboardContent: React.FC = () => {
         icon: <ScrollText className="w-6 h-6" />,
         pill: "Receipts",
         accent: "teal",
+      },
+
+      // ✅ NEW: Supplier Payments
+      {
+        title: "Supplier Payments",
+        desc: "Record supplier payments (CASH/BANK/UPI/NEFT etc), view supplier-wise ledger, and track outstanding balance.",
+        href: "/supplier-payments",
+        icon: <IndianRupee className="w-6 h-6" />,
+        pill: "Payments",
+        accent: "emerald",
       },
 
       // Inventory / Bundles
@@ -474,6 +485,12 @@ const DashboardContent: React.FC = () => {
                   className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
                 >
                   Supplier Receipts
+                </Link>
+                <Link
+                  href="/supplier-payments"
+                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
+                >
+                  Supplier Payments
                 </Link>
                 <Link
                   href="/bundles"

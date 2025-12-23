@@ -295,7 +295,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   /* ---------- ✅ Supplier Balance & Ledger State (UPDATED) ---------- */
 
   const [supplierBalances, setSupplierBalances] = useState<
-    Record<number, SupplierBalanceResponse | null>
+    Record<number, SupplierBalanceResponse | null | undefined>
   >({});
   const [supplierBalLoading, setSupplierBalLoading] = useState<Record<number, boolean>>({});
 
@@ -305,9 +305,11 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   const [ledgerSupplier, setLedgerSupplier] = useState<SupplierLite | null>(null);
   const [ledgerRows, setLedgerRows] = useState<SupplierLedgerTxn[]>([]);
-  const [ledgerTotals, setLedgerTotals] = useState<{ debit: number; credit: number; balance: number } | null>(
-    null
-  );
+  const [ledgerTotals, setLedgerTotals] = useState<{
+    debit: number;
+    credit: number;
+    balance: number;
+  } | null>(null);
 
   const [ledgerFrom, setLedgerFrom] = useState<string>("");
   const [ledgerTo, setLedgerTo] = useState<string>("");
@@ -332,6 +334,8 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   const fetchSupplierBalance = async (supplierId: number) => {
     if (!supplierId) return;
+
+    // if already fetched (data or null), don't refetch
     if (supplierBalances[supplierId] !== undefined) return;
 
     setSupplierBalLoading((p) => ({ ...p, [supplierId]: true }));
@@ -347,21 +351,21 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  const openLedger = async (supplier: SupplierLite) => {
-    setLedgerOpen(true);
-    setLedgerSupplier(supplier);
+  // ✅ FIX: ledger apply uses CURRENT supplier, not the passed stale object
+  const loadLedger = async (supplierId: number) => {
+    if (!supplierId) return;
+
     setLedgerRows([]);
     setLedgerTotals(null);
     setLedgerError(null);
 
     setLedgerLoading(true);
     try {
-      const params: any = {};
+      const params: any = { limit: 300 };
       if (ledgerFrom) params.from = ledgerFrom;
       if (ledgerTo) params.to = ledgerTo;
-      params.limit = 300;
 
-      const res = await api.get(`/api/suppliers/${supplier.id}/ledger`, { params });
+      const res = await api.get(`/api/suppliers/${supplierId}/ledger`, { params });
       const data = res?.data as SupplierLedgerResponse;
 
       setLedgerRows(Array.isArray(data?.txns) ? data.txns : []);
@@ -372,10 +376,16 @@ const SchoolOrdersPageClient: React.FC = () => {
       });
     } catch (e: any) {
       console.error("supplier ledger fetch error:", e);
-      setLedgerError(e?.response?.data?.error || "Failed to load ledger");
+      setLedgerError(e?.response?.data?.error || e?.response?.data?.message || "Failed to load ledger");
     } finally {
       setLedgerLoading(false);
     }
+  };
+
+  const openLedger = async (supplier: SupplierLite) => {
+    setLedgerOpen(true);
+    setLedgerSupplier(supplier);
+    await loadLedger(supplier.id);
   };
 
   /* ---------- Commercial calc helpers ---------- */
@@ -744,8 +754,9 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       // ✅ refresh supplier balance after receiving
       if (updatedOrder.supplier_id) {
-        setSupplierBalances((p) => ({ ...p, [Number(updatedOrder.supplier_id)]: undefined as any }));
-        fetchSupplierBalance(Number(updatedOrder.supplier_id));
+        const sid = Number(updatedOrder.supplier_id);
+        setSupplierBalances((p) => ({ ...p, [sid]: undefined }));
+        fetchSupplierBalance(sid);
       }
 
       await fetchOrders();
@@ -887,11 +898,11 @@ const SchoolOrdersPageClient: React.FC = () => {
     setSavingOrderNoId(orderId);
 
     try {
-      const res = await api.patch(`/api/school-orders/${orderId}/order-no`, {
+      await api.patch(`/api/school-orders/${orderId}/order-no`, {
         order_no: newNo,
       });
 
-      setInfo(res?.data?.message || "Order no updated.");
+      setInfo("Order no updated.");
 
       setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o)));
       setViewOrder((prev) => (prev?.id === orderId ? { ...prev, order_no: newNo } : prev));
@@ -1359,12 +1370,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                     const totalReceived = totalReceivedFromItems(items);
                     const totalPending = Math.max(totalOrdered - totalReceived, 0);
 
-                    const supBal = viewOrder.supplier_id
-                      ? supplierBalances[Number(viewOrder.supplier_id)]
-                      : null;
-                    const supBalLoading = viewOrder.supplier_id
-                      ? !!supplierBalLoading[Number(viewOrder.supplier_id)]
-                      : false;
+                    const supplierId = Number(viewOrder.supplier_id || 0);
+                    const supBal = supplierId ? supplierBalances[supplierId] : null;
+                    const supBalLoading = supplierId ? !!supplierBalLoading[supplierId] : false;
 
                     return (
                       <>
@@ -1408,7 +1416,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                   <span className="font-semibold">P:</span> {totalPending}
                                 </span>
 
-                                {viewOrder.supplier_id ? (
+                                {supplierId ? (
                                   <>
                                     <span className="text-slate-400">•</span>
                                     <span
@@ -1431,7 +1439,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       type="button"
                                       onClick={() =>
                                         openLedger({
-                                          id: Number(viewOrder.supplier_id),
+                                          id: supplierId,
                                           name: supplierName,
                                           phone: viewOrder.supplier?.phone || null,
                                           email: viewOrder.supplier?.email || null,
@@ -1447,7 +1455,10 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                                     <button
                                       type="button"
-                                      onClick={() => fetchSupplierBalance(Number(viewOrder.supplier_id))}
+                                      onClick={() => {
+                                        setSupplierBalances((p) => ({ ...p, [supplierId]: undefined }));
+                                        fetchSupplierBalance(supplierId);
+                                      }}
                                       className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
                                       title="Refresh balance"
                                     >
@@ -1792,7 +1803,8 @@ const SchoolOrdersPageClient: React.FC = () => {
                                                         phone: viewOrder.supplier?.phone || null,
                                                         email: viewOrder.supplier?.email || null,
                                                         address: viewOrder.supplier?.address || null,
-                                                        address_line1: viewOrder.supplier?.address_line1 || null,
+                                                        address_line1:
+                                                          viewOrder.supplier?.address_line1 || null,
                                                         full_address: viewOrder.supplier?.full_address || null,
                                                       })
                                                     }
@@ -1811,7 +1823,10 @@ const SchoolOrdersPageClient: React.FC = () => {
                                             {supplierId ? (
                                               <button
                                                 type="button"
-                                                onClick={() => fetchSupplierBalance(supplierId)}
+                                                onClick={() => {
+                                                  setSupplierBalances((p) => ({ ...p, [supplierId]: undefined }));
+                                                  fetchSupplierBalance(supplierId);
+                                                }}
                                                 className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 shrink-0"
                                                 title="Refresh balance"
                                               >
@@ -1991,9 +2006,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                   disabled={!isReceiving}
                                   type="number"
                                   value={chargesForm.overall_discount}
-                                  onChange={(e) =>
-                                    handleChargesChange("overall_discount", e.target.value)
-                                  }
+                                  onChange={(e) => handleChargesChange("overall_discount", e.target.value)}
                                   className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
                                   placeholder="0"
                                 />
@@ -2114,9 +2127,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                       Supplier Ledger:{" "}
                       <span className="text-indigo-700">{ledgerSupplier.name}</span>
                     </div>
-                    <div className="text-[11px] text-slate-600 mt-1">
-                      Use dates if you want to filter.
-                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1">Use dates if you want to filter.</div>
                   </div>
 
                   <button
@@ -2151,7 +2162,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => openLedger(ledgerSupplier)}
+                    onClick={() => loadLedger(ledgerSupplier.id)}
                     disabled={ledgerLoading}
                     className="text-[12px] px-4 py-2 rounded-xl text-white font-semibold
                                bg-gradient-to-r from-indigo-600 to-blue-600
