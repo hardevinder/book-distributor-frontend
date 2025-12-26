@@ -15,6 +15,7 @@ import {
   ScrollText, // ✅ Ledger
   IndianRupee, // ✅ Payment
   X,
+  Search,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -134,6 +135,26 @@ const SuppliersPageClient: React.FC = () => {
   const LAST_INDEX = 4;
 
   const [toast, setToast] = useState<ToastState>(null);
+
+  /* ---------------- ✅ Search State ---------------- */
+
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toLowerCase().includes("mac");
+      const combo = isMac ? e.metaKey && e.key.toLowerCase() === "k" : e.ctrlKey && e.key.toLowerCase() === "k";
+      if (combo) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const normalize = (v: any) => String(v ?? "").toLowerCase().trim();
 
   /* ---------------- ✅ Payment Popup State ---------------- */
 
@@ -540,9 +561,26 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- UI ---------------- */
+  /* ---------------- ✅ Search Filter ---------------- */
 
-  const visibleSuppliers = useMemo(() => suppliers, [suppliers]);
+  const visibleSuppliers = useMemo(() => {
+    const q = normalize(search);
+    if (!q) return suppliers;
+
+    return suppliers.filter((s) => {
+      const hay = [
+        s.name,
+        s.contact_person,
+        s.phone,
+        s.email,
+        s.address,
+        s.id,
+      ]
+        .map((x) => normalize(x))
+        .join(" ");
+      return hay.includes(q);
+    });
+  }, [suppliers, search]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
@@ -670,21 +708,53 @@ const SuppliersPageClient: React.FC = () => {
 
         {/* Table */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/60">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
             <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
               <BookOpen className="w-4 h-4 text-indigo-500" />
-              Suppliers ({visibleSuppliers.length})
+              Suppliers ({visibleSuppliers.length}
+              {search.trim() ? (
+                <span className="text-[11px] text-slate-500 font-medium">
+                  {" "}
+                  / {suppliers.length}
+                </span>
+              ) : null}
+              )
             </h2>
 
-            {editingId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="text-[11px] sm:text-xs px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium"
-              >
-                Cancel Edit
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {/* ✅ Search Box */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  ref={searchRef}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search suppliers... (Ctrl+K)"
+                  className="w-[260px] max-w-[70vw] pl-9 pr-9 py-2 rounded-full border border-slate-200 bg-white text-xs sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent shadow-sm"
+                />
+                {search.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-slate-100"
+                    title="Clear"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-4 h-4 text-slate-500" />
+                  </button>
+                )}
+              </div>
+
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-[11px] sm:text-xs px-3 py-2 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium"
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
           </div>
 
           {listLoading ? (
@@ -694,7 +764,9 @@ const SuppliersPageClient: React.FC = () => {
             </div>
           ) : visibleSuppliers.length === 0 && !editingId ? (
             <div className="text-xs sm:text-sm text-slate-500 py-4 mb-3">
-              Start typing in the row below headers to add your first supplier.
+              {search.trim()
+                ? "No suppliers match your search."
+                : "Start typing in the row below headers to add your first supplier."}
             </div>
           ) : null}
 
