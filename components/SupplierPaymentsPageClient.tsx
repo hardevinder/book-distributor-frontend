@@ -112,9 +112,7 @@ const pickPaymentDate = (p?: SupplierPayment | null) =>
 const pickPaymentMode = (p?: SupplierPayment | null) =>
   p?.payment_mode || p?.mode || "-";
 
-/* ---------------- Component ----------------
-   Save as: components/SupplierPaymentsPageClient.tsx
--------------------------------------------- */
+/* ---------------- Component ---------------- */
 
 export default function SupplierPaymentsPageClient() {
   const { user, logout } = useAuth();
@@ -163,6 +161,27 @@ export default function SupplierPaymentsPageClient() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
+
+  /* ------------ ✅ FIX: Always get supplier name from masters ------------ */
+
+  const selectedSupplier = useMemo(() => {
+    const id = Number(filterSupplierId);
+    if (!id) return null;
+    return suppliers.find((s) => Number(s.id) === id) || null;
+  }, [suppliers, filterSupplierId]);
+
+  const getSupplierNameById = (supplierId?: number | string | null) => {
+    const id = Number(supplierId);
+    if (!id) return "-";
+    return (
+      suppliers.find((s) => Number(s.id) === id)?.name || `Supplier #${id}`
+    );
+  };
+
+  const ledgerHeaderName =
+    selectedSupplier?.name ||
+    balanceRow?.supplier?.name ||
+    getSupplierNameById(filterSupplierId);
 
   /* ------------ Fetch masters ------------ */
 
@@ -342,7 +361,11 @@ export default function SupplierPaymentsPageClient() {
     const supplierId = Number(viewRow.supplier_id);
     if (!supplierId) return setError("Missing supplier id for this payment.");
 
-    if (!confirm("Delete this payment? This will reduce CREDIT in supplier ledger."))
+    if (
+      !confirm(
+        "Delete this payment? This will reduce CREDIT in supplier ledger."
+      )
+    )
       return;
 
     setDeleting(true);
@@ -375,33 +398,39 @@ export default function SupplierPaymentsPageClient() {
     setLedgerRows([]);
 
     try {
-      const res = await api.get(`/api/suppliers/${supplierId}/ledger`);
+      // ✅ FIX: also refresh balance so header supplier is always available
+      await Promise.all([
+        fetchBalance(supplierId),
+        (async () => {
+          const res = await api.get(`/api/suppliers/${supplierId}/ledger`);
 
-      const raw =
-        (res.data as any)?.rows ??
-        (res.data as any)?.ledger ??
-        (res.data as any)?.txns ??
-        (res.data as any)?.transactions ??
-        (Array.isArray(res.data) ? res.data : []);
+          const raw =
+            (res.data as any)?.rows ??
+            (res.data as any)?.ledger ??
+            (res.data as any)?.txns ??
+            (res.data as any)?.transactions ??
+            (Array.isArray(res.data) ? res.data : []);
 
-      const list = Array.isArray(raw) ? raw : [];
+          const list = Array.isArray(raw) ? raw : [];
 
-      const mapped: LedgerRow[] = list.map((x: any) => ({
-        date: x.date ?? x.txn_date ?? x.transaction_date ?? x.createdAt ?? null,
-        ref_no: x.ref_no ?? x.reference_no ?? x.refNo ?? null,
-        description:
-          x.description ?? x.narration ?? x.remarks ?? x.txn_type ?? null,
-        debit: x.debit ?? 0,
-        credit: x.credit ?? 0,
-        balance:
-          x.balance ??
-          x.running_balance ??
-          x.closing_balance ??
-          x.after_balance ??
-          null,
-      }));
+          const mapped: LedgerRow[] = list.map((x: any) => ({
+            date: x.date ?? x.txn_date ?? x.transaction_date ?? x.createdAt ?? null,
+            ref_no: x.ref_no ?? x.reference_no ?? x.refNo ?? null,
+            description:
+              x.description ?? x.narration ?? x.remarks ?? x.txn_type ?? null,
+            debit: x.debit ?? 0,
+            credit: x.credit ?? 0,
+            balance:
+              x.balance ??
+              x.running_balance ??
+              x.closing_balance ??
+              x.after_balance ??
+              null,
+          }));
 
-      setLedgerRows(mapped);
+          setLedgerRows(mapped);
+        })(),
+      ]);
     } catch (e: any) {
       console.error(e);
       setLedgerError(e?.response?.data?.error || "Failed to load ledger");
@@ -640,7 +669,8 @@ export default function SupplierPaymentsPageClient() {
                   {visible.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="border-b border-slate-200 px-3 py-2">
-                        {p.supplier?.name || `Supplier #${p.supplier_id}`}
+                        {/* ✅ FIX: fall back to masters list if backend doesn't include p.supplier */}
+                        {p.supplier?.name || getSupplierNameById(p.supplier_id)}
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
                         {formatDate(pickPaymentDate(p))}
@@ -844,10 +874,9 @@ export default function SupplierPaymentsPageClient() {
                     <div className="text-[11px] text-slate-600 mt-1">
                       Supplier:{" "}
                       <span className="font-semibold text-slate-900">
+                        {/* ✅ FIX: fallback to masters list */}
                         {viewRow?.supplier?.name ||
-                          (viewRow?.supplier_id
-                            ? `Supplier #${viewRow.supplier_id}`
-                            : "-")}
+                          getSupplierNameById(viewRow?.supplier_id)}
                       </span>
                     </div>
                   </div>
@@ -952,9 +981,9 @@ export default function SupplierPaymentsPageClient() {
                     <div className="text-sm font-semibold truncate">
                       Supplier Ledger
                     </div>
+                    {/* ✅ FIX: Always show proper name */}
                     <div className="text-[11px] text-slate-600 mt-1 truncate">
-                      {balanceRow?.supplier?.name ||
-                        `Supplier #${filterSupplierId}`}
+                      {ledgerHeaderName}
                     </div>
                   </div>
 
@@ -1026,7 +1055,9 @@ export default function SupplierPaymentsPageClient() {
                                 ₹{fmtMoney(r.credit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                {r.balance == null ? "-" : `₹${fmtMoney(r.balance)}`}
+                                {r.balance == null
+                                  ? "-"
+                                  : `₹${fmtMoney(r.balance)}`}
                               </td>
                             </tr>
                           ))}
