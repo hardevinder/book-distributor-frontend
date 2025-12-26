@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 import {
@@ -11,25 +11,24 @@ import {
   Package,
   Layers,
   ChevronRight,
-  Sparkles,
   Truck,
   Users,
   ClipboardList,
   Boxes,
   PackageCheck,
-  FileText, // ✅ Bundle Dispatches
-  ScrollText, // ✅ Supplier Receipts
-  IndianRupee, // ✅ Supplier Payments
+  FileText,
+  ScrollText,
+  IndianRupee,
+  Star,
+  Search,
 } from "lucide-react";
 
-/* ---------------- UI Helpers ---------------- */
+/* ---------------- Types ---------------- */
 
 type DashCard = {
   title: string;
-  desc: string;
   href: string;
   icon: React.ReactNode;
-  pill: string;
   accent:
     | "emerald"
     | "amber"
@@ -44,525 +43,296 @@ type DashCard = {
     | "rose";
 };
 
+/* ---------------- Colors ---------------- */
+
 const accentMap: Record<
   DashCard["accent"],
-  {
-    bg: string;
-    glow: string;
-    pillBg: string;
-    pillText: string;
-    chevron: string;
-    iconBg: string;
-  }
+  { iconBg: string; ring: string; hover: string }
 > = {
   emerald: {
-    bg: "from-emerald-500/10 to-teal-500/10",
-    glow: "from-emerald-500/20 to-teal-500/20",
-    pillBg: "from-emerald-100 to-teal-100",
-    pillText: "text-emerald-700 border-emerald-200",
-    chevron: "text-emerald-600",
     iconBg: "from-emerald-500 to-teal-600",
+    ring: "ring-emerald-200/70",
+    hover: "hover:bg-emerald-50/60",
   },
   amber: {
-    bg: "from-amber-500/10 to-orange-500/10",
-    glow: "from-amber-500/20 to-orange-500/20",
-    pillBg: "from-amber-100 to-orange-100",
-    pillText: "text-amber-700 border-amber-200",
-    chevron: "text-amber-600",
     iconBg: "from-amber-500 to-orange-600",
+    ring: "ring-amber-200/70",
+    hover: "hover:bg-amber-50/60",
   },
   indigo: {
-    bg: "from-indigo-500/10 to-purple-500/10",
-    glow: "from-indigo-500/20 to-purple-500/20",
-    pillBg: "from-indigo-100 to-purple-100",
-    pillText: "text-indigo-700 border-indigo-200",
-    chevron: "text-indigo-600",
     iconBg: "from-indigo-500 to-purple-600",
+    ring: "ring-indigo-200/70",
+    hover: "hover:bg-indigo-50/60",
   },
   cyan: {
-    bg: "from-cyan-500/10 to-sky-500/10",
-    glow: "from-cyan-500/20 to-sky-500/20",
-    pillBg: "from-cyan-100 to-sky-100",
-    pillText: "text-cyan-700 border-cyan-200",
-    chevron: "text-cyan-700",
     iconBg: "from-cyan-500 to-sky-600",
+    ring: "ring-cyan-200/70",
+    hover: "hover:bg-cyan-50/60",
   },
   blue: {
-    bg: "from-blue-500/10 to-sky-500/10",
-    glow: "from-blue-500/20 to-sky-500/20",
-    pillBg: "from-blue-100 to-sky-100",
-    pillText: "text-blue-700 border-blue-200",
-    chevron: "text-blue-700",
     iconBg: "from-blue-500 to-sky-600",
+    ring: "ring-blue-200/70",
+    hover: "hover:bg-blue-50/60",
   },
   teal: {
-    bg: "from-teal-500/10 to-emerald-500/10",
-    glow: "from-teal-500/20 to-emerald-500/20",
-    pillBg: "from-teal-100 to-emerald-100",
-    pillText: "text-teal-700 border-teal-200",
-    chevron: "text-teal-700",
     iconBg: "from-teal-500 to-emerald-600",
+    ring: "ring-teal-200/70",
+    hover: "hover:bg-teal-50/60",
   },
   purple: {
-    bg: "from-purple-500/10 to-violet-500/10",
-    glow: "from-purple-500/20 to-violet-500/20",
-    pillBg: "from-purple-100 to-violet-100",
-    pillText: "text-purple-700 border-purple-200",
-    chevron: "text-purple-700",
     iconBg: "from-purple-500 to-violet-600",
+    ring: "ring-purple-200/70",
+    hover: "hover:bg-purple-50/60",
   },
   sky: {
-    bg: "from-sky-500/10 to-cyan-500/10",
-    glow: "from-sky-500/20 to-cyan-500/20",
-    pillBg: "from-sky-100 to-cyan-100",
-    pillText: "text-sky-700 border-sky-200",
-    chevron: "text-sky-700",
     iconBg: "from-sky-500 to-cyan-600",
+    ring: "ring-sky-200/70",
+    hover: "hover:bg-sky-50/60",
   },
   slate: {
-    bg: "from-slate-500/10 to-indigo-500/10",
-    glow: "from-slate-500/20 to-indigo-500/20",
-    pillBg: "from-slate-100 to-indigo-100",
-    pillText: "text-slate-700 border-slate-200",
-    chevron: "text-slate-700",
     iconBg: "from-slate-700 to-indigo-700",
+    ring: "ring-slate-200/70",
+    hover: "hover:bg-slate-50/60",
   },
   fuchsia: {
-    bg: "from-fuchsia-500/10 to-indigo-500/10",
-    glow: "from-fuchsia-500/20 to-indigo-500/20",
-    pillBg: "from-fuchsia-100 to-indigo-100",
-    pillText: "text-fuchsia-700 border-fuchsia-200",
-    chevron: "text-fuchsia-700",
     iconBg: "from-fuchsia-600 to-indigo-700",
+    ring: "ring-fuchsia-200/70",
+    hover: "hover:bg-fuchsia-50/60",
   },
   rose: {
-    bg: "from-rose-500/10 to-red-500/10",
-    glow: "from-rose-500/20 to-red-500/20",
-    pillBg: "from-rose-100 to-red-100",
-    pillText: "text-rose-700 border-rose-200",
-    chevron: "text-rose-700",
     iconBg: "from-rose-500 to-red-600",
+    ring: "ring-rose-200/70",
+    hover: "hover:bg-rose-50/60",
   },
 };
 
-function StatPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl bg-white/70 backdrop-blur-md border border-slate-200/60 px-4 py-3 shadow-sm">
-      <span className="text-xs font-medium text-slate-500">{label}</span>
-      <span className="text-sm font-semibold text-slate-800">{value}</span>
-    </div>
-  );
-}
+/* ---------------- Small Tile ---------------- */
 
-function DashCardUI({ card }: { card: DashCard }) {
+function Tile({
+  card,
+  pinned,
+  onTogglePin,
+}: {
+  card: DashCard;
+  pinned: boolean;
+  onTogglePin: () => void;
+}) {
   const a = accentMap[card.accent];
 
   return (
-    <Link
-      href={card.href}
-      className="group relative rounded-2xl border border-slate-200/60 bg-white/75 backdrop-blur-md p-6 shadow-lg hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-300 overflow-hidden"
-    >
-      {/* soft gradient wash */}
-      <div
-        className={`absolute inset-0 bg-gradient-to-br ${a.bg} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
-      />
-      {/* corner glow */}
-      <div
-        className={`absolute -top-24 -right-24 h-48 w-48 rounded-full bg-gradient-to-br ${a.glow} blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
-      />
+    <div className="relative">
+      {/* Pin button */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onTogglePin();
+        }}
+        className={`absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded-full border bg-white/90 backdrop-blur px-2 py-1 text-[11px] font-semibold shadow-sm transition ${
+          pinned
+            ? "border-amber-200 text-amber-700"
+            : "border-slate-200 text-slate-500 hover:text-slate-700"
+        }`}
+        title={pinned ? "Unpin" : "Pin"}
+      >
+        <Star className={`h-3.5 w-3.5 ${pinned ? "fill-current" : ""}`} />
+      </button>
 
-      <div className="relative flex items-start gap-4">
+      <Link
+        href={card.href}
+        className={`group flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-white/85 backdrop-blur px-3 py-3 shadow-sm transition active:scale-[0.99] ${a.hover}`}
+      >
         <div
-          className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${a.iconBg} text-white shadow-lg group-hover:rotate-6 transition-transform duration-300`}
+          className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${a.iconBg} text-white shadow ring-2 ${a.ring}`}
         >
           {card.icon}
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="font-bold text-lg text-slate-900 tracking-tight">
-              {card.title}
-            </h3>
-            <span
-              className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border bg-gradient-to-r ${a.pillBg} ${a.pillText} font-semibold`}
-            >
-              {card.pill}
-            </span>
+          <div className="truncate text-[13px] font-extrabold text-slate-900">
+            {card.title}
           </div>
-
-          <p className="mt-1 text-sm text-slate-600 leading-relaxed line-clamp-3">
-            {card.desc}
-          </p>
-
-          <div className="mt-4 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 group-hover:text-slate-700 transition-colors">
-              Open
-            </span>
-            <ChevronRight
-              className={`w-4 h-4 ${a.chevron} group-hover:translate-x-1 transition-transform`}
-            />
-          </div>
+          <div className="mt-0.5 h-[3px] w-10 rounded-full bg-slate-200/70 group-hover:w-14 transition-all" />
         </div>
-      </div>
-    </Link>
+
+        <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-slate-600 transition" />
+      </Link>
+    </div>
   );
 }
 
 /* ---------------- Page ---------------- */
 
+const LS_PIN_KEY = "bdp_dashboard_pins_v1";
+
 const DashboardContent: React.FC = () => {
   const { user, logout } = useAuth();
 
-  const cards = useMemo<DashCard[]>(
+  const allCards = useMemo<DashCard[]>(
     () => [
-      // Masters / Setup
-      {
-        title: "Company Profile",
-        desc: "Maintain company name, address, GST, logo & contact. Used across PDFs (POs, invoices, delivery notes).",
-        href: "/company-profile",
-        icon: <Building2 className="w-6 h-6" />,
-        pill: "Setup",
-        accent: "emerald",
-      },
-      {
-        title: "Suppliers",
-        desc: "Manage your supplier directory with contacts and business details to streamline procurement.",
-        href: "/suppliers",
-        icon: <Users className="w-6 h-6" />,
-        pill: "Master",
-        accent: "amber",
-      },
-      {
-        title: "Publishers",
-        desc: "Onboard publishers and connect them with your catalog for cleaner purchase workflows.",
-        href: "/publishers",
-        icon: <Building2 className="w-6 h-6" />,
-        pill: "Master",
-        accent: "indigo",
-      },
-      {
-        title: "Transports",
-        desc: "Maintain transporter/courier list for purchase orders and delivery documentation.",
-        href: "/transports",
-        icon: <Truck className="w-6 h-6" />,
-        pill: "Master",
-        accent: "cyan",
-      },
-      {
-        title: "Classes",
-        desc: "Define classes and mapping structure for precise textbook requirements and kits.",
-        href: "/classes",
-        icon: <GraduationCap className="w-6 h-6" />,
-        pill: "Master",
-        accent: "blue",
-      },
-      {
-        title: "Schools",
-        desc: "Manage school profiles and track yearly demand for accurate planning and distribution.",
-        href: "/schools",
-        icon: <Building2 className="w-6 h-6" />,
-        pill: "Master",
-        accent: "teal",
-      },
-      {
-        title: "Distributors",
-        desc: "Create distributor records and manage distribution partners for issuing and dispatch tracking.",
-        href: "/distributors",
-        icon: <Users className="w-6 h-6" />,
-        pill: "Module 2",
-        accent: "rose",
-      },
+      { title: "Company", href: "/company-profile", icon: <Building2 className="h-5 w-5" />, accent: "emerald" },
+      { title: "Suppliers", href: "/suppliers", icon: <Users className="h-5 w-5" />, accent: "amber" },
+      { title: "Publishers", href: "/publishers", icon: <Building2 className="h-5 w-5" />, accent: "indigo" },
+      { title: "Transports", href: "/transports", icon: <Truck className="h-5 w-5" />, accent: "cyan" },
+      { title: "Classes", href: "/classes", icon: <GraduationCap className="h-5 w-5" />, accent: "blue" },
+      { title: "Schools", href: "/schools", icon: <Building2 className="h-5 w-5" />, accent: "teal" },
+      { title: "Distributors", href: "/distributors", icon: <Users className="h-5 w-5" />, accent: "rose" },
 
-      // Catalog / Demand
-      {
-        title: "Books",
-        desc: "Maintain catalog with class/subject/publisher/supplier + pricing for accurate totals and reports.",
-        href: "/books",
-        icon: <BookOpen className="w-6 h-6" />,
-        pill: "Catalog",
-        accent: "purple",
-      },
-      {
-        title: "Requirements",
-        desc: "Capture school-wise requirements with Excel import/export for fast bulk entry.",
-        href: "/requirements",
-        icon: <Receipt className="w-6 h-6" />,
-        pill: "Demand",
-        accent: "amber",
-      },
+      { title: "Books", href: "/books", icon: <BookOpen className="h-5 w-5" />, accent: "purple" },
+      { title: "Requirements", href: "/requirements", icon: <Receipt className="h-5 w-5" />, accent: "amber" },
+      { title: "Publisher Orders", href: "/publisher-orders", icon: <Package className="h-5 w-5" />, accent: "emerald" },
+      { title: "School Orders", href: "/school-orders", icon: <Package className="h-5 w-5" />, accent: "sky" },
 
-      // Orders
-      {
-        title: "Publisher Orders",
-        desc: "Generate consolidated POs from requirements and coordinate quickly with publishers.",
-        href: "/publisher-orders",
-        icon: <Package className="w-6 h-6" />,
-        pill: "Orders",
-        accent: "emerald",
-      },
-      {
-        title: "School Orders",
-        desc: "Generate school-wise orders, share order emails and track received vs pending.",
-        href: "/school-orders",
-        icon: <Package className="w-6 h-6" />,
-        pill: "Orders",
-        accent: "sky",
-      },
+      // ✅ RENAMED: Supplier Receipts -> Purchases
+      { title: "Purchases", href: "/supplier-receipts", icon: <ScrollText className="h-5 w-5" />, accent: "teal" },
 
-      // ✅ Supplier Receipts
-      {
-        title: "Supplier Receipts",
-        desc: "Track supplier-wise receipts created on receiving stock. Review items, rates, discounts and receipt totals.",
-        href: "/supplier-receipts",
-        icon: <ScrollText className="w-6 h-6" />,
-        pill: "Receipts",
-        accent: "teal",
-      },
+      { title: "Supplier Payments", href: "/supplier-payments", icon: <IndianRupee className="h-5 w-5" />, accent: "emerald" },
 
-      // ✅ NEW: Supplier Payments
-      {
-        title: "Supplier Payments",
-        desc: "Record supplier payments (CASH/BANK/UPI/NEFT etc), view supplier-wise ledger, and track outstanding balance.",
-        href: "/supplier-payments",
-        icon: <IndianRupee className="w-6 h-6" />,
-        pill: "Payments",
-        accent: "emerald",
-      },
-
-      // Inventory / Bundles
-      {
-        title: "Availability",
-        desc: "View school-wise required vs available with reserved/issued breakdown to plan distribution.",
-        href: "/school-orders/availability",
-        icon: <ClipboardList className="w-6 h-6" />,
-        pill: "Stock",
-        accent: "slate",
-      },
-      {
-        title: "Bundles (Kits)",
-        desc: "Create class/school-wise kits with pricing. Reserve stock, then issue bundles to deduct inventory.",
-        href: "/bundles",
-        icon: <Boxes className="w-6 h-6" />,
-        pill: "Module 2",
-        accent: "fuchsia",
-      },
-      {
-        title: "Issue Bundles",
-        desc: "Issue reserved bundles to school/distributor and generate clean inventory deductions with issue slip.",
-        href: "/issue-bundles",
-        icon: <PackageCheck className="w-6 h-6" />,
-        pill: "Dispatch",
-        accent: "cyan",
-      },
-
-      // Bundle Dispatches
-      {
-        title: "Bundle Dispatches",
-        desc: "Create & track dispatch entries for issued bundles. Generate Dispatch Challan / Delivery Note PDFs and manage status.",
-        href: "/bundle-dispatches",
-        icon: <FileText className="w-6 h-6" />,
-        pill: "Dispatch",
-        accent: "indigo",
-      },
-
-      {
-        title: "Stock & Inventory",
-        desc: "Track real-time stock levels and inventory movements for accurate reporting and control.",
-        href: "/stock",
-        icon: <Layers className="w-6 h-6" />,
-        pill: "Inventory",
-        accent: "emerald",
-      },
+      { title: "Availability", href: "/school-orders/availability", icon: <ClipboardList className="h-5 w-5" />, accent: "slate" },
+      { title: "Bundles", href: "/bundles", icon: <Boxes className="h-5 w-5" />, accent: "fuchsia" },
+      { title: "Issue Bundles", href: "/issue-bundles", icon: <PackageCheck className="h-5 w-5" />, accent: "cyan" },
+      { title: "Dispatches", href: "/bundle-dispatches", icon: <FileText className="h-5 w-5" />, accent: "indigo" },
+      { title: "Stock", href: "/stock", icon: <Layers className="h-5 w-5" />, accent: "emerald" },
     ],
     []
   );
 
+  const [pins, setPins] = useState<string[]>([]);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_PIN_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setPins(parsed.filter((x) => typeof x === "string"));
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_PIN_KEY, JSON.stringify(pins));
+    } catch {}
+  }, [pins]);
+
+  const togglePin = (href: string) => {
+    setPins((prev) =>
+      prev.includes(href) ? prev.filter((x) => x !== href) : [href, ...prev].slice(0, 12)
+    );
+  };
+
+  const pinnedCards = useMemo(() => {
+    const map = new Map(allCards.map((c) => [c.href, c]));
+    return pins.map((href) => map.get(href)).filter(Boolean) as DashCard[];
+  }, [pins, allCards]);
+
+  const filteredCards = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const base = allCards.filter((c) => !pins.includes(c.href));
+    if (!s) return base;
+    return base.filter(
+      (c) => c.title.toLowerCase().includes(s) || c.href.toLowerCase().includes(s)
+    );
+  }, [q, allCards, pins]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000" />
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000" />
-      </div>
-
-      {/* TOP BAR */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 bg-white/90 backdrop-blur-md border-b border-slate-200/60 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
-            <BookOpen className="w-5 h-5" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900">
+      {/* TOP BAR ONLY */}
+      <header className="sticky top-0 z-20 flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 bg-white/90 backdrop-blur-md border-b border-slate-200/70 shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow">
+            <BookOpen className="h-5 w-5" />
           </div>
-
-          <div className="flex flex-col leading-tight">
-            <span className="text-base sm:text-lg font-extrabold tracking-tight">
+          <div className="min-w-0">
+            <div className="truncate text-[13px] sm:text-sm font-extrabold leading-tight">
               Book Distribution Panel
-            </span>
-            <span className="text-xs text-slate-500 font-medium">
-              Orders • Inventory • Bundles • Dispatch
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 text-sm">
-          <div className="hidden sm:flex flex-col items-end">
-            <span className="font-semibold text-slate-800">
+            </div>
+            <div className="truncate text-[11px] text-slate-500 font-semibold">
               {user?.name || "User"}
-            </span>
-            {user?.role && (
-              <span className="mt-0.5 text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-semibold">
-                {user.role}
-              </span>
-            )}
+              {user?.role ? ` • ${user.role}` : ""}
+            </div>
           </div>
-
-          <button
-            onClick={logout}
-            className="flex items-center gap-2 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-[1.03] transition-all duration-200"
-          >
-            Logout
-            <ChevronRight className="w-4 h-4" />
-          </button>
         </div>
+
+        <button
+          onClick={logout}
+          className="shrink-0 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-rose-500 to-red-600 text-white px-3 py-2 text-xs font-extrabold shadow hover:shadow-md active:scale-[0.99] transition"
+        >
+          Logout
+          <ChevronRight className="h-4 w-4" />
+        </button>
       </header>
 
-      {/* MAIN CONTENT */}
-      <main className="relative z-10 p-6 lg:p-8">
-        {/* Hero */}
-        <section className="mb-8">
-          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md">
-                  <Sparkles className="w-4.5 h-4.5" />
-                </div>
-                <h2 className="text-2xl sm:text-3xl font-extrabold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-                  Welcome back, {user?.name?.split(" ")?.[0] || "Gurman"}
-                </h2>
-              </div>
-
-              <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">
-                Manage masters, build requirements, generate orders, maintain inventory, create bundles (kits),
-                and issue/dispatch — all from one clean dashboard.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full lg:w-[520px]">
-              <StatPill label="Module-1" value="Orders & Masters" />
-              <StatPill label="Module-2" value="Inventory & Bundles" />
-              <StatPill label="Status" value="Live & Updated" />
-            </div>
+      <main className="p-3 sm:p-4">
+        {/* Search */}
+        <div className="mb-3">
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200/70 bg-white/85 backdrop-blur px-3 py-2 shadow-sm">
+            <Search className="h-4 w-4 text-slate-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search..."
+              className="w-full bg-transparent outline-none text-sm placeholder:text-slate-400"
+            />
+            {q ? (
+              <button
+                className="text-[12px] font-bold text-slate-500 hover:text-slate-800"
+                onClick={() => setQ("")}
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
-        </section>
+        </div>
 
-        {/* Quick Actions */}
-        <section className="mb-6">
-          <div className="rounded-3xl border border-slate-200/60 bg-white/70 backdrop-blur-md shadow-sm p-4 sm:p-5">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">
-                  Quick Actions
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Jump to the most used screens.
-                </p>
+        {/* Frequently Used (Pinned) */}
+        {pinnedCards.length > 0 && (
+          <section className="mb-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[12px] font-extrabold text-slate-800 flex items-center gap-2">
+                <Star className="h-4 w-4 text-amber-500" />
+                Frequently Used
               </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Link
-                  href="/requirements"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Requirements
-                </Link>
-                <Link
-                  href="/school-orders"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  School Orders
-                </Link>
-                <Link
-                  href="/supplier-receipts"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Supplier Receipts
-                </Link>
-                <Link
-                  href="/supplier-payments"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Supplier Payments
-                </Link>
-                <Link
-                  href="/bundles"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Bundles
-                </Link>
-                <Link
-                  href="/issue-bundles"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Issue Bundles
-                </Link>
-                <Link
-                  href="/bundle-dispatches"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Bundle Dispatches
-                </Link>
-                <Link
-                  href="/stock"
-                  className="px-3 py-2 rounded-full text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition"
-                >
-                  Stock
-                </Link>
+              <div className="text-[11px] text-slate-500 font-semibold">
+                {pinnedCards.length}/12
               </div>
             </div>
-          </div>
-        </section>
 
-        {/* GRID */}
+            <div className="grid grid-cols-4 gap-2">
+              {pinnedCards.map((c) => (
+                <Tile
+                  key={c.href}
+                  card={c}
+                  pinned
+                  onTogglePin={() => togglePin(c.href)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* All Tiles: 4 per row */}
         <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-              Modules & Masters
-            </h3>
-            <span className="text-xs text-slate-500">{cards.length} sections</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
-            {cards.map((c) => (
-              <DashCardUI key={c.href} card={c} />
+          <div className="grid grid-cols-4 gap-2">
+            {filteredCards.map((c) => (
+              <Tile
+                key={c.href}
+                card={c}
+                pinned={pins.includes(c.href)}
+                onTogglePin={() => togglePin(c.href)}
+              />
             ))}
           </div>
+
+          {filteredCards.length === 0 && (
+            <div className="mt-6 text-center text-sm font-semibold text-slate-500">
+              No match.
+            </div>
+          )}
         </section>
       </main>
-
-      <style jsx>{`
-        @keyframes blob {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(30px, -50px) scale(1.08);
-          }
-          66% {
-            transform: translate(-20px, 20px) scale(0.92);
-          }
-          100% {
-            transform: translate(0px, 0px) scale(1);
-          }
-        }
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-      `}</style>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+// components/SchoolOrdersPageClient.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -46,16 +47,9 @@ type SchoolOrderItem = {
   total_order_qty: number | string;
   received_qty: number | string;
 
-  // ✅ backend may send these (after reorder / receive)
+  // backend may send these (after reorder / receive)
   pending_qty?: number | string | null;
   reordered_qty?: number | string | null;
-
-  // ✅ commercial fields (optional from backend)
-  unit_price?: number | string | null;
-  discount_pct?: number | string | null;
-  discount_amt?: number | string | null;
-  net_unit_price?: number | string | null;
-  line_amount?: number | string | null;
 
   book?: {
     id: number;
@@ -84,64 +78,21 @@ type SchoolOrder = {
   order_date?: string | null;
   createdAt?: string;
 
-  // ✅ status can now include "reordered"
   status: string;
 
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
 
-  // Option 1
+  // transport/meta (order-only)
   transport_id?: number | null;
   transport_through?: string | null;
   transport?: TransportLite | null;
 
-  // Option 2
   transport_id_2?: number | null;
   transport_through_2?: string | null;
   transport2?: TransportLite | null;
 
-  // Notes (highlighted in PDF footer)
   notes?: string | null;
-
-  // ✅ order-level commercial fields
-  freight_charges?: number | string | null;
-  packing_charges?: number | string | null;
-  other_charges?: number | string | null;
-  overall_discount?: number | string | null;
-  round_off?: number | string | null;
-
-  // ✅ Supplier Bill No captured during receiving
-  bill_no?: string | null;
-};
-
-/* ---------- ✅ Supplier Ledger Types ---------- */
-
-type SupplierBalanceResponse = {
-  supplier: SupplierLite;
-  debit_total: number;
-  credit_total: number;
-  balance: number;
-};
-
-type SupplierLedgerTxn = {
-  id: number;
-  txn_date: string;
-  txn_type: string;
-  ref_table?: string | null;
-  ref_id?: number | null;
-  ref_no?: string | null;
-  narration?: string | null;
-  debit: number;
-  credit: number;
-  running_balance?: number;
-};
-
-type SupplierLedgerResponse = {
-  supplier: SupplierLite;
-  txns: SupplierLedgerTxn[];
-  debit_total: number;
-  credit_total: number;
-  balance: number;
 };
 
 /* ---------- Session Options ---------- */
@@ -194,11 +145,9 @@ const totalQtyFromItems = (items: SchoolOrderItem[]) =>
 const totalReceivedFromItems = (items: SchoolOrderItem[]) =>
   (items || []).reduce((sum, it) => sum + (Number(it.received_qty) || 0), 0);
 
-// ✅ NEW: total reordered from items
 const totalReorderedFromItems = (items: SchoolOrderItem[]) =>
   (items || []).reduce((sum, it) => sum + (Number(it.reordered_qty) || 0), 0);
 
-/* ✅ Treat "reordered" as a closed-ish state in UI */
 const isClosedishStatus = (status?: string | null) => status === "cancelled" || status === "reordered";
 
 const statusLabel = (status: string | undefined) => {
@@ -262,216 +211,25 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState("");
 
   const [viewOrder, setViewOrder] = useState<SchoolOrder | null>(null);
-  const [isReceiving, setIsReceiving] = useState(false);
-  const [savingReceive, setSavingReceive] = useState(false);
 
-  // ✅ Bill No draft during receiving
-  const [billNoDraft, setBillNoDraft] = useState<string>("");
-
-  // qty inputs
-  const [receiveForm, setReceiveForm] = useState<Record<number, string>>({});
-
-  // price/discount inputs per item
-  type PriceDraft = { unit_price: string; discount_pct: string; discount_amt: string };
-  const [priceForm, setPriceForm] = useState<Record<number, PriceDraft>>({});
-
-  // ✅ Reorder loading state
-  const [reorderingId, setReorderingId] = useState<number | null>(null);
-
-  // order-level charges drafts
-  const [chargesForm, setChargesForm] = useState<{
-    freight_charges: string;
-    packing_charges: string;
-    other_charges: string;
-    overall_discount: string;
-    round_off: string;
-  }>({
-    freight_charges: "",
-    packing_charges: "",
-    other_charges: "",
-    overall_discount: "",
-    round_off: "",
-  });
-
+  // Modal meta editing (order-only)
   const [metaSaving, setMetaSaving] = useState(false);
-
-  // Option 1
   const [metaTransportId, setMetaTransportId] = useState<string>("");
   const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
-
-  // Option 2
   const [metaTransportId2, setMetaTransportId2] = useState<string>("");
   const [metaTransportThrough2, setMetaTransportThrough2] = useState<string>("");
-
-  // Notes
   const [metaNotes, setMetaNotes] = useState<string>("");
 
-  // Modal base order no edit
+  // Order No edit
   const [baseOrderNoDraft, setBaseOrderNoDraft] = useState<string>("");
   const [savingBaseOrderNo, setSavingBaseOrderNo] = useState(false);
 
-  // Listing base order no edit
+  // Listing order no edit
   const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>({});
   const [savingOrderNoId, setSavingOrderNoId] = useState<number | null>(null);
 
-  /* ---------- ✅ Supplier Balance & Ledger State ---------- */
-
-  const [supplierBalances, setSupplierBalances] = useState<
-    Record<number, SupplierBalanceResponse | null | undefined>
-  >({});
-  const [supplierBalLoading, setSupplierBalLoading] = useState<Record<number, boolean>>({});
-
-  const [ledgerOpen, setLedgerOpen] = useState(false);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
-
-  const [ledgerSupplier, setLedgerSupplier] = useState<SupplierLite | null>(null);
-  const [ledgerRows, setLedgerRows] = useState<SupplierLedgerTxn[]>([]);
-  const [ledgerTotals, setLedgerTotals] = useState<{ debit: number; credit: number; balance: number } | null>(null);
-
-  const [ledgerFrom, setLedgerFrom] = useState<string>("");
-  const [ledgerTo, setLedgerTo] = useState<string>("");
-
-  const num = (v: any) => {
-    const x = Number(v);
-    return Number.isFinite(x) ? x : 0;
-  };
-
-  const clampNonNeg = (v: any) => Math.max(num(v), 0);
-
-  const fmtMoney = (n: any) => {
-    const v = Number.isFinite(Number(n)) ? Number(n) : 0;
-    return v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const balChip = (bal: number) => {
-    if (bal > 0) return "bg-amber-50 text-amber-800 border border-amber-200";
-    if (bal < 0) return "bg-emerald-50 text-emerald-800 border border-emerald-200";
-    return "bg-slate-50 text-slate-700 border border-slate-200";
-  };
-
-  const fetchSupplierBalance = async (supplierId: number) => {
-    if (!supplierId) return;
-    if (supplierBalances[supplierId] !== undefined) return;
-
-    setSupplierBalLoading((p) => ({ ...p, [supplierId]: true }));
-    try {
-      const res = await api.get(`/api/suppliers/${supplierId}/balance`);
-      const data = res?.data as SupplierBalanceResponse;
-      setSupplierBalances((p) => ({ ...p, [supplierId]: data }));
-    } catch (e) {
-      console.error("supplier balance fetch error:", e);
-      setSupplierBalances((p) => ({ ...p, [supplierId]: null }));
-    } finally {
-      setSupplierBalLoading((p) => ({ ...p, [supplierId]: false }));
-    }
-  };
-
-  const loadLedger = async (supplierId: number) => {
-    if (!supplierId) return;
-
-    setLedgerRows([]);
-    setLedgerTotals(null);
-    setLedgerError(null);
-
-    setLedgerLoading(true);
-    try {
-      const params: any = { limit: 300 };
-      if (ledgerFrom) params.from = ledgerFrom;
-      if (ledgerTo) params.to = ledgerTo;
-
-      const res = await api.get(`/api/suppliers/${supplierId}/ledger`, { params });
-      const data = res?.data as SupplierLedgerResponse;
-
-      setLedgerRows(Array.isArray(data?.txns) ? data.txns : []);
-      setLedgerTotals({
-        debit: Number(data?.debit_total) || 0,
-        credit: Number(data?.credit_total) || 0,
-        balance: Number(data?.balance) || 0,
-      });
-    } catch (e: any) {
-      console.error("supplier ledger fetch error:", e);
-      setLedgerError(e?.response?.data?.error || e?.response?.data?.message || "Failed to load ledger");
-    } finally {
-      setLedgerLoading(false);
-    }
-  };
-
-  const openLedger = async (supplier: SupplierLite) => {
-    setLedgerOpen(true);
-    setLedgerSupplier(supplier);
-    await loadLedger(supplier.id);
-  };
-
-  /* ---------- Commercial calc helpers ---------- */
-
-  const computeItemNetRate = (unitPrice: number, discPct: number, discAmt: number) => {
-    const up = clampNonNeg(unitPrice);
-    const pct = clampNonNeg(discPct);
-    const da = clampNonNeg(discAmt);
-
-    const pctOff = (up * pct) / 100;
-    const net = Math.max(up - pctOff - da, 0);
-    return net;
-  };
-
-  const computeTotalsForModal = useMemo(() => {
-    if (!viewOrder) return null;
-
-    const items = getOrderItems(viewOrder);
-
-    let qtyReceivedTotal = 0;
-    let itemsGross = 0;
-    let itemsDiscount = 0;
-    let itemsNet = 0;
-
-    items.forEach((it) => {
-      const ordered = num(it.total_order_qty);
-      const rawQty = receiveForm[it.id] ?? String(it.received_qty ?? 0);
-      const qty = Math.min(Math.max(num(rawQty), 0), ordered);
-
-      const draft = priceForm[it.id];
-      const unitPrice = num(draft?.unit_price ?? it.unit_price ?? 0);
-      const discPct = num(draft?.discount_pct ?? it.discount_pct ?? 0);
-      const discAmt = num(draft?.discount_amt ?? it.discount_amt ?? 0);
-
-      const gross = unitPrice * qty;
-      const netRate = computeItemNetRate(unitPrice, discPct, discAmt);
-      const net = netRate * qty;
-
-      const disc = Math.max(gross - net, 0);
-
-      qtyReceivedTotal += qty;
-      itemsGross += gross;
-      itemsDiscount += disc;
-      itemsNet += net;
-    });
-
-    const freight = num(chargesForm.freight_charges ?? viewOrder.freight_charges ?? 0);
-    const packing = num(chargesForm.packing_charges ?? viewOrder.packing_charges ?? 0);
-    const other = num(chargesForm.other_charges ?? viewOrder.other_charges ?? 0);
-    const overallDisc = num(chargesForm.overall_discount ?? viewOrder.overall_discount ?? 0);
-    const roundOff = num(chargesForm.round_off ?? viewOrder.round_off ?? 0);
-
-    const chargesTotal = clampNonNeg(freight) + clampNonNeg(packing) + clampNonNeg(other);
-    const subTotal = itemsNet + chargesTotal;
-    const grand = subTotal - clampNonNeg(overallDisc) + (Number.isFinite(roundOff) ? roundOff : 0);
-
-    return {
-      qtyReceivedTotal,
-      itemsGross,
-      itemsDiscount,
-      itemsNet,
-      chargesTotal,
-      subTotal,
-      overallDisc,
-      roundOff,
-      grand,
-      freight,
-      packing,
-      other,
-    };
-  }, [viewOrder, receiveForm, priceForm, chargesForm]);
+  // Reorder loading
+  const [reorderingId, setReorderingId] = useState<number | null>(null);
 
   /* ---------- Data fetching ---------- */
 
@@ -500,7 +258,11 @@ const SchoolOrdersPageClient: React.FC = () => {
       const res = await api.get("/api/school-orders");
       const payload = res.data;
 
-      const list: SchoolOrder[] = Array.isArray(payload) ? payload : Array.isArray(payload?.orders) ? payload.orders : [];
+      const list: SchoolOrder[] = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.orders)
+        ? payload.orders
+        : [];
 
       setOrders(list || []);
 
@@ -539,8 +301,9 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       setGenerating(true);
-      const res = await api.post("/api/school-orders/generate", { academic_session: academicSession.trim() });
-
+      const res = await api.post("/api/school-orders/generate", {
+        academic_session: academicSession.trim(),
+      });
       setInfo(res?.data?.message || "Generated.");
       await fetchOrders();
     } catch (err: any) {
@@ -552,18 +315,14 @@ const SchoolOrdersPageClient: React.FC = () => {
   };
 
   const handleSendEmail = async (order: SchoolOrder) => {
-    if (!order.id) {
-      setError("Order ID missing.");
-      return;
-    }
+    if (!order.id) return;
 
     setError(null);
     setInfo(null);
     setSendingOrderId(order.id);
 
     try {
-      const path = `/api/school-orders/${order.id}/send-email`;
-      const res = await api.post(path);
+      const res = await api.post(`/api/school-orders/${order.id}/send-email`);
       setInfo(res?.data?.message || "Email sent.");
       await fetchOrders();
     } catch (err: any) {
@@ -580,8 +339,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     setInfo(null);
 
     try {
-      const path = `/api/school-orders/${order.id}/pdf`;
-      const res = await api.get(path, { responseType: "blob" });
+      const res = await api.get(`/api/school-orders/${order.id}/pdf`, { responseType: "blob" });
 
       const contentType = (res.headers as any)?.["content-type"] || "";
       if (!contentType.includes("application/pdf")) {
@@ -599,7 +357,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ Reorder (Option A assumes backend marks old order status = "reordered")
+  // Reorder (kept as “order-only” action)
   const handleReorder = async (order: SchoolOrder) => {
     if (!order?.id) return;
     setError(null);
@@ -634,34 +392,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   const handleOpenView = (order: SchoolOrder) => {
     setViewOrder(order);
-    setIsReceiving(false);
-    setSavingReceive(false);
-
-    setBillNoDraft(order.bill_no || "");
-
-    const items = getOrderItems(order);
-
-    const initialQty: Record<number, string> = {};
-    items.forEach((it) => (initialQty[it.id] = String(it.received_qty ?? 0)));
-    setReceiveForm(initialQty);
-
-    const initialPrice: Record<number, PriceDraft> = {};
-    items.forEach((it) => {
-      initialPrice[it.id] = {
-        unit_price: String(it.unit_price ?? ""),
-        discount_pct: String(it.discount_pct ?? ""),
-        discount_amt: String(it.discount_amt ?? ""),
-      };
-    });
-    setPriceForm(initialPrice);
-
-    setChargesForm({
-      freight_charges: String(order.freight_charges ?? ""),
-      packing_charges: String(order.packing_charges ?? ""),
-      other_charges: String(order.other_charges ?? ""),
-      overall_discount: String(order.overall_discount ?? ""),
-      round_off: String(order.round_off ?? ""),
-    });
 
     setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
     setMetaTransportThrough(order.transport_through || "");
@@ -671,193 +401,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     setMetaNotes(order.notes || "");
     setBaseOrderNoDraft(order.order_no || "");
-
-    if (order.supplier_id) fetchSupplierBalance(Number(order.supplier_id));
-  };
-
-  const startReceiving = () => {
-    if (!viewOrder) return;
-    const items = getOrderItems(viewOrder);
-
-    const initialQty: Record<number, string> = {};
-    items.forEach((it) => (initialQty[it.id] = String(it.received_qty ?? 0)));
-    setReceiveForm(initialQty);
-
-    const initialPrice: Record<number, PriceDraft> = {};
-    items.forEach((it) => {
-      initialPrice[it.id] = {
-        unit_price: String(it.unit_price ?? ""),
-        discount_pct: String(it.discount_pct ?? ""),
-        discount_amt: String(it.discount_amt ?? ""),
-      };
-    });
-    setPriceForm(initialPrice);
-
-    setBillNoDraft(viewOrder.bill_no || billNoDraft || "");
-    setIsReceiving(true);
-  };
-
-  const handleReceiveChange = (itemId: number, value: string) => {
-    setReceiveForm((prev) => ({ ...prev, [itemId]: value }));
-  };
-
-  const handlePriceChange = (itemId: number, field: keyof PriceDraft, value: string) => {
-    setPriceForm((prev) => {
-      const cur = prev[itemId] ?? { unit_price: "", discount_pct: "", discount_amt: "" };
-      return {
-        ...prev,
-        [itemId]: {
-          ...cur,
-          unit_price: cur.unit_price ?? "",
-          discount_pct: cur.discount_pct ?? "",
-          discount_amt: cur.discount_amt ?? "",
-          [field]: value,
-        },
-      };
-    });
-  };
-
-  const handleChargesChange = (field: keyof typeof chargesForm, value: string) => {
-    setChargesForm((p) => ({ ...p, [field]: value }));
-  };
-
-  const handleReceiveSave = async () => {
-    if (!viewOrder) return;
-    setError(null);
-    setInfo(null);
-    setSavingReceive(true);
-
-    try {
-      const items = getOrderItems(viewOrder);
-
-      const itemsPayload = items.map((it) => {
-        const raw = receiveForm[it.id];
-        let rcv = Number(raw ?? it.received_qty ?? 0);
-        if (isNaN(rcv) || rcv < 0) rcv = 0;
-
-        const ordered = Number(it.total_order_qty) || 0;
-        if (rcv > ordered) rcv = ordered;
-
-        const draft = priceForm[it.id] || { unit_price: "", discount_pct: "", discount_amt: "" };
-        const unit_price = num(draft.unit_price ?? it.unit_price ?? 0);
-        const discount_pct = num(draft.discount_pct ?? it.discount_pct ?? 0);
-        const discount_amt = num(draft.discount_amt ?? it.discount_amt ?? 0);
-
-        const net_unit_price = computeItemNetRate(unit_price, discount_pct, discount_amt);
-        const line_amount = net_unit_price * rcv;
-
-        return {
-          item_id: it.id,
-          received_qty: rcv,
-          unit_price,
-          discount_pct,
-          discount_amt,
-          net_unit_price,
-          line_amount,
-        };
-      });
-
-      const chargesPayload = {
-        freight_charges: num(chargesForm.freight_charges ?? viewOrder.freight_charges ?? 0),
-        packing_charges: num(chargesForm.packing_charges ?? viewOrder.packing_charges ?? 0),
-        other_charges: num(chargesForm.other_charges ?? viewOrder.other_charges ?? 0),
-        overall_discount: num(chargesForm.overall_discount ?? viewOrder.overall_discount ?? 0),
-        round_off: num(chargesForm.round_off ?? viewOrder.round_off ?? 0),
-      };
-
-      const cleanedBillNo = String(billNoDraft || "").trim();
-
-      const res = await api.post(`/api/school-orders/${viewOrder.id}/receive`, {
-        status: "auto",
-        bill_no: cleanedBillNo ? cleanedBillNo : null,
-        items: itemsPayload,
-        charges: chargesPayload,
-      });
-
-      setInfo(res.data?.message || "Saved.");
-      const updatedOrder: SchoolOrder = res.data.order;
-
-      setViewOrder(updatedOrder);
-      setIsReceiving(false);
-
-      setBillNoDraft(updatedOrder.bill_no || cleanedBillNo || "");
-
-      setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
-      setMetaTransportThrough(updatedOrder.transport_through || "");
-
-      setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
-      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
-
-      setMetaNotes(updatedOrder.notes || "");
-      setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
-
-      setOrderNoDrafts((prev) => ({
-        ...prev,
-        [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
-      }));
-
-      if (updatedOrder.supplier_id) {
-        const sid = Number(updatedOrder.supplier_id);
-        setSupplierBalances((p) => ({ ...p, [sid]: undefined }));
-        fetchSupplierBalance(sid);
-      }
-
-      await fetchOrders();
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.response?.data?.message || "Receive save failed.");
-    } finally {
-      setSavingReceive(false);
-    }
-  };
-
-  const handleCancelOrder = async () => {
-    if (!viewOrder) return;
-    setError(null);
-    setInfo(null);
-    setSavingReceive(true);
-
-    try {
-      const items = getOrderItems(viewOrder);
-      const itemsPayload = items.map((it) => ({
-        item_id: it.id,
-        received_qty: it.received_qty ?? 0,
-      }));
-
-      const res = await api.post(`/api/school-orders/${viewOrder.id}/receive`, {
-        status: "cancelled",
-        items: itemsPayload,
-      });
-
-      setInfo(res.data?.message || "Cancelled.");
-      const updatedOrder: SchoolOrder = res.data.order;
-
-      setViewOrder(updatedOrder);
-      setIsReceiving(false);
-
-      setBillNoDraft(updatedOrder.bill_no || "");
-
-      setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
-      setMetaTransportThrough(updatedOrder.transport_through || "");
-
-      setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
-      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
-
-      setMetaNotes(updatedOrder.notes || "");
-      setBaseOrderNoDraft(updatedOrder.order_no || baseOrderNoDraft);
-
-      setOrderNoDrafts((prev) => ({
-        ...prev,
-        [updatedOrder.id]: updatedOrder.order_no || prev[updatedOrder.id] || "",
-      }));
-
-      await fetchOrders();
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.response?.data?.message || "Cancel failed.");
-    } finally {
-      setSavingReceive(false);
-    }
   };
 
   const handleMetaSave = async () => {
@@ -891,8 +434,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setMetaNotes(updatedOrder.notes || "");
 
-      setBillNoDraft(updatedOrder.bill_no || billNoDraft || "");
-
       setInfo(res.data?.message || "Meta saved.");
     } catch (err: any) {
       console.error(err);
@@ -917,7 +458,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       const res = await api.patch(`/api/school-orders/${viewOrder.id}/order-no`, { order_no: newNo });
-
       setInfo(res?.data?.message || "Order no updated.");
 
       setViewOrder((prev) => (prev ? { ...prev, order_no: newNo } : prev));
@@ -958,7 +498,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------- Filters + Groups (✅ reordered-aware pending) ---------- */
+  /* ---------- Filters + Groups ---------- */
 
   const visibleOrders: SchoolOrder[] = orders.filter((o) => {
     let ok = true;
@@ -971,7 +511,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       if (filterStatus === "not_received") {
         const rec = totalReceivedFromItems(items);
-        // ✅ exclude cancelled + reordered from Not Received
         ok = ok && rec === 0 && !isClosedishStatus(o.status);
       } else {
         ok = ok && o.status === filterStatus;
@@ -995,7 +534,6 @@ const SchoolOrdersPageClient: React.FC = () => {
       orderedTotal += ord;
       receivedTotal += rec;
 
-      // ✅ pending = ordered - received - reordered
       pendingTotalLocal += isClosedishStatus(o.status) ? 0 : Math.max(ord - rec - re, 0);
     });
 
@@ -1061,7 +599,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Compact Header */}
+      {/* Header */}
       <header className="sticky top-0 z-20 bg-white border-b border-slate-200">
         <div className="px-3 py-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
@@ -1222,7 +760,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-indigo-600" />
-            <span className="text-sm font-semibold">School → Supplier</span>
+            <span className="text-sm font-semibold">Orders</span>
           </div>
 
           {loading ? (
@@ -1296,7 +834,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 <div className="flex items-center gap-2">
                                   <input
                                     value={draft}
-                                    onChange={(e) => setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))}
+                                    onChange={(e) =>
+                                      setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))
+                                    }
                                     className="w-40 border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
                                     placeholder={`#${order.id}`}
                                   />
@@ -1380,13 +920,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
-      {/* ✅ Modal */}
+      {/* Modal (Order-only view + meta edit) */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 bg-black/50">
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
             <div className="mx-auto w-full max-w-[1200px]">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
-                {/* Header (COMPACT) */}
                 <div className="px-3 py-2 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
                   {(() => {
                     const school = getOrderSchool(viewOrder);
@@ -1396,26 +935,13 @@ const SchoolOrdersPageClient: React.FC = () => {
                       viewOrder.supplier?.name ||
                       (viewOrder.supplier_id ? `Supplier #${viewOrder.supplier_id}` : "Supplier");
 
-                    const supplierPhone = viewOrder.supplier?.phone || "";
-                    const supplierEmail = viewOrder.supplier?.email || "";
-                    const supplierAddress =
-                      viewOrder.supplier?.address ||
-                      viewOrder.supplier?.address_line1 ||
-                      viewOrder.supplier?.full_address ||
-                      "";
-
                     const totalOrdered = totalQtyFromItems(items);
                     const totalReceived = totalReceivedFromItems(items);
                     const totalReordered = totalReorderedFromItems(items);
 
-                    // ✅ pending = ordered - received - reordered
                     const totalPending = isClosedishStatus(viewOrder.status)
                       ? 0
                       : Math.max(totalOrdered - totalReceived - totalReordered, 0);
-
-                    const supplierId = Number(viewOrder.supplier_id || 0);
-                    const supBal = supplierId ? supplierBalances[supplierId] : null;
-                    const supBalLoading = supplierId ? !!supplierBalLoading[supplierId] : false;
 
                     return (
                       <>
@@ -1435,13 +961,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                               <div className="text-xs text-slate-700 truncate mt-0.5">
                                 Supplier: <span className="font-semibold text-slate-900">{supplierName}</span>
-                                {supplierPhone ? ` • ${supplierPhone}` : ""}
-                                {supplierEmail ? ` • ${supplierEmail}` : ""}
                               </div>
-
-                              {supplierAddress ? (
-                                <div className="text-[11px] text-slate-500 truncate">{supplierAddress}</div>
-                              ) : null}
 
                               <div className="mt-1 text-[12px] text-slate-700 flex flex-wrap items-center gap-2">
                                 <span>
@@ -1455,57 +975,12 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 <span>
                                   <span className="font-semibold">P:</span> {totalPending}
                                 </span>
-
-                                {supplierId ? (
-                                  <>
-                                    <span className="text-slate-400">•</span>
-                                    <span
-                                      className={`px-2 py-0.5 rounded-full text-[11px] ${
-                                        supBalLoading
-                                          ? "bg-slate-50 text-slate-600 border border-slate-200"
-                                          : supBal
-                                          ? balChip(Number(supBal.balance) || 0)
-                                          : "bg-slate-50 text-slate-600 border border-slate-200"
-                                      }`}
-                                    >
-                                      {supBalLoading
-                                        ? "Balance: loading..."
-                                        : supBal
-                                        ? `Bal: ₹${fmtMoney(supBal.balance)}`
-                                        : "Bal: -"}
-                                    </span>
-
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        openLedger({
-                                          id: supplierId,
-                                          name: supplierName,
-                                          phone: viewOrder.supplier?.phone || null,
-                                          email: viewOrder.supplier?.email || null,
-                                          address: viewOrder.supplier?.address || null,
-                                          address_line1: viewOrder.supplier?.address_line1 || null,
-                                          full_address: viewOrder.supplier?.full_address || null,
-                                        })
-                                      }
-                                      className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
-                                    >
-                                      Ledger
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSupplierBalances((p) => ({ ...p, [supplierId]: undefined }));
-                                        fetchSupplierBalance(supplierId);
-                                      }}
-                                      className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
-                                      title="Refresh balance"
-                                    >
-                                      <RefreshCcw className="w-3 h-3" />
-                                    </button>
-                                  </>
-                                ) : null}
+                                <span className="text-slate-400">•</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(viewOrder.status)}`}
+                                >
+                                  {statusLabel(viewOrder.status)}
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -1515,7 +990,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                               onClick={() => handleReorder(viewOrder)}
                               disabled={reorderingId === viewOrder.id}
                               className="text-[12px] px-3 py-2 rounded-xl border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100 flex items-center gap-2 disabled:opacity-60"
-                              title="Create a fresh order copied from this one"
                             >
                               <Repeat className={`w-4 h-4 ${reorderingId === viewOrder.id ? "animate-spin" : ""}`} />
                               {reorderingId === viewOrder.id ? "Reordering..." : "Reorder"}
@@ -1533,14 +1007,12 @@ const SchoolOrdersPageClient: React.FC = () => {
                               disabled={sendingOrderId === viewOrder.id}
                               className="text-[12px] px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-2 disabled:opacity-60"
                             >
-                              <Send className="w-4 h-4" /> {sendingOrderId === viewOrder.id ? "Sending..." : "Email"}
+                              <Send className="w-4 h-4" />{" "}
+                              {sendingOrderId === viewOrder.id ? "Sending..." : "Email"}
                             </button>
 
                             <button
-                              onClick={() => {
-                                setViewOrder(null);
-                                setIsReceiving(false);
-                              }}
+                              onClick={() => setViewOrder(null)}
                               className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
                               title="Close"
                             >
@@ -1549,10 +1021,8 @@ const SchoolOrdersPageClient: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Meta grid (COMPACT) */}
                         <div className="mt-2 grid grid-cols-12 gap-2 items-end">
-                          {/* Order No */}
-                          <div className="col-span-12 lg:col-span-3">
+                          <div className="col-span-12 lg:col-span-4">
                             <label className="block text-[11px] text-slate-600 mb-1">Order No</label>
                             <div className="flex items-center gap-2">
                               <input
@@ -1571,22 +1041,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </div>
                           </div>
 
-                          {/* Bill No */}
-                          <div className="col-span-12 lg:col-span-3">
-                            <label className="block text-[11px] text-slate-600 mb-1">
-                              Supplier Bill No
-                              {!isReceiving ? <span className="text-[10px] text-slate-400"> (edit in Receiving)</span> : null}
-                            </label>
-                            <input
-                              value={billNoDraft}
-                              onChange={(e) => setBillNoDraft(e.target.value)}
-                              disabled={!isReceiving}
-                              className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-50"
-                              placeholder="INV-123 / Bill No..."
-                            />
-                          </div>
-
-                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
                             <label className="block text-[11px] text-slate-600 mb-1">Transport (Option 1)</label>
                             <select
                               value={metaTransportId}
@@ -1603,7 +1058,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </select>
                           </div>
 
-                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
                             <label className="block text-[11px] text-slate-600 mb-1">Through (Option 1)</label>
                             <input
                               value={metaTransportThrough}
@@ -1613,30 +1068,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             />
                           </div>
 
-                          <div className="col-span-12 lg:col-span-3">
-                            <label className="block text-[11px] text-slate-600 mb-1">Notes</label>
-                            <div className="flex items-center gap-2">
-                              <input
-                                value={metaNotes}
-                                onChange={(e) => setMetaNotes(e.target.value)}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                placeholder="This will print in footer (highlighted)..."
-                              />
-                              <button
-                                type="button"
-                                onClick={handleMetaSave}
-                                disabled={metaSaving}
-                                className="text-[12px] px-4 py-1.5 rounded-xl text-white font-semibold
-                                           bg-gradient-to-r from-indigo-600 to-blue-600
-                                           hover:brightness-110 active:brightness-95
-                                           disabled:opacity-60"
-                              >
-                                {metaSaving ? "Saving..." : "Save"}
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
                             <label className="block text-[11px] text-slate-600 mb-1">Transport (Option 2)</label>
                             <select
                               value={metaTransportId2}
@@ -1653,7 +1085,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </select>
                           </div>
 
-                          <div className="col-span-12 md:col-span-6 lg:col-span-3">
+                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
                             <label className="block text-[11px] text-slate-600 mb-1">Through (Option 2)</label>
                             <input
                               value={metaTransportThrough2}
@@ -1663,61 +1095,25 @@ const SchoolOrdersPageClient: React.FC = () => {
                             />
                           </div>
 
-                          {/* Receive controls */}
-                          <div className="col-span-12 lg:col-span-6">
-                            <div className="flex flex-wrap items-center gap-2 pt-1">
-                              {!isClosedishStatus(viewOrder.status) ? (
-                                <>
-                                  {!isReceiving ? (
-                                    <button
-                                      onClick={startReceiving}
-                                      className="text-[12px] px-4 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 font-semibold"
-                                    >
-                                      Receive + Prices
-                                    </button>
-                                  ) : (
-                                    <>
-                                      <button
-                                        onClick={handleReceiveSave}
-                                        disabled={savingReceive}
-                                        className="text-[12px] px-4 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                                      >
-                                        {savingReceive ? "Saving..." : "Save Receive"}
-                                      </button>
-                                      <button
-                                        onClick={() => setIsReceiving(false)}
-                                        disabled={savingReceive}
-                                        className="text-[12px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </>
-                                  )}
-
-                                  {!isReceiving && (
-                                    <button
-                                      onClick={handleCancelOrder}
-                                      disabled={savingReceive}
-                                      className="text-[12px] px-4 py-1.5 rounded-xl border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60 font-semibold"
-                                    >
-                                      Cancel Order
-                                    </button>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-[11px] text-slate-500">
-                                  This order is <b>{statusLabel(viewOrder.status)}</b>. Receiving is disabled.
-                                </span>
-                              )}
-
+                          <div className="col-span-12 lg:col-span-4">
+                            <label className="block text-[11px] text-slate-600 mb-1">Notes (prints in PDF footer)</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                value={metaNotes}
+                                onChange={(e) => setMetaNotes(e.target.value)}
+                                className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                placeholder="Notes..."
+                              />
                               <button
-                                onClick={() => {
-                                  setViewOrder(null);
-                                  setIsReceiving(false);
-                                }}
-                                className="text-[12px] px-4 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                                type="button"
+                                onClick={handleMetaSave}
+                                disabled={metaSaving}
+                                className="text-[12px] px-4 py-1.5 rounded-xl text-white font-semibold
+                                           bg-gradient-to-r from-indigo-600 to-blue-600
+                                           hover:brightness-110 active:brightness-95
+                                           disabled:opacity-60"
                               >
-                                Close
+                                {metaSaving ? "Saving..." : "Save"}
                               </button>
                             </div>
                           </div>
@@ -1727,382 +1123,61 @@ const SchoolOrdersPageClient: React.FC = () => {
                   })()}
                 </div>
 
-                {/* Body */}
                 <div className="p-2 overflow-auto text-xs flex-1 bg-white">
                   {(() => {
                     const items = getOrderItems(viewOrder);
-                    const school = getOrderSchool(viewOrder);
                     if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
 
-                    const orderClosedish = isClosedishStatus(viewOrder.status);
+                    const closedish = isClosedishStatus(viewOrder.status);
 
                     return (
-                      <div className="space-y-3">
-                        <div className="border border-slate-200 rounded-xl overflow-hidden">
-                          <table className="w-full text-xs border-collapse">
-                            <thead className="bg-slate-100">
-                              <tr>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-left w-36">School</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-left w-52">Supplier</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">O</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-18">R</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">P</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Rate</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20">Disc%</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20">Disc₹</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Net Rate</th>
-                                <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
-                              </tr>
-                            </thead>
+                      <div className="border border-slate-200 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs border-collapse">
+                          <thead className="bg-slate-100">
+                            <tr>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">O</th>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">R</th>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">P</th>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-left w-40">Class / Subject</th>
+                              <th className="border-b border-slate-200 px-2 py-1.5 text-left w-32">Code</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((it) => {
+                              const ordered = Number(it.total_order_qty) || 0;
+                              const received = Number(it.received_qty) || 0;
+                              const reordered = Number(it.reordered_qty) || 0;
 
-                            <tbody>
-                              {(() => {
-                                const totalRows = items.length;
-                                let schoolCellRendered = false;
-                                let supplierCellRendered = false;
+                              const pending =
+                                closedish
+                                  ? 0
+                                  : it.pending_qty != null
+                                  ? Math.max(Number(it.pending_qty) || 0, 0)
+                                  : Math.max(ordered - received - reordered, 0);
 
-                                const supplierId = Number(viewOrder.supplier_id || 0);
-                                const supplierName =
-                                  viewOrder.supplier?.name || (supplierId ? `Supplier #${supplierId}` : "Supplier");
-
-                                const supBal = supplierId ? supplierBalances[supplierId] : null;
-                                const isBalLoading = supplierId ? !!supplierBalLoading[supplierId] : false;
-
-                                return items.map((item) => {
-                                  const ordered = Number(item.total_order_qty) || 0;
-
-                                  const rawQty = receiveForm[item.id] ?? String(item.received_qty ?? 0);
-                                  const qtyNum = Math.min(Math.max(num(rawQty), 0), ordered);
-
-                                  const backendReceived = Number(item.received_qty ?? 0) || 0;
-                                  const backendReordered = Number(item.reordered_qty ?? 0) || 0;
-
-                                  const displayReceived = isReceiving ? qtyNum : backendReceived;
-
-                                  // ✅ prefer backend pending_qty if provided, else compute with reordered subtraction
-                                  const pendingWhenNotEditing =
-                                    item.pending_qty != null
-                                      ? Math.max(Number(item.pending_qty) || 0, 0)
-                                      : Math.max(ordered - backendReceived - backendReordered, 0);
-
-                                  // ✅ pending shown as 0 for cancelled/reordered
-                                  const pending = orderClosedish
-                                    ? 0
-                                    : isReceiving
-                                    ? Math.max(ordered - qtyNum - backendReordered, 0)
-                                    : pendingWhenNotEditing;
-
-                                  const showSchoolCell = !schoolCellRendered;
-                                  const showSupplierCell = !supplierCellRendered;
-
-                                  if (showSchoolCell) schoolCellRendered = true;
-                                  if (showSupplierCell) supplierCellRendered = true;
-
-                                  const draft = priceForm[item.id] || {
-                                    unit_price: String(item.unit_price ?? ""),
-                                    discount_pct: String(item.discount_pct ?? ""),
-                                    discount_amt: String(item.discount_amt ?? ""),
-                                  };
-
-                                  const unitPrice = num(draft.unit_price ?? 0);
-                                  const discPct = num(draft.discount_pct ?? 0);
-                                  const discAmt = num(draft.discount_amt ?? 0);
-                                  const netRate = computeItemNetRate(unitPrice, discPct, discAmt);
-
-                                  const amount = netRate * (isReceiving ? qtyNum : backendReceived);
-
-                                  return (
-                                    <tr key={item.id} className="hover:bg-slate-50">
-                                      {showSchoolCell && (
-                                        <td
-                                          rowSpan={totalRows}
-                                          className="border-b border-slate-200 px-2 py-1.5 align-top text-[12px] font-semibold"
-                                        >
-                                          {school?.name || "-"}
-                                          {school?.city ? (
-                                            <span className="block text-[11px] text-slate-500 font-normal">
-                                              {school.city}
-                                            </span>
-                                          ) : null}
-                                        </td>
-                                      )}
-
-                                      {showSupplierCell && (
-                                        <td rowSpan={totalRows} className="border-b border-slate-200 px-2 py-1.5 align-top">
-                                          <div className="flex items-start justify-between gap-2">
-                                            <div className="min-w-0">
-                                              <div className="text-[12px] font-medium text-indigo-700 truncate">{supplierName}</div>
-
-                                              {supplierId ? (
-                                                <div className="mt-1 flex flex-wrap items-center gap-2">
-                                                  <span
-                                                    className={`px-2 py-0.5 rounded-full text-[11px] ${
-                                                      isBalLoading
-                                                        ? "bg-slate-50 text-slate-600 border border-slate-200"
-                                                        : supBal
-                                                        ? balChip(Number(supBal.balance) || 0)
-                                                        : "bg-slate-50 text-slate-600 border border-slate-200"
-                                                    }`}
-                                                  >
-                                                    {isBalLoading
-                                                      ? "Balance: loading..."
-                                                      : supBal
-                                                      ? `Bal: ₹${fmtMoney(supBal.balance)}`
-                                                      : "Bal: -"}
-                                                  </span>
-
-                                                  <button
-                                                    type="button"
-                                                    disabled={!supplierId}
-                                                    onClick={() =>
-                                                      openLedger({
-                                                        id: supplierId,
-                                                        name: supplierName,
-                                                        phone: viewOrder.supplier?.phone || null,
-                                                        email: viewOrder.supplier?.email || null,
-                                                        address: viewOrder.supplier?.address || null,
-                                                        address_line1: viewOrder.supplier?.address_line1 || null,
-                                                        full_address: viewOrder.supplier?.full_address || null,
-                                                      })
-                                                    }
-                                                    className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
-                                                  >
-                                                    Ledger
-                                                  </button>
-                                                </div>
-                                              ) : (
-                                                <div className="text-[11px] text-slate-500 mt-1">No supplier linked</div>
-                                              )}
-                                            </div>
-
-                                            {supplierId ? (
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  setSupplierBalances((p) => ({ ...p, [supplierId]: undefined }));
-                                                  fetchSupplierBalance(supplierId);
-                                                }}
-                                                className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 shrink-0"
-                                                title="Refresh balance"
-                                              >
-                                                <RefreshCcw className="w-3 h-3" />
-                                              </button>
-                                            ) : null}
-                                          </div>
-                                        </td>
-                                      )}
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5">
-                                        {item.book?.title || `Book #${item.book_id}`}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">{ordered}</td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                        {isReceiving ? (
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            max={ordered}
-                                            value={rawQty}
-                                            onChange={(e) => handleReceiveChange(item.id, e.target.value)}
-                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                                          />
-                                        ) : (
-                                          displayReceived
-                                        )}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">{pending}</td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                        {isReceiving ? (
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={draft.unit_price}
-                                            onChange={(e) => handlePriceChange(item.id, "unit_price", e.target.value)}
-                                            className="w-24 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                            placeholder="0"
-                                          />
-                                        ) : (
-                                          <span className="text-slate-700">{fmtMoney(num(item.unit_price))}</span>
-                                        )}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                        {isReceiving ? (
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={draft.discount_pct}
-                                            onChange={(e) => handlePriceChange(item.id, "discount_pct", e.target.value)}
-                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                            placeholder="0"
-                                          />
-                                        ) : (
-                                          <span className="text-slate-700">{fmtMoney(num(item.discount_pct))}</span>
-                                        )}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                        {isReceiving ? (
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={draft.discount_amt}
-                                            onChange={(e) => handlePriceChange(item.id, "discount_amt", e.target.value)}
-                                            className="w-20 border border-slate-300 rounded-lg px-2 py-1.5 text-right text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                            placeholder="0"
-                                          />
-                                        ) : (
-                                          <span className="text-slate-700">{fmtMoney(num(item.discount_amt))}</span>
-                                        )}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-medium">
-                                        {fmtMoney(netRate)}
-                                      </td>
-
-                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                        ₹{fmtMoney(amount)}
-                                      </td>
-                                    </tr>
-                                  );
-                                });
-                              })()}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {/* Charges + Summary */}
-                        <div className="grid grid-cols-12 gap-3">
-                          <div className="col-span-12 lg:col-span-7 border border-slate-200 rounded-xl p-3">
-                            <div className="text-sm font-semibold text-slate-800 mb-2">Charges / Discounts</div>
-
-                            <div className="grid grid-cols-12 gap-2">
-                              <div className="col-span-12 md:col-span-4">
-                                <label className="block text-[11px] text-slate-600 mb-1">Freight / Transport</label>
-                                <input
-                                  disabled={!isReceiving}
-                                  type="number"
-                                  value={chargesForm.freight_charges}
-                                  onChange={(e) => handleChargesChange("freight_charges", e.target.value)}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
-                                  placeholder="0"
-                                />
-                              </div>
-
-                              <div className="col-span-12 md:col-span-4">
-                                <label className="block text-[11px] text-slate-600 mb-1">Packing</label>
-                                <input
-                                  disabled={!isReceiving}
-                                  type="number"
-                                  value={chargesForm.packing_charges}
-                                  onChange={(e) => handleChargesChange("packing_charges", e.target.value)}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
-                                  placeholder="0"
-                                />
-                              </div>
-
-                              <div className="col-span-12 md:col-span-4">
-                                <label className="block text-[11px] text-slate-600 mb-1">Other Charges</label>
-                                <input
-                                  disabled={!isReceiving}
-                                  type="number"
-                                  value={chargesForm.other_charges}
-                                  onChange={(e) => handleChargesChange("other_charges", e.target.value)}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
-                                  placeholder="0"
-                                />
-                              </div>
-
-                              <div className="col-span-12 md:col-span-4">
-                                <label className="block text-[11px] text-slate-600 mb-1">Overall Discount (₹)</label>
-                                <input
-                                  disabled={!isReceiving}
-                                  type="number"
-                                  value={chargesForm.overall_discount}
-                                  onChange={(e) => handleChargesChange("overall_discount", e.target.value)}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
-                                  placeholder="0"
-                                />
-                              </div>
-
-                              <div className="col-span-12 md:col-span-4">
-                                <label className="block text-[11px] text-slate-600 mb-1">Round Off (₹)</label>
-                                <input
-                                  disabled={!isReceiving}
-                                  type="number"
-                                  value={chargesForm.round_off}
-                                  onChange={(e) => handleChargesChange("round_off", e.target.value)}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-50"
-                                  placeholder="0"
-                                />
-                              </div>
-
-                              <div className="col-span-12 md:col-span-4 flex items-end">
-                                <div className="text-[11px] text-slate-500">* Charges fields edit only in Receiving mode.</div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="col-span-12 lg:col-span-5 border border-slate-200 rounded-xl p-3 bg-slate-50">
-                            <div className="text-sm font-semibold text-slate-800 mb-2">Summary</div>
-
-                            {computeTotalsForModal ? (
-                              <div className="space-y-1 text-[12px]">
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Items Gross</span>
-                                  <span className="font-medium">₹{fmtMoney(computeTotalsForModal.itemsGross)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Items Discount</span>
-                                  <span className="font-medium">₹{fmtMoney(computeTotalsForModal.itemsDiscount)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-slate-700 font-semibold">Items Net</span>
-                                  <span className="font-semibold">₹{fmtMoney(computeTotalsForModal.itemsNet)}</span>
-                                </div>
-
-                                <div className="h-px bg-slate-200 my-2" />
-
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Charges Total</span>
-                                  <span className="font-medium">₹{fmtMoney(computeTotalsForModal.chargesTotal)}</span>
-                                </div>
-
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Sub Total</span>
-                                  <span className="font-medium">₹{fmtMoney(computeTotalsForModal.subTotal)}</span>
-                                </div>
-
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Overall Discount</span>
-                                  <span className="font-medium">- ₹{fmtMoney(computeTotalsForModal.overallDisc)}</span>
-                                </div>
-
-                                <div className="flex justify-between">
-                                  <span className="text-slate-600">Round Off</span>
-                                  <span className="font-medium">
-                                    {computeTotalsForModal.roundOff >= 0 ? "+" : "-"} ₹
-                                    {fmtMoney(Math.abs(computeTotalsForModal.roundOff))}
-                                  </span>
-                                </div>
-
-                                <div className="h-px bg-slate-200 my-2" />
-
-                                <div className="flex justify-between text-[13px]">
-                                  <span className="font-semibold text-slate-900">Grand Total</span>
-                                  <span className="font-extrabold text-slate-900">₹{fmtMoney(computeTotalsForModal.grand)}</span>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-slate-500 text-sm">—</div>
-                            )}
-                          </div>
-                        </div>
+                              return (
+                                <tr key={it.id} className="hover:bg-slate-50">
+                                  <td className="border-b border-slate-200 px-2 py-1.5">
+                                    <div className="font-medium text-slate-900">
+                                      {it.book?.title || `Book #${it.book_id}`}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">
+                                      {it.book?.publisher?.name ? `Publisher: ${it.book.publisher.name}` : ""}
+                                    </div>
+                                  </td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{ordered}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{received}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{pending}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5">
+                                    {(it.book?.class_name || "-") + " / " + (it.book?.subject || "-")}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5">{it.book?.code || "-"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     );
                   })()}
@@ -2110,150 +1185,6 @@ const SchoolOrdersPageClient: React.FC = () => {
               </div>
 
               <div className="h-2" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Ledger Modal */}
-      {ledgerOpen && ledgerSupplier && (
-        <div className="fixed inset-0 z-50 bg-black/50">
-          <div className="h-full w-full overflow-auto p-3 sm:p-4">
-            <div className="mx-auto w-full max-w-[980px]">
-              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">
-                      Supplier Ledger: <span className="text-indigo-700">{ledgerSupplier.name}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-600 mt-1">Use dates if you want to filter.</div>
-                  </div>
-
-                  <button
-                    onClick={() => setLedgerOpen(false)}
-                    className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                    title="Close"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="px-4 py-3 border-b flex flex-wrap items-end gap-3">
-                  <div>
-                    <label className="block text-[11px] text-slate-600 mb-1">From</label>
-                    <input
-                      type="date"
-                      value={ledgerFrom}
-                      onChange={(e) => setLedgerFrom(e.target.value)}
-                      className="border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] text-slate-600 mb-1">To</label>
-                    <input
-                      type="date"
-                      value={ledgerTo}
-                      onChange={(e) => setLedgerTo(e.target.value)}
-                      className="border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => loadLedger(ledgerSupplier.id)}
-                    disabled={ledgerLoading}
-                    className="text-[12px] px-4 py-2 rounded-xl text-white font-semibold
-                               bg-gradient-to-r from-indigo-600 to-blue-600
-                               hover:brightness-110 active:brightness-95
-                               disabled:opacity-60"
-                  >
-                    {ledgerLoading ? "Loading..." : "Apply"}
-                  </button>
-
-                  <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px]">
-                    {ledgerTotals ? (
-                      <>
-                        <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-700">
-                          DR: ₹{fmtMoney(ledgerTotals.debit)}
-                        </span>
-                        <span className="px-2 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-700">
-                          CR: ₹{fmtMoney(ledgerTotals.credit)}
-                        </span>
-                        <span className={`px-2 py-1 rounded-full ${balChip(ledgerTotals.balance)}`}>
-                          Bal: ₹{fmtMoney(ledgerTotals.balance)}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-slate-500">—</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="p-3">
-                  {ledgerError ? (
-                    <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                      {ledgerError}
-                    </div>
-                  ) : null}
-
-                  {ledgerLoading ? (
-                    <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
-                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                      Loading ledger...
-                    </div>
-                  ) : ledgerRows.length === 0 ? (
-                    <div className="p-6 text-sm text-slate-500">No transactions.</div>
-                  ) : (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden">
-                      <table className="w-full text-xs border-collapse">
-                        <thead className="bg-slate-100">
-                          <tr>
-                            <th className="border-b border-slate-200 px-2 py-2 text-left w-28">Date</th>
-                            <th className="border-b border-slate-200 px-2 py-2 text-left w-28">Type</th>
-                            <th className="border-b border-slate-200 px-2 py-2 text-left">Narration</th>
-                            <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Debit</th>
-                            <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Credit</th>
-                            <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Running</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ledgerRows.map((r) => (
-                            <tr key={r.id} className="hover:bg-slate-50">
-                              <td className="border-b border-slate-200 px-2 py-2 text-slate-700">{formatDate(r.txn_date)}</td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-slate-700">{r.txn_type || "-"}</td>
-                              <td className="border-b border-slate-200 px-2 py-2">
-                                <div className="text-slate-800">{r.narration || r.ref_no || "-"}</div>
-                                {r.ref_no ? <div className="text-[11px] text-slate-500">Ref: {r.ref_no}</div> : null}
-                              </td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-right">
-                                {Number(r.debit) ? fmtMoney(r.debit) : "-"}
-                              </td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-right">
-                                {Number(r.credit) ? fmtMoney(r.credit) : "-"}
-                              </td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-right font-medium">
-                                {r.running_balance != null ? fmtMoney(r.running_balance) : "-"}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                <div className="px-4 py-3 border-t bg-slate-50 flex justify-end">
-                  <button
-                    onClick={() => setLedgerOpen(false)}
-                    className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-
-              <div className="h-3" />
             </div>
           </div>
         </div>

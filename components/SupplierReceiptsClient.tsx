@@ -1,3 +1,4 @@
+// components/SupplierReceiptsPageClient.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -13,6 +14,12 @@ import {
   Trash2,
   CheckCircle2,
   XCircle,
+  Building2,
+  Phone,
+  Mail,
+  MapPin,
+  Hash,
+  CalendarDays,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -27,6 +34,15 @@ type SupplierLite = {
   full_address?: string | null;
 };
 
+type PublisherLite = { id: number; name: string };
+
+type SchoolLite = {
+  id: number;
+  name: string;
+  city?: string | null;
+  is_active?: boolean;
+};
+
 type BookLite = {
   id: number;
   title: string;
@@ -36,22 +52,55 @@ type BookLite = {
   isbn?: string | null;
 };
 
+type SchoolOrderItemLite = {
+  id?: number;
+  book_id: number;
+  book?: BookLite | null;
+
+  total_order_qty?: number | string;
+  ordered_qty?: number | string;
+  received_qty?: number | string;
+
+  unit_price?: number | string | null;
+  discount_pct?: number | string | null;
+  discount_amt?: number | string | null;
+};
+
+type SchoolOrderLite = {
+  id: number;
+  order_no?: string | null;
+  status?: string | null;
+
+  school_id?: number | null;
+  school?: SchoolLite | null;
+
+  supplier_id?: number | null;
+  supplier?: SupplierLite | null;
+
+  publisher_id?: number | null;
+  publisher?: PublisherLite | null;
+
+  createdAt?: string;
+  order_date?: string | null;
+
+  items?: SchoolOrderItemLite[];
+};
+
 type SupplierReceiptItem = {
   id?: number;
   supplier_receipt_id?: number;
   book_id: number;
 
-  // ✅ new
   ordered_qty?: number | string;
   received_qty?: number | string;
 
   unit_price?: number | string;
   discount_pct?: number | string | null;
-  discount_amt?: number | string | null;
+  discount_amt?: number | string | null; // per unit
   net_unit_price?: number | string | null;
   line_amount?: number | string | null;
 
-  // legacy fallback (old receipts)
+  // legacy fallback
   qty?: number | string;
   rate?: number | string;
   item_discount_type?: "NONE" | "PERCENT" | "AMOUNT";
@@ -79,6 +128,7 @@ type SupplierReceipt = {
   remarks?: string | null;
 
   sub_total?: number | string;
+
   bill_discount_type?: "NONE" | "PERCENT" | "AMOUNT";
   bill_discount_value?: number | string | null;
   bill_discount_amount?: number | string;
@@ -102,7 +152,6 @@ const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
-
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 const fmtMoney = (n: any) => {
@@ -123,16 +172,18 @@ const statusChip = (s: SupplierReceipt["status"]) => {
   return "bg-slate-50 text-slate-700 border border-slate-200";
 };
 
-/** Compute pricing like backend: net_unit = unit_price - discount_amt (or pct) */
-const computeLinePricing = (qty: number, unit_price: number, discount_pct: number, discount_amt: number) => {
+const computeLinePricing = (
+  qty: number,
+  unit_price: number,
+  discount_pct: number,
+  discount_amt: number
+) => {
   const up = clamp(num(unit_price), 0, 999999999);
   const q = clamp(num(qty), 0, 999999999);
   const dp = clamp(num(discount_pct), 0, 100);
 
   let da = num(discount_amt);
   if (!Number.isFinite(da) || da < 0) da = 0;
-
-  // if discount_amt is empty and pct exists -> compute per-unit discount
   if (!da && dp > 0) da = (up * dp) / 100;
 
   const net = Math.max(up - da, 0);
@@ -147,34 +198,48 @@ const computeLinePricing = (qty: number, unit_price: number, discount_pct: numbe
   };
 };
 
-/** Normalize older API receipts that may still return qty/rate/net_amount */
 const normalizeItemForView = (it: SupplierReceiptItem) => {
-  const received_qty =
-    it.received_qty ?? it.ordered_qty ?? it.qty ?? 0;
+  const received_qty = it.received_qty ?? it.ordered_qty ?? it.qty ?? 0;
+  const ordered_qty = it.ordered_qty ?? it.received_qty ?? it.qty ?? 0;
 
-  const unit_price =
-    it.unit_price ?? it.rate ?? 0;
+  const unit_price = it.unit_price ?? it.rate ?? 0;
 
-  // if new fields exist, prefer them
-  const line_amount =
-    it.line_amount ?? it.net_amount ?? 0;
+  let discount_pct = it.discount_pct ?? 0;
+  let discount_amt = it.discount_amt ?? 0;
 
+  if ((discount_pct == null || discount_pct === "") && it.item_discount_type === "PERCENT") {
+    discount_pct = it.item_discount_value ?? 0;
+  }
+  if ((discount_amt == null || discount_amt === "") && it.item_discount_type === "AMOUNT") {
+    discount_amt = it.item_discount_value ?? 0;
+  }
+
+  const line_amount = it.line_amount ?? it.net_amount ?? 0;
   const net_unit_price =
     it.net_unit_price ??
-    (num(received_qty) > 0 ? num(line_amount) / num(received_qty) : unit_price);
+    (num(received_qty) > 0 ? num(line_amount) / num(received_qty) : num(unit_price));
 
   return {
     ...it,
+    ordered_qty,
     received_qty,
     unit_price,
+    discount_pct,
+    discount_amt,
     net_unit_price,
     line_amount,
   };
 };
 
+const safeSupplierAddress = (s?: SupplierLite | null) =>
+  s?.full_address || s?.address || s?.address_line1 || "";
+
+/** ordered qty from different keys */
+const getOrderedQty = (it: SchoolOrderItemLite) => num(it.total_order_qty ?? it.ordered_qty ?? 0);
+
 /* ---------------- Component ---------------- */
 
-export default function SupplierReceiptsPage() {
+export default function SupplierReceiptsPageClient() {
   const { user, logout } = useAuth();
 
   const [loading, setLoading] = useState(false);
@@ -185,7 +250,11 @@ export default function SupplierReceiptsPage() {
 
   // masters
   const [suppliers, setSuppliers] = useState<SupplierLite[]>([]);
-  const [books, setBooks] = useState<BookLite[]>([]);
+  const [schools, setSchools] = useState<SchoolLite[]>([]);
+
+  // orders for selected school
+  const [schoolOrders, setSchoolOrders] = useState<SchoolOrderLite[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
 
   // filters
   const [filterSupplierId, setFilterSupplierId] = useState("");
@@ -197,9 +266,14 @@ export default function SupplierReceiptsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
 
+  // ultra-compact toggles (maximize listing space)
+  const [showMoreFields, setShowMoreFields] = useState(false);
+  const [showCharges, setShowCharges] = useState(false);
+
   const [form, setForm] = useState({
-    supplier_id: "",
+    school_id: "",
     school_order_id: "",
+    supplier_id: "",
     invoice_no: "",
     academic_session: "2025-26",
     invoice_date: "",
@@ -214,17 +288,23 @@ export default function SupplierReceiptsPage() {
     round_off: "",
   });
 
+  // Items come from order (no book dropdown)
   const [items, setItems] = useState<
     Array<{
-      book_id: string;
-      received_qty: string;
+      book_id: number;
+      title: string;
+      meta: string;
+
+      ordered_qty: number;
+      already_received_qty: number;
+      pending_qty: number;
+
+      receive_now_qty: string; // input
       unit_price: string;
       discount_pct: string;
       discount_amt: string;
     }>
-  >([
-    { book_id: "", received_qty: "1", unit_price: "", discount_pct: "", discount_amt: "" },
-  ]);
+  >([]);
 
   // view modal
   const [viewOpen, setViewOpen] = useState(false);
@@ -246,14 +326,15 @@ export default function SupplierReceiptsPage() {
     }
   };
 
-  const fetchBooks = async () => {
+  const fetchSchools = async () => {
     try {
-      const res = await api.get("/api/books");
-      const list: BookLite[] = Array.isArray(res.data) ? res.data : res.data?.books || [];
-      setBooks(list || []);
+      const res = await api.get("/api/schools");
+      const list: SchoolLite[] = (res.data as any)?.data || (res.data as any)?.schools || [];
+      const activeOnly = (Array.isArray(list) ? list : []).filter((s) => s?.is_active !== false);
+      setSchools(activeOnly);
     } catch (e) {
-      console.error("books load error:", e);
-      setBooks([]);
+      console.error("schools load error:", e);
+      setSchools([]);
     }
   };
 
@@ -282,37 +363,167 @@ export default function SupplierReceiptsPage() {
 
   useEffect(() => {
     fetchSuppliers();
-    fetchBooks();
+    fetchSchools();
     fetchReceipts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ------------ Create helpers ------------ */
+  /* ------------ School -> Load Complete Orders ------------ */
 
-  const addItemRow = () => {
-    setItems((p) => [...p, { book_id: "", received_qty: "1", unit_price: "", discount_pct: "", discount_amt: "" }]);
+  const fetchCompleteOrdersForSchool = async (schoolId: number) => {
+    setOrdersLoading(true);
+    setSchoolOrders([]);
+    try {
+      const tryStatuses = ["complete", "completed"];
+      let got: any[] | null = null;
+
+      for (const st of tryStatuses) {
+        try {
+          const res = await api.get("/api/school-orders", {
+            params: { school_id: schoolId, status: st },
+          });
+
+          const list: any[] =
+            (res.data as any)?.orders ||
+            (res.data as any)?.data ||
+            (Array.isArray(res.data) ? (res.data as any) : []);
+
+          if (Array.isArray(list) && list.length) {
+            got = list;
+            break;
+          }
+        } catch {
+          // keep trying
+        }
+      }
+
+      if (!got) {
+        const res2 = await api.get("/api/school-orders", { params: { school_id: schoolId } });
+        const list2: any[] =
+          (res2.data as any)?.orders ||
+          (res2.data as any)?.data ||
+          (Array.isArray(res2.data) ? (res2.data as any) : []);
+        got = Array.isArray(list2) ? list2 : [];
+      }
+
+      setSchoolOrders(got as any);
+    } catch (e: any) {
+      console.error("load school orders error:", e);
+      setError(e?.response?.data?.error || "Failed to load complete orders for selected school");
+    } finally {
+      setOrdersLoading(false);
+    }
   };
 
-  const removeItemRow = (idx: number) => {
-    setItems((p) => (p.length <= 1 ? p : p.filter((_, i) => i !== idx)));
+  const hydrateFromSelectedOrder = async (orderId: number) => {
+    setError(null);
+
+    const found = schoolOrders.find((o) => o.id === orderId);
+
+    const loadDetail = async (): Promise<SchoolOrderLite | null> => {
+      if (found?.items?.length) return found;
+      try {
+        const res = await api.get(`/api/school-orders/${orderId}`);
+        const row: SchoolOrderLite =
+          (res.data as any)?.order || (res.data as any)?.schoolOrder || (res.data as any);
+        return row || null;
+      } catch (e) {
+        console.error("order detail load failed:", e);
+        return found || null;
+      }
+    };
+
+    const row = await loadDetail();
+    if (!row) return;
+
+    const autoSupplierId = row.supplier_id || row.supplier?.id || null;
+
+    const orderItems = row.items || [];
+    const mapped = orderItems
+      .map((it) => {
+        const ordered = Math.max(0, Math.floor(getOrderedQty(it)));
+        const already = Math.max(0, Math.floor(num(it.received_qty)));
+        const pending = Math.max(ordered - already, 0);
+
+        const title = it.book?.title || `Book #${it.book_id}`;
+        const metaParts = [
+          it.book?.class_name ? `Class: ${it.book.class_name}` : null,
+          it.book?.subject ? `Sub: ${it.book.subject}` : null,
+          it.book?.code ? `Code: ${it.book.code}` : null,
+        ].filter(Boolean);
+        const meta = metaParts.join(" • ");
+
+        return {
+          book_id: it.book_id,
+          title,
+          meta,
+
+          ordered_qty: ordered,
+          already_received_qty: already,
+          pending_qty: pending,
+
+          receive_now_qty: String(pending),
+          unit_price: it.unit_price != null ? String(num(it.unit_price)) : "",
+          discount_pct: it.discount_pct != null ? String(num(it.discount_pct)) : "",
+          discount_amt: it.discount_amt != null ? String(num(it.discount_amt)) : "",
+        };
+      })
+      .filter((x) => x.book_id && x.ordered_qty > 0);
+
+    setForm((p) => ({
+      ...p,
+      school_order_id: String(orderId),
+      supplier_id: autoSupplierId ? String(autoSupplierId) : p.supplier_id,
+    }));
+
+    setItems(mapped);
+  };
+
+  /* ------------ Create modal ------------ */
+
+  const openCreate = () => {
+    setError(null);
+    setInfo(null);
+    setCreateOpen(true);
+    setShowMoreFields(false);
+    setShowCharges(false);
+
+    setForm({
+      school_id: "",
+      school_order_id: "",
+      supplier_id: "",
+      invoice_no: "",
+      academic_session: "2025-26",
+      invoice_date: "",
+      received_date: "",
+      status: "received",
+      remarks: "",
+      bill_discount_type: "NONE",
+      bill_discount_value: "",
+      shipping_charge: "",
+      other_charge: "",
+      round_off: "",
+    });
+
+    setSchoolOrders([]);
+    setItems([]);
   };
 
   const calcPreview = useMemo(() => {
     let itemsNet = 0;
 
     items.forEach((it) => {
-      const qty = Math.max(0, Math.floor(num(it.received_qty)));
+      const qty = Math.max(0, Math.floor(num(it.receive_now_qty)));
       const up = Math.max(0, num(it.unit_price));
       const dp = Math.max(0, num(it.discount_pct));
       const da = Math.max(0, num(it.discount_amt));
-
       const p = computeLinePricing(qty, up, dp, da);
       itemsNet += p.line_amount;
     });
 
     const ship = Math.max(0, num(form.shipping_charge));
     const other = Math.max(0, num(form.other_charge));
-    const ro = num(form.round_off); // can be +/-
+    const ro = num(form.round_off);
 
     let billDisc = 0;
     const bdt = String(form.bill_discount_type || "NONE").toUpperCase();
@@ -332,32 +543,10 @@ export default function SupplierReceiptsPage() {
       other,
       ro,
       grand,
+      discountType: bdt as "NONE" | "PERCENT" | "AMOUNT",
+      discountValue: bdv,
     };
   }, [items, form]);
-
-  const openCreate = () => {
-    setError(null);
-    setInfo(null);
-    setCreateOpen(true);
-
-    setForm((p) => ({
-      ...p,
-      supplier_id: "",
-      school_order_id: "",
-      invoice_no: "",
-      remarks: "",
-      invoice_date: "",
-      received_date: "",
-      status: "received",
-      bill_discount_type: "NONE",
-      bill_discount_value: "",
-      shipping_charge: "",
-      other_charge: "",
-      round_off: "",
-    }));
-
-    setItems([{ book_id: "", received_qty: "1", unit_price: "", discount_pct: "", discount_amt: "" }]);
-  };
 
   const submitCreate = async () => {
     setError(null);
@@ -365,30 +554,62 @@ export default function SupplierReceiptsPage() {
 
     const supplier_id = Number(form.supplier_id);
     if (!supplier_id) {
-      setError("Select supplier.");
+      setError("Select supplier (auto-filled from order if available).");
+      return;
+    }
+    if (!form.school_id) {
+      setError("Select school.");
+      return;
+    }
+    if (!form.school_order_id) {
+      setError("Select complete order.");
       return;
     }
 
+    // ✅ IMPORTANT FIX:
+    // Backend expects items[i].qty, items[i].rate, item_discount_type/value
+    // We still allow your UI fields discount_pct/discount_amt, but convert them.
     const cleanItems = items
       .map((it) => {
-        const received_qty = Math.max(0, Math.floor(num(it.received_qty)));
+        const received_qty = Math.max(0, Math.floor(num(it.receive_now_qty)));
+        const ordered_qty = Math.max(0, Math.floor(num(it.ordered_qty)));
         const unit_price = Math.max(0, num(it.unit_price));
-        const discount_pct = Math.max(0, num(it.discount_pct));
-        const discount_amt = Math.max(0, num(it.discount_amt));
+
+        const discPct = Math.max(0, num(it.discount_pct));
+        const discAmt = Math.max(0, num(it.discount_amt));
+
+        let item_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
+        let item_discount_value: number | null = null;
+
+        // Prefer AMOUNT if both filled
+        if (discAmt > 0) {
+          item_discount_type = "AMOUNT";
+          item_discount_value = discAmt;
+        } else if (discPct > 0) {
+          item_discount_type = "PERCENT";
+          item_discount_value = discPct;
+        }
 
         return {
-          book_id: Number(it.book_id),
-          ordered_qty: received_qty, // for manual create, ordered = received
+          book_id: it.book_id,
+
+          // optional informational keys (backend will ignore if columns not exist)
+          ordered_qty,
           received_qty,
-          unit_price,
-          discount_pct: discount_pct || 0,
-          discount_amt: discount_amt || 0,
+
+          // legacy keys (backend validates qty > 0)
+          qty: received_qty,
+          rate: unit_price,
+
+          // ✅ used by backend calcItemLine()
+          item_discount_type,
+          item_discount_value,
         };
       })
       .filter((x) => x.book_id && x.received_qty > 0);
 
     if (!cleanItems.length) {
-      setError("Add at least one valid item (book + received qty + unit price).");
+      setError("No received qty entered. Please receive at least 1 book.");
       return;
     }
 
@@ -396,11 +617,15 @@ export default function SupplierReceiptsPage() {
     try {
       const payload: any = {
         supplier_id,
-        school_order_id: form.school_order_id ? Number(form.school_order_id) : null,
+        school_order_id: Number(form.school_order_id),
+
         invoice_no: form.invoice_no?.trim() || null,
         academic_session: form.academic_session?.trim() || null,
+
+        // optional fields only if filled (backend safe)
         invoice_date: form.invoice_date || undefined,
         received_date: form.received_date || undefined,
+
         status: form.status || "received",
         remarks: form.remarks?.trim() || null,
 
@@ -437,10 +662,8 @@ export default function SupplierReceiptsPage() {
 
     try {
       const res = await api.get<GetResponse>(`/api/supplier-receipts/${id}`);
-      const row = (res?.data as any)?.receipt;
-      if (row?.items?.length) {
-        row.items = row.items.map(normalizeItemForView);
-      }
+      const row = (res?.data as any)?.receipt as SupplierReceipt | undefined;
+      if (row?.items?.length) row.items = row.items.map(normalizeItemForView);
       setViewRow(row || null);
     } catch (e: any) {
       console.error(e);
@@ -467,9 +690,83 @@ export default function SupplierReceiptsPage() {
     }
   };
 
-  /* ------------ Filtered receipts ------------ */
+  const handleViewPdf = async (id: number) => {
+    setError(null);
+    try {
+      const res = await api.get(`/api/supplier-receipts/${id}/pdf`, { responseType: "blob" });
+
+      const contentType = (res.headers as any)?.["content-type"] || "";
+      if (!contentType.includes("application/pdf")) {
+        const blob = res.data as Blob;
+        const text = await blob.text().catch(() => "");
+        throw new Error(text || "Not a PDF.");
+      }
+
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      console.error("receipt pdf error:", e);
+      setError(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          e?.message ||
+          "PDF failed (endpoint missing?)"
+      );
+    }
+  };
 
   const visible = receipts;
+
+  const viewTotals = useMemo(() => {
+    if (!viewRow) return null;
+
+    const items2 = (viewRow.items || []).map(normalizeItemForView);
+    const itemsNetComputed = items2.reduce((sum, it) => sum + num(it.line_amount), 0);
+
+    const sub_total = viewRow.sub_total != null ? num(viewRow.sub_total) : itemsNetComputed;
+
+    const ship = num(viewRow.shipping_charge);
+    const other = num(viewRow.other_charge);
+    const ro = num(viewRow.round_off);
+
+    const bdt = String(viewRow.bill_discount_type || "NONE").toUpperCase();
+    const bdv = num(viewRow.bill_discount_value);
+
+    let discAmt =
+      viewRow.bill_discount_amount != null
+        ? num(viewRow.bill_discount_amount)
+        : bdt === "PERCENT"
+        ? (sub_total * Math.max(0, bdv)) / 100
+        : bdt === "AMOUNT"
+        ? Math.max(0, bdv)
+        : 0;
+
+    if (discAmt > sub_total) discAmt = sub_total;
+
+    const grand =
+      viewRow.grand_total != null ? num(viewRow.grand_total) : sub_total - discAmt + ship + other + ro;
+
+    return {
+      itemsNetComputed,
+      sub_total,
+      bill_discount_type: bdt as "NONE" | "PERCENT" | "AMOUNT",
+      bill_discount_value: bdv,
+      bill_discount_amount: discAmt,
+      shipping_charge: ship,
+      other_charge: other,
+      round_off: ro,
+      grand_total: grand,
+      items: items2,
+    };
+  }, [viewRow]);
+
+  const orderLabel = (o: SchoolOrderLite) => {
+    const pub = o.publisher?.name || (o.publisher_id ? `Publisher #${o.publisher_id}` : "Publisher");
+    const ord = o.order_no || `#${o.id}`;
+    const dt = formatDate(o.order_date || o.createdAt);
+    return `${pub} • Order ${ord} • ${dt}`;
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -494,7 +791,10 @@ export default function SupplierReceiptsPage() {
 
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] text-slate-600 hidden sm:inline">{user?.name || "User"}</span>
-            <button onClick={logout} className="text-[11px] px-3 py-1 rounded-full bg-rose-600 text-white">
+            <button
+              onClick={logout}
+              className="text-[11px] px-3 py-1 rounded-full bg-rose-600 text-white"
+            >
               Logout
             </button>
           </div>
@@ -643,14 +943,26 @@ export default function SupplierReceiptsPage() {
                         </span>
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => openView(r.id)}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                        >
-                          <FileText className="w-4 h-4" />
-                          View
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openView(r.id)}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                          >
+                            <FileText className="w-4 h-4" />
+                            View
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleViewPdf(r.id)}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                            title="Open PDF (if endpoint exists)"
+                          >
+                            <FileText className="w-4 h-4" />
+                            PDF
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -661,37 +973,93 @@ export default function SupplierReceiptsPage() {
         </section>
       </main>
 
-      {/* ---------------- Create Modal ---------------- */}
+      {/* ---------------- Create Modal (MAX SPACE FOR LISTING) ---------------- */}
       {createOpen && (
         <div className="fixed inset-0 z-50 bg-black/50">
-          <div className="h-full w-full overflow-auto p-3 sm:p-4">
-            <div className="mx-auto w-full max-w-[1100px]">
-              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between">
-                  <div>
-                    <div className="text-sm font-semibold">Create Supplier Receipt</div>
-                    <div className="text-[11px] text-slate-600 mt-1">
-                      This will create receipt + items. If status is <b>received</b>, it will also post Inventory IN + Supplier Ledger.
-                    </div>
-                  </div>
+          <div className="h-full w-full p-2 sm:p-3">
+            <div className="mx-auto w-full max-w-[1220px] h-full">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-[96vh] flex flex-col">
+                {/* ultra-compact header */}
+                <div className="px-4 py-2 border-b bg-slate-50 flex items-center justify-between">
+                  <div className="text-sm font-semibold">Create Supplier Receipt</div>
                   <button
                     onClick={() => setCreateOpen(false)}
                     className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                    title="Close"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
-                <div className="p-4 space-y-4">
-                  <div className="grid grid-cols-12 gap-3">
+                {/* top controls (compact) */}
+                <div className="px-3 py-2 border-b bg-white">
+                  {/* Row 1: single line on md+ */}
+                  <div className="grid grid-cols-12 gap-2">
+                    <div className="col-span-12 md:col-span-2">
+                      <select
+                        value={form.school_id}
+                        onChange={async (e) => {
+                          const v = e.target.value;
+                          setError(null);
+                          setForm((p) => ({
+                            ...p,
+                            school_id: v,
+                            school_order_id: "",
+                            supplier_id: "",
+                          }));
+                          setItems([]);
+                          setSchoolOrders([]);
+                          if (v) await fetchCompleteOrdersForSchool(Number(v));
+                        }}
+                        className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                        title="School"
+                      >
+                        <option value="">School *</option>
+                        {schools.map((s) => (
+                          <option key={s.id} value={String(s.id)}>
+                            {s.name}
+                            {s.city ? ` • ${s.city}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
                     <div className="col-span-12 md:col-span-4">
-                      <label className="block text-[11px] text-slate-600 mb-1">Supplier *</label>
+                      <select
+                        value={form.school_order_id}
+                        disabled={!form.school_id || ordersLoading}
+                        onChange={async (e) => {
+                          const v = e.target.value;
+                          setForm((p) => ({ ...p, school_order_id: v }));
+                          setItems([]);
+                          if (v) await hydrateFromSelectedOrder(Number(v));
+                        }}
+                        className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
+                        title="Complete Order"
+                      >
+                        <option value="">
+                          {ordersLoading
+                            ? "Loading orders..."
+                            : form.school_id
+                            ? "Order *"
+                            : "Select school first"}
+                        </option>
+                        {schoolOrders.map((o) => (
+                          <option key={o.id} value={String(o.id)}>
+                            {orderLabel(o)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="col-span-12 md:col-span-2">
                       <select
                         value={form.supplier_id}
                         onChange={(e) => setForm((p) => ({ ...p, supplier_id: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                        className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                        title="Supplier"
                       >
-                        <option value="">-- Select --</option>
+                        <option value="">Supplier *</option>
                         {suppliers.map((s) => (
                           <option key={s.id} value={String(s.id)}>
                             {s.name}
@@ -700,152 +1068,252 @@ export default function SupplierReceiptsPage() {
                       </select>
                     </div>
 
-                    <div className="col-span-12 md:col-span-4">
-                      <label className="block text-[11px] text-slate-600 mb-1">Invoice No</label>
+                    <div className="col-span-12 md:col-span-2">
                       <input
                         value={form.invoice_no}
                         onChange={(e) => setForm((p) => ({ ...p, invoice_no: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                        placeholder="INV-..."
+                        className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px]"
+                        placeholder="Invoice No"
+                        title="Invoice No"
                       />
                     </div>
 
-                    <div className="col-span-12 md:col-span-4">
-                      <label className="block text-[11px] text-slate-600 mb-1">Academic Session</label>
+                    <div className="col-span-12 md:col-span-2">
                       <input
                         value={form.academic_session}
                         onChange={(e) => setForm((p) => ({ ...p, academic_session: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                        placeholder="2025-26"
-                      />
-                    </div>
-
-                    <div className="col-span-12 md:col-span-3">
-                      <label className="block text-[11px] text-slate-600 mb-1">Invoice Date</label>
-                      <input
-                        type="date"
-                        value={form.invoice_date}
-                        onChange={(e) => setForm((p) => ({ ...p, invoice_date: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                      />
-                    </div>
-
-                    <div className="col-span-12 md:col-span-3">
-                      <label className="block text-[11px] text-slate-600 mb-1">Received Date</label>
-                      <input
-                        type="date"
-                        value={form.received_date}
-                        onChange={(e) => setForm((p) => ({ ...p, received_date: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                      />
-                    </div>
-
-                    <div className="col-span-12 md:col-span-3">
-                      <label className="block text-[11px] text-slate-600 mb-1">Status</label>
-                      <select
-                        value={form.status}
-                        onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                      >
-                        <option value="received">received</option>
-                        <option value="draft">draft</option>
-                      </select>
-                    </div>
-
-                    <div className="col-span-12 md:col-span-3">
-                      <label className="block text-[11px] text-slate-600 mb-1">School Order ID (optional)</label>
-                      <input
-                        value={form.school_order_id}
-                        onChange={(e) => setForm((p) => ({ ...p, school_order_id: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                        placeholder="Order id..."
-                      />
-                    </div>
-
-                    <div className="col-span-12">
-                      <label className="block text-[11px] text-slate-600 mb-1">Remarks</label>
-                      <input
-                        value={form.remarks}
-                        onChange={(e) => setForm((p) => ({ ...p, remarks: e.target.value }))}
-                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
-                        placeholder="Notes / remarks..."
+                        className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px]"
+                        placeholder="Session"
+                        title="Academic Session"
                       />
                     </div>
                   </div>
 
-                  {/* Items */}
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                    <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
-                      <div className="text-sm font-semibold">Items</div>
-                      <button
-                        type="button"
-                        onClick={addItemRow}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-[12px] hover:bg-slate-800"
-                      >
-                        <PlusCircle className="w-4 h-4" />
-                        Add row
-                      </button>
-                    </div>
+                  {/* compact action row */}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setItems((p) => p.map((x) => ({ ...x, receive_now_qty: String(x.pending_qty) })))
+                      }
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                      title="Set Receive Now = Pending for all"
+                    >
+                      <RefreshCcw className="w-4 h-4" />
+                      Fill Pending
+                    </button>
 
-                    <div className="overflow-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowMoreFields((p) => !p)}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                      title="Optional fields"
+                    >
+                      More Fields
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowCharges((p) => !p)}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                      title="Discount / shipping / round-off"
+                    >
+                      Charges
+                    </button>
+
+                    <div className="ml-auto flex items-center gap-2">
+                      <div className="text-[12px] text-slate-600">Grand</div>
+                      <div className="text-[12px] font-extrabold bg-slate-900 text-white px-3 py-1.5 rounded-xl">
+                        ₹{fmtMoney(calcPreview.grand)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {showMoreFields && (
+                    <div className="mt-2 grid grid-cols-12 gap-2">
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="date"
+                          value={form.invoice_date}
+                          onChange={(e) => setForm((p) => ({ ...p, invoice_date: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px]"
+                          title="Invoice Date"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="date"
+                          value={form.received_date}
+                          onChange={(e) => setForm((p) => ({ ...p, received_date: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px]"
+                          title="Received Date"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <select
+                          value={form.status}
+                          onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                          title="Status"
+                        >
+                          <option value="received">received</option>
+                          <option value="draft">draft</option>
+                        </select>
+                      </div>
+
+                      <div className="col-span-12 md:col-span-6">
+                        <input
+                          value={form.remarks}
+                          onChange={(e) => setForm((p) => ({ ...p, remarks: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px]"
+                          placeholder="Remarks (optional)"
+                          title="Remarks"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {showCharges && (
+                    <div className="mt-2 grid grid-cols-12 gap-2">
+                      <div className="col-span-12 md:col-span-2">
+                        <select
+                          value={form.bill_discount_type}
+                          onChange={(e) =>
+                            setForm((p) => ({ ...p, bill_discount_type: e.target.value as any }))
+                          }
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                          title="Bill Discount Type"
+                        >
+                          <option value="NONE">Disc: NONE</option>
+                          <option value="PERCENT">Disc: %</option>
+                          <option value="AMOUNT">Disc: ₹</option>
+                        </select>
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.bill_discount_value}
+                          onChange={(e) => setForm((p) => ({ ...p, bill_discount_value: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
+                          placeholder="Disc value"
+                          title="Bill Discount Value"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.shipping_charge}
+                          onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
+                          placeholder="Shipping"
+                          title="Shipping"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.other_charge}
+                          onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
+                          placeholder="Other"
+                          title="Other"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2">
+                        <input
+                          type="number"
+                          value={form.round_off}
+                          onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
+                          placeholder="Round Off"
+                          title="Round Off"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-2" />
+                    </div>
+                  )}
+                </div>
+
+                {/* LISTING AREA: max height */}
+                <div className="flex-1 min-h-0">
+                  {items.length === 0 ? (
+                    <div className="p-4 text-sm text-slate-500">Select an order to load books.</div>
+                  ) : (
+                    <div className="h-full overflow-auto">
                       <table className="w-full text-xs border-collapse">
-                        <thead className="bg-slate-100">
+                        <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
-                            <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Received Qty</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Unit Price</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-24">Disc %</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Disc ₹/Unit</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-32">Line Amount</th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right w-12"> </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Rcv</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Now</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Unit</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">%</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Net</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Line</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
                           </tr>
                         </thead>
+
                         <tbody>
                           {items.map((it, idx) => {
-                            const qty = Math.max(0, Math.floor(num(it.received_qty)));
+                            const qty = Math.max(0, Math.floor(num(it.receive_now_qty)));
                             const up = Math.max(0, num(it.unit_price));
                             const dp = Math.max(0, num(it.discount_pct));
                             const da = Math.max(0, num(it.discount_amt));
                             const p = computeLinePricing(qty, up, dp, da);
 
+                            const tooMuch = qty > it.pending_qty;
+
                             return (
-                              <tr key={idx} className="hover:bg-slate-50">
-                                <td className="border-b border-slate-200 px-3 py-2">
-                                  <select
-                                    value={it.book_id}
-                                    onChange={(e) =>
-                                      setItems((p2) =>
-                                        p2.map((r, i) => (i === idx ? { ...r, book_id: e.target.value } : r))
-                                      )
-                                    }
-                                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                  >
-                                    <option value="">-- Select book --</option>
-                                    {books.map((b) => (
-                                      <option key={b.id} value={String(b.id)}>
-                                        {b.title}
-                                        {b.class_name ? ` • ${b.class_name}` : ""}
-                                        {b.subject ? ` • ${b.subject}` : ""}
-                                      </option>
-                                    ))}
-                                  </select>
+                              <tr key={it.book_id} className="hover:bg-slate-50">
+                                <td className="border-b border-slate-200 px-2 py-1.5">
+                                  <div className="font-medium text-slate-900">{it.title}</div>
+                                  <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                  {it.already_received_qty}
+                                </td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+                                  {it.pending_qty}
+                                </td>
+
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
                                     type="number"
                                     min={0}
-                                    value={it.received_qty}
+                                    value={it.receive_now_qty}
                                     onChange={(e) =>
                                       setItems((p2) =>
-                                        p2.map((r, i) => (i === idx ? { ...r, received_qty: e.target.value } : r))
+                                        p2.map((r, i) =>
+                                          i === idx ? { ...r, receive_now_qty: e.target.value } : r
+                                        )
                                       )
                                     }
-                                    className="w-28 border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right ${
+                                      tooMuch ? "border-rose-400 bg-rose-50" : "border-slate-300"
+                                    }`}
                                   />
+                                  {tooMuch ? (
+                                    <div className="text-[10px] text-rose-700 mt-1">Max: {it.pending_qty}</div>
+                                  ) : null}
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
                                     type="number"
                                     min={0}
@@ -855,11 +1323,11 @@ export default function SupplierReceiptsPage() {
                                         p2.map((r, i) => (i === idx ? { ...r, unit_price: e.target.value } : r))
                                       )
                                     }
-                                    className="w-28 border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                                    className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
                                   />
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
                                     type="number"
                                     min={0}
@@ -870,11 +1338,11 @@ export default function SupplierReceiptsPage() {
                                         p2.map((r, i) => (i === idx ? { ...r, discount_pct: e.target.value } : r))
                                       )
                                     }
-                                    className="w-24 border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                                    className="w-14 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
                                   />
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
                                     type="number"
                                     min={0}
@@ -884,20 +1352,23 @@ export default function SupplierReceiptsPage() {
                                         p2.map((r, i) => (i === idx ? { ...r, discount_amt: e.target.value } : r))
                                       )
                                     }
-                                    className="w-28 border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                                    className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
                                   />
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+                                  ₹{fmtMoney(p.net_unit_price)}
+                                </td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
                                   ₹{fmtMoney(p.line_amount)}
                                 </td>
 
-                                <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <button
                                     type="button"
-                                    onClick={() => removeItemRow(idx)}
-                                    className="inline-flex items-center justify-center p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                    title="Remove"
+                                    onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                                    className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                                    title="Remove line from receipt (does not change order)"
                                   >
                                     <Trash2 className="w-4 h-4 text-rose-600" />
                                   </button>
@@ -908,111 +1379,11 @@ export default function SupplierReceiptsPage() {
                         </tbody>
                       </table>
                     </div>
-                  </div>
-
-                  {/* Charges + Preview */}
-                  <div className="grid grid-cols-12 gap-3">
-                    <div className="col-span-12 lg:col-span-7 border border-slate-200 rounded-2xl p-4">
-                      <div className="text-sm font-semibold mb-2">Charges / Discounts</div>
-                      <div className="grid grid-cols-12 gap-2">
-                        <div className="col-span-12 md:col-span-4">
-                          <label className="block text-[11px] text-slate-600 mb-1">Bill Discount Type</label>
-                          <select
-                            value={form.bill_discount_type}
-                            onChange={(e) => setForm((p) => ({ ...p, bill_discount_type: e.target.value as any }))}
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                          >
-                            <option value="NONE">NONE</option>
-                            <option value="PERCENT">PERCENT</option>
-                            <option value="AMOUNT">AMOUNT</option>
-                          </select>
-                        </div>
-
-                        <div className="col-span-12 md:col-span-4">
-                          <label className="block text-[11px] text-slate-600 mb-1">Bill Discount Value</label>
-                          <input
-                            type="number"
-                            min={0}
-                            value={form.bill_discount_value}
-                            onChange={(e) => setForm((p) => ({ ...p, bill_discount_value: e.target.value }))}
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
-                          />
-                        </div>
-
-                        <div className="col-span-12 md:col-span-4" />
-
-                        <div className="col-span-12 md:col-span-4">
-                          <label className="block text-[11px] text-slate-600 mb-1">Shipping</label>
-                          <input
-                            type="number"
-                            min={0}
-                            value={form.shipping_charge}
-                            onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
-                          />
-                        </div>
-
-                        <div className="col-span-12 md:col-span-4">
-                          <label className="block text-[11px] text-slate-600 mb-1">Other</label>
-                          <input
-                            type="number"
-                            min={0}
-                            value={form.other_charge}
-                            onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
-                          />
-                        </div>
-
-                        <div className="col-span-12 md:col-span-4">
-                          <label className="block text-[11px] text-slate-600 mb-1">Round Off</label>
-                          <input
-                            type="number"
-                            value={form.round_off}
-                            onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="col-span-12 lg:col-span-5 border border-slate-200 rounded-2xl p-4 bg-slate-50">
-                      <div className="text-sm font-semibold mb-2">Preview</div>
-                      <div className="space-y-1 text-[12px]">
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Items Net</span>
-                          <span className="font-semibold">₹{fmtMoney(calcPreview.itemsNet)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Bill Discount</span>
-                          <span className="font-semibold">- ₹{fmtMoney(calcPreview.billDisc)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Shipping</span>
-                          <span className="font-semibold">₹{fmtMoney(calcPreview.ship)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Other</span>
-                          <span className="font-semibold">₹{fmtMoney(calcPreview.other)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Round Off</span>
-                          <span className="font-semibold">
-                            {calcPreview.ro >= 0 ? "+" : "-"} ₹{fmtMoney(Math.abs(calcPreview.ro))}
-                          </span>
-                        </div>
-
-                        <div className="h-px bg-slate-200 my-2" />
-
-                        <div className="flex justify-between text-[13px]">
-                          <span className="font-extrabold">Grand Total</span>
-                          <span className="font-extrabold">₹{fmtMoney(calcPreview.grand)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
-                <div className="px-4 py-3 border-t bg-slate-50 flex justify-end gap-2">
+                {/* footer */}
+                <div className="px-4 py-2 border-t bg-slate-50 flex justify-end gap-2">
                   <button
                     onClick={() => setCreateOpen(false)}
                     className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
@@ -1021,46 +1392,91 @@ export default function SupplierReceiptsPage() {
                   </button>
                   <button
                     onClick={submitCreate}
-                    disabled={creating}
+                    disabled={
+                      creating || items.some((x) => Math.floor(num(x.receive_now_qty)) > x.pending_qty)
+                    }
                     className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                    title={
+                      items.some((x) => Math.floor(num(x.receive_now_qty)) > x.pending_qty)
+                        ? "Fix receive qty (cannot exceed pending)"
+                        : ""
+                    }
                   >
                     {creating ? "Saving..." : "Save Receipt"}
                   </button>
                 </div>
               </div>
-
-              <div className="h-3" />
             </div>
           </div>
         </div>
       )}
 
-      {/* ---------------- View Modal ---------------- */}
+      {/* ---------------- View Modal (kept from your version) ---------------- */}
       {viewOpen && (
         <div className="fixed inset-0 z-50 bg-black/50">
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
-            <div className="mx-auto w-full max-w-[1100px]">
+            <div className="mx-auto w-full max-w-[1200px]">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between">
-                  <div>
-                    <div className="text-sm font-semibold">
-                      Receipt Details {viewRow?.receipt_no ? `• ${viewRow.receipt_no}` : ""}
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">
+                      Receipt Details{" "}
+                      {viewRow?.receipt_no ? `• ${viewRow.receipt_no}` : viewId ? `• #${viewId}` : ""}
                     </div>
-                    <div className="text-[11px] text-slate-600 mt-1">
-                      Supplier:{" "}
-                      <span className="font-semibold text-slate-900">
-                        {viewRow?.supplier?.name ||
-                          (viewRow?.supplier_id ? `Supplier #${viewRow.supplier_id}` : "-")}
+
+                    <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-700">
+                      <span className="inline-flex items-center gap-1">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                        <span className="font-semibold text-slate-900">
+                          {viewRow?.supplier?.name ||
+                            (viewRow?.supplier_id ? `Supplier #${viewRow.supplier_id}` : "-")}
+                        </span>
                       </span>
+
+                      {viewRow?.supplier?.phone ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Phone className="w-3.5 h-3.5 text-slate-500" />
+                          {viewRow.supplier.phone}
+                        </span>
+                      ) : null}
+
+                      {viewRow?.supplier?.email ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Mail className="w-3.5 h-3.5 text-slate-500" />
+                          {viewRow.supplier.email}
+                        </span>
+                      ) : null}
+
+                      {safeSupplierAddress(viewRow?.supplier) ? (
+                        <span className="inline-flex items-center gap-1 min-w-0">
+                          <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          <span className="truncate max-w-[520px]">
+                            {safeSupplierAddress(viewRow?.supplier)}
+                          </span>
+                        </span>
+                      ) : null}
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => setViewOpen(false)}
-                    className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {viewId ? (
+                      <button
+                        onClick={() => handleViewPdf(viewId)}
+                        className="text-[12px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-2"
+                        title="Open PDF (if endpoint exists)"
+                      >
+                        <FileText className="w-4 h-4" /> PDF
+                      </button>
+                    ) : null}
+
+                    <button
+                      onClick={() => setViewOpen(false)}
+                      className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="p-4">
@@ -1072,7 +1488,7 @@ export default function SupplierReceiptsPage() {
                   ) : !viewRow ? (
                     <div className="p-6 text-sm text-slate-500">Not found.</div>
                   ) : (
-                    <div className="space-y-4">
+                    <>
                       <div className="grid grid-cols-12 gap-3">
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
                           <div className="text-[11px] text-slate-600">Status</div>
@@ -1084,75 +1500,39 @@ export default function SupplierReceiptsPage() {
                         </div>
 
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
-                          <div className="text-[11px] text-slate-600">Invoice No</div>
+                          <div className="text-[11px] text-slate-600 inline-flex items-center gap-1">
+                            <Hash className="w-3.5 h-3.5" /> Invoice No
+                          </div>
                           <div className="mt-1 text-sm font-semibold">{viewRow.invoice_no || "-"}</div>
                         </div>
 
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
-                          <div className="text-[11px] text-slate-600">Received Date</div>
-                          <div className="mt-1 text-sm font-semibold">
-                            {formatDate(viewRow.received_date || viewRow.invoice_date)}
+                          <div className="text-[11px] text-slate-600 inline-flex items-center gap-1">
+                            <CalendarDays className="w-3.5 h-3.5" /> Invoice / Received
+                          </div>
+                          <div className="mt-1 text-[12px] text-slate-800">
+                            <div>
+                              <span className="text-slate-500">Inv:</span>{" "}
+                              <span className="font-semibold">{formatDate(viewRow.invoice_date)}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Rcv:</span>{" "}
+                              <span className="font-semibold">
+                                {formatDate(viewRow.received_date || viewRow.invoice_date)}
+                              </span>
+                            </div>
                           </div>
                         </div>
 
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3 bg-slate-50">
                           <div className="text-[11px] text-slate-600">Grand Total</div>
-                          <div className="mt-1 text-sm font-extrabold">₹{fmtMoney(viewRow.grand_total)}</div>
+                          <div className="mt-1 text-sm font-extrabold">
+                            ₹{fmtMoney(viewTotals?.grand_total ?? viewRow.grand_total)}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                        <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
-                          <div className="text-sm font-semibold">Items</div>
-                          <div className="text-[11px] text-slate-500">{(viewRow.items || []).length} lines</div>
-                        </div>
-
-                        <div className="overflow-auto">
-                          <table className="w-full text-xs border-collapse">
-                            <thead className="bg-slate-100">
-                              <tr>
-                                <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
-                                <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Qty</th>
-                                <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Unit</th>
-                                <th className="border-b border-slate-200 px-3 py-2 text-right w-28">Disc/Unit</th>
-                                <th className="border-b border-slate-200 px-3 py-2 text-right w-32">Line</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(viewRow.items || []).map((raw, idx) => {
-                                const it = normalizeItemForView(raw);
-                                const qty = Math.max(0, Math.floor(num(it.received_qty)));
-                                const up = Math.max(0, num(it.unit_price));
-                                const dp = Math.max(0, num(it.discount_pct));
-                                const da = Math.max(0, num(it.discount_amt));
-                                const p = computeLinePricing(qty, up, dp, da);
-
-                                // prefer server line_amount if present; else computed
-                                const line = it.line_amount != null ? num(it.line_amount) : p.line_amount;
-                                const discPerUnit = p.discount_amt;
-
-                                return (
-                                  <tr key={it.id ?? idx} className="hover:bg-slate-50">
-                                    <td className="border-b border-slate-200 px-3 py-2">
-                                      {it.book?.title || `Book #${it.book_id}`}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(up)}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                      ₹{fmtMoney(discPerUnit)}
-                                    </td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                      ₹{fmtMoney(line)}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                         <button
                           disabled={statusSaving || viewRow.status === "draft"}
                           onClick={() => updateStatus("draft")}
@@ -1187,7 +1567,7 @@ export default function SupplierReceiptsPage() {
                           Close
                         </button>
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
               </div>
