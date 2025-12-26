@@ -68,7 +68,7 @@ export default function LedgerModal({
             <table className="w-full text-sm border">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="border px-2 py-1">Date</th>
+                  <th className="border px-2 py-1">Date1</th>
                   <th className="border px-2 py-1">Ref</th>
                   <th className="border px-2 py-1">Description</th>
                   <th className="border px-2 py-1 text-right">Debit</th>
