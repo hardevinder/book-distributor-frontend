@@ -11,7 +11,6 @@ import {
   Upload,
   BookOpen,
   ChevronLeft,
-  Sparkles,
   ScrollText,
   IndianRupee,
   X,
@@ -73,6 +72,8 @@ const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+const round2 = (v: any) => Math.round(num(v) * 100) / 100;
 
 const clamp = (v: number, min: number, max: number) =>
   Math.max(min, Math.min(max, v));
@@ -165,10 +166,61 @@ const SuppliersPageClient: React.FC = () => {
   const [payForm, setPayForm] = useState({
     payment_date: "",
     amount: "",
+    discount_percent: "", // ✅ NEW
+    discount_amount: "", // ✅ NEW
     payment_mode: "BANK",
     ref_no: "",
     notes: "",
   });
+
+  /* ---------------- ✅ Discount Helpers ---------------- */
+
+  const setDiscountPercent = (pct: string) => {
+    setPayForm((p) => {
+      const amount = num(p.amount);
+      const percent = pct === "" ? "" : String(clamp(num(pct), 0, 100));
+
+      const discAmt =
+        percent === "" || amount <= 0
+          ? ""
+          : String(round2((amount * num(percent)) / 100));
+
+      return { ...p, discount_percent: percent, discount_amount: discAmt };
+    });
+  };
+
+  const setDiscountAmount = (amt: string) => {
+    setPayForm((p) => {
+      const amount = num(p.amount);
+      const disc = amt === "" ? "" : String(clamp(num(amt), 0, 999999999));
+
+      const pct =
+        disc === "" || amount <= 0
+          ? ""
+          : String(round2((num(disc) * 100) / amount));
+
+      return { ...p, discount_amount: disc, discount_percent: pct };
+    });
+  };
+
+  const setPaymentAmount = (val: string) => {
+    setPayForm((p) => {
+      const next = { ...p, amount: val };
+      const amount = num(val);
+
+      if (p.discount_percent?.trim()) {
+        const pct = clamp(num(p.discount_percent), 0, 100);
+        next.discount_amount =
+          amount > 0 ? String(round2((amount * pct) / 100)) : "";
+      } else if (p.discount_amount?.trim()) {
+        const disc = clamp(num(p.discount_amount), 0, 999999999);
+        next.discount_percent =
+          amount > 0 ? String(round2((disc * 100) / amount)) : "";
+      }
+
+      return next;
+    });
+  };
 
   /* ---------------- ✅ Ledger Popup State ---------------- */
 
@@ -271,7 +323,9 @@ const SuppliersPageClient: React.FC = () => {
       const msg =
         err?.message ||
         err?.response?.data?.error ||
-        (editingId ? "Failed to update supplier." : "Failed to create supplier.");
+        (editingId
+          ? "Failed to update supplier."
+          : "Failed to create supplier.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -431,6 +485,8 @@ const SuppliersPageClient: React.FC = () => {
     setPayForm({
       payment_date: "",
       amount: "",
+      discount_percent: "",
+      discount_amount: "",
       payment_mode: "BANK",
       ref_no: "",
       notes: "",
@@ -446,6 +502,13 @@ const SuppliersPageClient: React.FC = () => {
       return;
     }
 
+    const pct = payForm.discount_percent?.trim();
+    const fix = payForm.discount_amount?.trim();
+    if (pct && fix) {
+      setPayErr("Enter either Discount % OR Discount Amount (not both).");
+      return;
+    }
+
     setPaySaving(true);
     setPayErr(null);
 
@@ -457,6 +520,9 @@ const SuppliersPageClient: React.FC = () => {
         ref_no: payForm.ref_no?.trim() || null,
         notes: payForm.notes?.trim() || null,
       };
+
+      if (pct) payload.discount_percent = clamp(num(pct), 0, 100);
+      if (fix) payload.discount_amount = clamp(num(fix), 0, amount);
 
       await api.post(`/api/suppliers/${paySupplier.id}/payments`, payload);
 
@@ -573,12 +639,12 @@ const SuppliersPageClient: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
       {/* background blobs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000" />
+        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000" />
       </div>
 
-      {/* ✅ ULTRA COMPACT TOP BAR: everything in ONE line (wraps only when forced) */}
+      {/* ✅ ULTRA COMPACT TOP BAR */}
       <header className="relative z-10 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow">
         <div className="px-2 sm:px-3 py-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -608,7 +674,7 @@ const SuppliersPageClient: React.FC = () => {
               </span>
             </div>
 
-            {/* Search (flex-grow) */}
+            {/* Search */}
             <div className="relative flex-1 min-w-[180px] sm:min-w-[260px] max-w-[520px]">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -631,7 +697,7 @@ const SuppliersPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* Actions: tiny buttons */}
+            {/* Actions */}
             <button
               type="button"
               onClick={handleExport}
@@ -675,7 +741,7 @@ const SuppliersPageClient: React.FC = () => {
               </button>
             )}
 
-            {/* Right: user + logout (compact) */}
+            {/* Right: user + logout */}
             <div className="ml-auto flex items-center gap-2">
               <span className="hidden md:inline text-xs text-slate-600 font-semibold">
                 {user?.name || "User"}
@@ -693,7 +759,7 @@ const SuppliersPageClient: React.FC = () => {
       </header>
 
       <main className="relative z-10 p-2 sm:p-3 lg:p-4 space-y-2">
-        {/* Alerts (tight) */}
+        {/* Alerts */}
         {(error || importSummary) && (
           <div className="space-y-2">
             {error && (
@@ -709,7 +775,7 @@ const SuppliersPageClient: React.FC = () => {
           </div>
         )}
 
-        {/* Table container (✅ max listing height) */}
+        {/* Table container */}
         <section className="bg-white/80 backdrop-blur-sm rounded-2xl p-2 sm:p-3 shadow border border-slate-200/60">
           {listLoading ? (
             <div className="flex items-center justify-center py-6 text-xs text-slate-600">
@@ -1065,10 +1131,44 @@ const SuppliersPageClient: React.FC = () => {
                         type="number"
                         min={0}
                         value={payForm.amount}
-                        onChange={(e) =>
-                          setPayForm((p) => ({ ...p, amount: e.target.value }))
-                        }
+                        onChange={(e) => setPaymentAmount(e.target.value)}
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    {/* ✅ Discount % */}
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Discount %
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={payForm.discount_percent}
+                        onChange={(e) => setDiscountPercent(e.target.value)}
+                        disabled={!!payForm.discount_amount?.trim()}
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-100"
+                        placeholder="0"
+                      />
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        Enter % OR fixed amount (one only)
+                      </div>
+                    </div>
+
+                    {/* ✅ Discount Amount */}
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Discount Amount
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={payForm.discount_amount}
+                        onChange={(e) => setDiscountAmount(e.target.value)}
+                        disabled={!!payForm.discount_percent?.trim()}
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right disabled:bg-slate-100"
                         placeholder="0"
                       />
                     </div>
@@ -1122,6 +1222,31 @@ const SuppliersPageClient: React.FC = () => {
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
                         placeholder="Optional..."
                       />
+                    </div>
+
+                    {/* ✅ Summary line */}
+                    <div className="col-span-12">
+                      <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          Cash Paid: <b>₹{fmtMoney(num(payForm.amount))}</b>
+                        </span>
+                        <span>
+                          Discount:{" "}
+                          <b>
+                            ₹{fmtMoney(num(payForm.discount_amount || 0))}
+                          </b>
+                        </span>
+                        <span>
+                          Total Settled:{" "}
+                          <b>
+                            ₹
+                            {fmtMoney(
+                              num(payForm.amount) +
+                                num(payForm.discount_amount || 0)
+                            )}
+                          </b>
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1265,9 +1390,7 @@ const SuppliersPageClient: React.FC = () => {
                                 ₹{fmtMoney(r.credit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                {r.balance == null
-                                  ? "-"
-                                  : `₹${fmtMoney(r.balance)}`}
+                                {r.balance == null ? "-" : `₹${fmtMoney(r.balance)}`}
                               </td>
                             </tr>
                           ))}

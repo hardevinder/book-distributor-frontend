@@ -47,7 +47,6 @@ type SchoolOrderItem = {
   total_order_qty: number | string;
   received_qty: number | string;
 
-  // backend may send these (after reorder / receive)
   pending_qty?: number | string | null;
   reordered_qty?: number | string | null;
 
@@ -83,16 +82,20 @@ type SchoolOrder = {
   items?: SchoolOrderItem[];
   SchoolOrderItems?: SchoolOrderItem[];
 
-  // transport/meta (order-only)
   transport_id?: number | null;
-  transport_through?: string | null;
   transport?: TransportLite | null;
 
   transport_id_2?: number | null;
-  transport_through_2?: string | null;
   transport2?: TransportLite | null;
 
   notes?: string | null;
+
+  // optional counters
+  email_sent_count?: number;
+  last_email_sent_at?: string | null;
+  last_email_to?: string | null;
+  last_email_cc?: string | null;
+  last_email_subject?: string | null;
 };
 
 /* ---------- Session Options ---------- */
@@ -137,6 +140,19 @@ const formatDate = (value?: string | null) => {
   const d = new Date(value);
   if (isNaN(d.getTime())) return value;
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 };
 
 const totalQtyFromItems = (items: SchoolOrderItem[]) =>
@@ -189,6 +205,125 @@ const statusChipClass = (status: string | undefined) => {
 
 const makeSupplierKey = (orderId: number, supplierId: number) => `${orderId}:${supplierId}`;
 
+// ✅ very small HTML escape (safe)
+const escapeHtml = (s: string) =>
+  String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+/**
+ * ✅ If backend creates 2 log rows (TO + CC), this merges them into 1 "send".
+ * It also makes "count" = number of sends (not recipients).
+ */
+type MergedEmailLog = {
+  key: string;
+  when: string | null;
+  to: string;
+  cc: string;
+  status: string;
+  raw: any[];
+};
+
+const normalizeEmail = (v: any) => String(v || "").trim();
+
+const splitEmails = (s: string) =>
+  s
+    .split(/[,\n;]+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+const uniqJoinEmails = (emails: string[]) => {
+  const map = new Map<string, string>();
+  emails.forEach((e) => {
+    const k = e.toLowerCase();
+    if (!map.has(k)) map.set(k, e);
+  });
+  return Array.from(map.values()).join(", ");
+};
+
+const guessRecipientType = (row: any): "to" | "cc" | "unknown" => {
+  const t = String(row?.recipient_type || row?.type || row?.kind || "").toLowerCase();
+  if (t === "to") return "to";
+  if (t === "cc") return "cc";
+  if (row?.is_cc === true || row?.isCc === true) return "cc";
+  return "unknown";
+};
+
+const buildEmailGroupKey = (row: any, fallbackIdx: number) => {
+  const mid = normalizeEmail(row?.message_id || row?.messageId);
+  if (mid) return `mid:${mid}`;
+
+  const gid = normalizeEmail(row?.group_id || row?.groupId || row?.batch_id || row?.batchId);
+  if (gid) return `gid:${gid}`;
+
+  const when = normalizeEmail(row?.sent_at || row?.createdAt || row?.created_at);
+  const subject = normalizeEmail(row?.subject);
+  const oid = normalizeEmail(row?.order_id || row?.school_order_id);
+
+  if (when || subject || oid) return `tso:${when}|${subject}|${oid}`;
+  return `idx:${fallbackIdx}`;
+};
+
+const mergeEmailLogs = (rows: any[]): MergedEmailLog[] => {
+  const groups = new Map<string, any[]>();
+
+  rows.forEach((r, idx) => {
+    const key = buildEmailGroupKey(r, idx);
+    const arr = groups.get(key) || [];
+    arr.push(r);
+    groups.set(key, arr);
+  });
+
+  const merged: MergedEmailLog[] = Array.from(groups.entries()).map(([key, arr]) => {
+    const primary = arr.find((x) => guessRecipientType(x) === "to") || arr[0];
+
+    const when =
+      normalizeEmail(primary?.sent_at || primary?.createdAt || primary?.created_at) ||
+      normalizeEmail(arr[0]?.sent_at || arr[0]?.createdAt || arr[0]?.created_at) ||
+      null;
+
+    const toEmails: string[] = [];
+    const ccEmails: string[] = [];
+
+    arr.forEach((x) => {
+      const t = guessRecipientType(x);
+      const toVal = normalizeEmail(x?.to_email || x?.to || x?.toEmail);
+      const ccVal = normalizeEmail(x?.cc || x?.cc_email || x?.ccEmail);
+
+      if (t === "cc") {
+        if (toVal) ccEmails.push(...splitEmails(toVal));
+      } else {
+        if (toVal) toEmails.push(...splitEmails(toVal));
+      }
+
+      if (ccVal) ccEmails.push(...splitEmails(ccVal));
+    });
+
+    const to = uniqJoinEmails(toEmails.length ? toEmails : splitEmails(normalizeEmail(primary?.to_email || primary?.to)));
+    const cc = uniqJoinEmails(ccEmails);
+
+    const status = normalizeEmail(primary?.status || arr[0]?.status) || "SENT";
+    return { key, when, to: to || "-", cc: cc || "-", status, raw: arr };
+  });
+
+  merged.sort((a, b) => {
+    const ta = a.when ? new Date(a.when).getTime() : 0;
+    const tb = b.when ? new Date(b.when).getTime() : 0;
+    return tb - ta;
+  });
+
+  return merged;
+};
+
+const clampInt = (v: any, min = 0, max = 999999) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+};
+
 /* ---------- Component ---------- */
 
 const SchoolOrdersPageClient: React.FC = () => {
@@ -215,9 +350,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   // Modal meta editing (order-only)
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaTransportId, setMetaTransportId] = useState<string>("");
-  const [metaTransportThrough, setMetaTransportThrough] = useState<string>("");
   const [metaTransportId2, setMetaTransportId2] = useState<string>("");
-  const [metaTransportThrough2, setMetaTransportThrough2] = useState<string>("");
   const [metaNotes, setMetaNotes] = useState<string>("");
 
   // Order No edit
@@ -230,6 +363,40 @@ const SchoolOrdersPageClient: React.FC = () => {
 
   // Reorder loading
   const [reorderingId, setReorderingId] = useState<number | null>(null);
+
+  // ✅ Reorder Copy (manual qty) modal
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyOrder, setCopyOrder] = useState<SchoolOrder | null>(null);
+  const [copySaving, setCopySaving] = useState(false);
+  const [copyQtyDrafts, setCopyQtyDrafts] = useState<Record<number, number>>({}); // item_id -> qty
+
+  // ✅ Email modal state
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailOrder, setEmailOrder] = useState<SchoolOrder | null>(null);
+
+  const [emailTo, setEmailTo] = useState("");
+  const [emailCc, setEmailCc] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+
+  // ✅ Non-technical email editor fields
+  const [emailGreeting, setEmailGreeting] = useState("Dear Sir/Madam,");
+  const [emailLine1, setEmailLine1] = useState("Please find the attached Purchase Order PDF.");
+  const [emailExtraLines, setEmailExtraLines] = useState("Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}");
+  const [emailSignature, setEmailSignature] = useState("Regards,\nEduBridge ERP");
+
+  // ✅ Preview popup
+  const [emailBodyPreviewOpen, setEmailBodyPreviewOpen] = useState(false);
+
+  // raw rows from API
+  const [emailLogsRaw, setEmailLogsRaw] = useState<any[]>([]);
+  // merged rows (one per send)
+  const mergedEmailLogs = useMemo(() => mergeEmailLogs(emailLogsRaw), [emailLogsRaw]);
+  const emailCount = mergedEmailLogs.length;
+
+  // ✅ Email count cache for listing (orderId -> count)
+  const [emailCounts, setEmailCounts] = useState<Record<number, number>>({});
 
   /* ---------- Data fetching ---------- */
 
@@ -261,8 +428,8 @@ const SchoolOrdersPageClient: React.FC = () => {
       const list: SchoolOrder[] = Array.isArray(payload)
         ? payload
         : Array.isArray(payload?.orders)
-        ? payload.orders
-        : [];
+          ? payload.orders
+          : [];
 
       setOrders(list || []);
 
@@ -314,25 +481,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  const handleSendEmail = async (order: SchoolOrder) => {
-    if (!order.id) return;
-
-    setError(null);
-    setInfo(null);
-    setSendingOrderId(order.id);
-
-    try {
-      const res = await api.post(`/api/school-orders/${order.id}/send-email`);
-      setInfo(res?.data?.message || "Email sent.");
-      await fetchOrders();
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.response?.data?.message || "Email failed.");
-    } finally {
-      setSendingOrderId(null);
-    }
-  };
-
   const handleViewPdf = async (order: SchoolOrder) => {
     if (!order.id) return;
     setError(null);
@@ -357,8 +505,8 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // Reorder (kept as “order-only” action)
-  const handleReorder = async (order: SchoolOrder) => {
+  // ✅ Pending reorder (shifts reordered_qty in old order)
+  const handleReorderPending = async (order: SchoolOrder) => {
     if (!order?.id) return;
     setError(null);
     setInfo(null);
@@ -369,18 +517,18 @@ const SchoolOrdersPageClient: React.FC = () => {
       try {
         res = await api.post(`/api/school-orders/${order.id}/reorder`);
       } catch (e: any) {
-        if (e?.response?.status === 404) res = await api.post(`/api/school-orders/${order.id}/duplicate`);
+        if (e?.response?.status === 404) res = await api.post(`/api/school-orders/${order.id}/reorder-pending`);
         else throw e;
       }
 
       const msg =
         res?.data?.message ||
-        (res?.data?.order?.id ? `Reordered. New Order #${res.data.order.id}` : "Reordered.");
+        (res?.data?.new_order?.id ? `Reordered. New Order #${res.data.new_order.id}` : "Reordered.");
       setInfo(msg);
 
       await fetchOrders();
 
-      const newOrder = res?.data?.order as SchoolOrder | undefined;
+      const newOrder = (res?.data?.new_order || res?.data?.order) as SchoolOrder | undefined;
       if (newOrder?.id) handleOpenView(newOrder);
     } catch (err: any) {
       console.error("reorder error:", err);
@@ -390,14 +538,78 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
+  // ✅ Copy reorder (manual qty) - does NOT touch old order (safe for bulk generate flow)
+  const openCopyModal = (order: SchoolOrder) => {
+    const items = getOrderItems(order);
+
+    // prefill with pending qty (suggestion), but allow user to edit
+    const drafts: Record<number, number> = {};
+    items.forEach((it) => {
+      const ordered = Number(it.total_order_qty) || 0;
+      const received = Number(it.received_qty) || 0;
+      const reordered = Number(it.reordered_qty) || 0;
+      const pending = Math.max(ordered - received - reordered, 0);
+      drafts[it.id] = pending;
+    });
+
+    setCopyOrder(order);
+    setCopyQtyDrafts(drafts);
+    setCopyOpen(true);
+    setError(null);
+    setInfo(null);
+  };
+
+  const closeCopyModal = () => {
+    setCopyOpen(false);
+    setCopyOrder(null);
+    setCopyQtyDrafts({});
+    setCopySaving(false);
+  };
+
+  const submitCopyReorder = async () => {
+    if (!copyOrder?.id) return;
+
+    const items = getOrderItems(copyOrder);
+    const payloadItems = items
+      .map((it) => ({
+        item_id: it.id,
+        total_order_qty: clampInt(copyQtyDrafts[it.id] ?? 0, 0, 999999),
+      }))
+      .filter((x) => x.total_order_qty > 0);
+
+    if (!payloadItems.length) {
+      setError("Enter at least 1 qty (>0) for copy reorder.");
+      return;
+    }
+
+    setCopySaving(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const res = await api.post(`/api/school-orders/${copyOrder.id}/reorder-copy`, {
+        items: payloadItems,
+      });
+
+      setInfo(res?.data?.message || "Copy reorder created.");
+      await fetchOrders();
+
+      const newOrder = (res?.data?.new_order || res?.data?.order) as SchoolOrder | undefined;
+      closeCopyModal();
+      if (newOrder?.id) handleOpenView(newOrder);
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.message || "Copy reorder failed.");
+    } finally {
+      setCopySaving(false);
+    }
+  };
+
   const handleOpenView = (order: SchoolOrder) => {
     setViewOrder(order);
 
     setMetaTransportId(order.transport_id ? String(order.transport_id) : "");
-    setMetaTransportThrough(order.transport_through || "");
-
     setMetaTransportId2(order.transport_id_2 ? String(order.transport_id_2) : "");
-    setMetaTransportThrough2(order.transport_through_2 || "");
 
     setMetaNotes(order.notes || "");
     setBaseOrderNoDraft(order.order_no || "");
@@ -412,11 +624,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     try {
       const payload = {
         transport_id: metaTransportId ? Number(metaTransportId) : null,
-        transport_through: metaTransportThrough.trim() ? metaTransportThrough.trim() : null,
-
         transport_id_2: metaTransportId2 ? Number(metaTransportId2) : null,
-        transport_through_2: metaTransportThrough2.trim() ? metaTransportThrough2.trim() : null,
-
         notes: metaNotes.trim() ? metaNotes.trim() : null,
       };
 
@@ -427,11 +635,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
 
       setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
-      setMetaTransportThrough(updatedOrder.transport_through || "");
-
       setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
-      setMetaTransportThrough2(updatedOrder.transport_through_2 || "");
-
       setMetaNotes(updatedOrder.notes || "");
 
       setInfo(res.data?.message || "Meta saved.");
@@ -484,7 +688,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       await api.patch(`/api/school-orders/${orderId}/order-no`, { order_no: newNo });
-
       setInfo("Order no updated.");
 
       setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o)));
@@ -495,6 +698,173 @@ const SchoolOrdersPageClient: React.FC = () => {
       setError(err?.response?.data?.message || "Order no update failed.");
     } finally {
       setSavingOrderNoId(null);
+    }
+  };
+
+  /* ---------- ✅ Email modal actions ---------- */
+
+  const fetchEmailCountForOrder = async (orderId: number) => {
+    if (!orderId) return;
+    if (emailCounts[orderId] != null) return;
+
+    try {
+      const r = await api.get(`/api/school-orders/${orderId}/email-logs?limit=30`);
+      const payload = r?.data || {};
+      const rows = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.logs) ? payload.logs : [];
+      const merged = mergeEmailLogs(rows);
+      setEmailCounts((prev) => ({ ...prev, [orderId]: merged.length }));
+    } catch {
+      // ignore
+    }
+  };
+
+  const refreshEmailLogs = async (orderId: number) => {
+    try {
+      const l = await api.get(`/api/school-orders/${orderId}/email-logs?limit=80`);
+      const logsPayload = l?.data || {};
+      const rows = Array.isArray(logsPayload.data)
+        ? logsPayload.data
+        : Array.isArray(logsPayload.logs)
+          ? logsPayload.logs
+          : [];
+
+      setEmailLogsRaw(rows);
+
+      const merged = mergeEmailLogs(rows);
+      setEmailCounts((prev) => ({ ...prev, [orderId]: merged.length }));
+    } catch {
+      // ignore
+    }
+  };
+
+  const openEmailModal = async (order: SchoolOrder) => {
+    if (!order?.id) return;
+
+    setError(null);
+    setInfo(null);
+
+    setEmailOpen(true);
+    setEmailOrder(order);
+    setSendingOrderId(order.id);
+
+    setEmailBodyPreviewOpen(false);
+
+    setEmailLoading(true);
+    try {
+      const p = await api.get(`/api/school-orders/${order.id}/email-preview`);
+      const preview = p?.data || {};
+
+      const supplierName = order?.supplier?.name || "Sir/Madam";
+      const orderNo = order.order_no || String(order.id);
+
+      setEmailTo(preview.to || order.supplier?.email || "");
+      setEmailCc(preview.cc || "");
+      setEmailSubject(preview.subject || `Purchase Order – Order No ${orderNo} – ${order.supplier?.name || ""}`);
+
+      setEmailGreeting(`Dear ${supplierName},`);
+      setEmailLine1("Please find the attached Purchase Order PDF.");
+      setEmailExtraLines(`Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}`);
+      setEmailSignature("Regards,\nEduBridge ERP");
+
+      await refreshEmailLogs(order.id);
+      setEmailCounts((prev) => ({ ...prev, [order.id]: prev[order.id] ?? 0 }));
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.message || "Failed to load email preview.");
+    } finally {
+      setEmailLoading(false);
+      setSendingOrderId(null);
+    }
+  };
+
+  const closeEmailModal = () => {
+    setEmailOpen(false);
+    setEmailLoading(false);
+    setEmailSending(false);
+    setEmailOrder(null);
+
+    setEmailBodyPreviewOpen(false);
+
+    setEmailTo("");
+    setEmailCc("");
+    setEmailSubject("");
+
+    setEmailGreeting("Dear Sir/Madam,");
+    setEmailLine1("Please find the attached Purchase Order PDF.");
+    setEmailExtraLines("Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}");
+    setEmailSignature("Regards,\nEduBridge ERP");
+
+    setEmailLogsRaw([]);
+  };
+
+  const buildEmailHtml = (order: SchoolOrder | null) => {
+    const orderNo = order?.order_no || String(order?.id || "");
+    const orderDate = formatDate(order?.order_date || order?.createdAt);
+
+    const replaceTokens = (s: string) =>
+      String(s || "")
+        .replaceAll("{ORDER_NO}", orderNo)
+        .replaceAll("{ORDER_DATE}", orderDate);
+
+    const greeting = escapeHtml(replaceTokens(emailGreeting)).replaceAll("\n", "<br/>");
+    const line1 = escapeHtml(replaceTokens(emailLine1)).replaceAll("\n", "<br/>");
+
+    const extrasRaw = replaceTokens(emailExtraLines || "");
+    const extras = extrasRaw
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => `<div>${escapeHtml(x)}</div>`)
+      .join("");
+
+    const signature = escapeHtml(replaceTokens(emailSignature)).replaceAll("\n", "<br/>");
+
+    return `
+      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111;">
+        <p style="margin:0 0 10px;">${greeting}</p>
+        <p style="margin:0 0 12px;">${line1}</p>
+        ${extras ? `<div style="margin:0 0 14px;">${extras}</div>` : ""}
+        <p style="margin:0;">${signature}</p>
+      </div>
+    `.trim();
+  };
+
+  const sendEmailFromModal = async () => {
+    if (!emailOrder?.id) return;
+
+    const to = emailTo.trim();
+    if (!to) {
+      setError("To email is required.");
+      return;
+    }
+
+    setError(null);
+    setInfo(null);
+    setEmailSending(true);
+
+    try {
+      const html = buildEmailHtml(emailOrder);
+
+      const res = await api.post(`/api/school-orders/${emailOrder.id}/send-email`, {
+        to,
+        cc: emailCc.trim() || null,
+        subject: emailSubject.trim() || null,
+        html,
+      });
+
+      setInfo(res?.data?.message || "Email sent.");
+      await fetchOrders();
+      await refreshEmailLogs(emailOrder.id);
+
+      setEmailCounts((prev) => ({
+        ...prev,
+        [emailOrder.id]: Number(prev[emailOrder.id] ?? 0) + 1,
+      }));
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.message || "Email failed.");
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -520,6 +890,13 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
+  useEffect(() => {
+    visibleOrders.slice(0, 40).forEach((o) => {
+      if (o?.id) fetchEmailCountForOrder(o.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleOrders]);
+
   const aggregate = useMemo(() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
@@ -533,7 +910,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       orderedTotal += ord;
       receivedTotal += rec;
-
       pendingTotalLocal += isClosedishStatus(o.status) ? 0 : Math.max(ord - rec - re, 0);
     });
 
@@ -598,22 +974,25 @@ const SchoolOrdersPageClient: React.FC = () => {
   /* ---------- UI ---------- */
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900 scrollbar-sleek">
       {/* Header */}
       <header className="sticky top-0 z-20 bg-white border-b border-slate-200">
-        <div className="px-3 py-2 flex items-center justify-between gap-2">
+        <div className="px-2 py-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <Link href="/" className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-xs">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-[11px]"
+            >
               <ChevronLeft className="w-4 h-4" />
               Back
             </Link>
 
             <div className="flex items-center gap-2 min-w-0">
-              <div className="h-8 w-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center">
+              <div className="h-7 w-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center">
                 <Package className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">School → Supplier Orders</div>
+                <div className="text-[13px] font-semibold truncate">School → Supplier Orders</div>
               </div>
             </div>
           </div>
@@ -627,12 +1006,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
 
         {/* Toolbar */}
-        <div className="px-3 pb-2">
-          <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="px-2 pb-2">
+          <form onSubmit={handleGenerate} className="flex flex-wrap items-center gap-1.5 text-[11px]">
             <select
               value={filterSession}
               onChange={(e) => setFilterSession(e.target.value)}
-              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[120px]"
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[120px]"
               title="Session"
             >
               <option value="">Session</option>
@@ -646,7 +1025,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <select
               value={filterSchoolId}
               onChange={(e) => setFilterSchoolId(e.target.value)}
-              className="border border-slate-300 rounded-xl px-2 py-1 bg-white min-w-[180px]"
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[220px]"
               title="School"
             >
               <option value="">School</option>
@@ -661,7 +1040,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[130px]"
               title="Status"
             >
               <option value="">Status</option>
@@ -674,12 +1053,12 @@ const SchoolOrdersPageClient: React.FC = () => {
               <option value="cancelled">Cancelled</option>
             </select>
 
-            <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block" />
+            <div className="hidden md:block w-px h-5 bg-slate-200 mx-1" />
 
             <select
               value={academicSession}
               onChange={(e) => setAcademicSession(e.target.value)}
-              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[120px]"
+              className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[120px]"
               title="Generate Session"
             >
               {SESSION_OPTIONS.map((s) => (
@@ -692,7 +1071,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <button
               type="submit"
               disabled={generating}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold text-white
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold text-white
                          bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600
                          hover:brightness-110 active:brightness-95
                          shadow-sm hover:shadow
@@ -702,12 +1081,12 @@ const SchoolOrdersPageClient: React.FC = () => {
             >
               {generating ? (
                 <>
-                  <RefreshCcw className="w-4 h-4 animate-spin" />
-                  Generating...
+                  <RefreshCcw className="w-3.5 h-3.5 animate-spin" />
+                  ...
                 </>
               ) : (
                 <>
-                  <PlusCircle className="w-4 h-4" />
+                  <PlusCircle className="w-3.5 h-3.5" />
                   Generate
                 </>
               )}
@@ -717,7 +1096,7 @@ const SchoolOrdersPageClient: React.FC = () => {
               type="button"
               onClick={fetchOrders}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
                          text-emerald-800 border border-emerald-200
                          bg-gradient-to-r from-emerald-50 to-cyan-50
                          hover:from-emerald-100 hover:to-cyan-100
@@ -726,12 +1105,12 @@ const SchoolOrdersPageClient: React.FC = () => {
                          disabled:opacity-60 disabled:shadow-none"
               title="Refresh"
             >
-              <RefreshCcw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </button>
 
-            <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-600">
-              <span title="Orders">{visibleOrders.length} orders</span>
+            <div className="ml-auto flex items-center gap-2 text-[11px] text-slate-600">
+              <span title="Orders">{visibleOrders.length}</span>
               <span title="Ordered">O:{orderedTotal}</span>
               <span title="Received">R:{receivedTotal}</span>
               <span title="Pending">P:{pendingTotal}</span>
@@ -739,7 +1118,7 @@ const SchoolOrdersPageClient: React.FC = () => {
           </form>
 
           {(error || info) && (
-            <div className="mt-2">
+            <div className="mt-1.5">
               {error && (
                 <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
                   {error}
@@ -758,9 +1137,9 @@ const SchoolOrdersPageClient: React.FC = () => {
       {/* Listing */}
       <main className="p-2">
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-3 py-2 border-b border-slate-200 flex items-center gap-2">
+          <div className="px-2 py-1.5 border-b border-slate-200 flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-indigo-600" />
-            <span className="text-sm font-semibold">Orders</span>
+            <span className="text-[13px] font-semibold">Orders</span>
           </div>
 
           {loading ? (
@@ -771,147 +1150,199 @@ const SchoolOrdersPageClient: React.FC = () => {
           ) : schoolGroups.length === 0 ? (
             <div className="p-6 text-sm text-slate-500">No orders.</div>
           ) : (
-            <div className="space-y-2 p-2 max-h-[68vh] overflow-auto">
+            <div className="space-y-2 p-2 max-h-[72vh] overflow-auto">
               {schoolGroups.map((group) => (
                 <div key={group.schoolId} className="border border-slate-200 rounded-lg overflow-hidden">
-                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <div className="text-sm font-semibold">
+                  <div className="px-2 py-1.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <div className="text-[13px] font-semibold truncate">
                       {group.school?.name || "Unknown"}
                       {group.school?.city ? (
-                        <span className="text-xs text-slate-500 font-normal"> ({group.school.city})</span>
+                        <span className="text-[11px] text-slate-500 font-normal"> ({group.school.city})</span>
                       ) : null}
                     </div>
-                    <div className="text-[11px] text-slate-500">{group.rows.length} orders</div>
+                    <div className="text-[11px] text-slate-500">{group.rows.length}</div>
                   </div>
 
-                  <div className="overflow-auto">
-                    <table className="w-full text-xs border-collapse">
-                      <thead className="bg-slate-100">
-                        <tr>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Supplier
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Order No (Edit)
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Date
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
-                            O
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
-                            R
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-right font-semibold text-slate-700">
-                            P
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Status
-                          </th>
-                          <th className="border-b border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
+                  <div className="overflow-x-auto overflow-y-hidden">
+                    <div className="min-w-[1050px]">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
+                              Supplier
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
+                              Order No
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
+                              Date
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-700 whitespace-nowrap">
+                              O
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-700 whitespace-nowrap">
+                              R
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-700 whitespace-nowrap">
+                              P
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
+                              Status
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-700 whitespace-nowrap">
+                              E
+                            </th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
 
-                      <tbody>
-                        {group.rows.map((row) => {
-                          const { order } = row;
-                          const isSending = sendingOrderId === order.id;
-                          const isReordering = reorderingId === order.id;
+                        <tbody>
+                          {group.rows.map((row) => {
+                            const { order } = row;
+                            const isSending = sendingOrderId === order.id;
+                            const isReordering = reorderingId === order.id;
 
-                          const statusClass = statusChipClass(order.status);
+                            const statusClass = statusChipClass(order.status);
 
-                          const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
-                          const savingThis = savingOrderNoId === order.id;
+                            const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
+                            const savingThis = savingOrderNoId === order.id;
 
-                          return (
-                            <tr key={row.key} className="hover:bg-slate-50">
-                              <td className="border-b border-slate-200 px-2 py-2 font-medium">{row.supplierName}</td>
+                            return (
+                              <tr key={row.key} className="hover:bg-slate-50">
+                                <td className="border-b border-slate-200 px-2 py-1.5 font-medium whitespace-nowrap">
+                                  {row.supplierName}
+                                </td>
 
-                              <td className="border-b border-slate-200 px-2 py-2">
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    value={draft}
-                                    onChange={(e) =>
-                                      setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))
-                                    }
-                                    className="w-40 border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                    placeholder={`#${order.id}`}
-                                  />
+                                <td className="border-b border-slate-200 px-2 py-1.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      value={draft}
+                                      onChange={(e) =>
+                                        setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))
+                                      }
+                                      className="w-36 border border-slate-300 rounded-md px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                      placeholder={`#${order.id}`}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveOrderNoFromListing(order.id)}
+                                      disabled={savingThis}
+                                      className="text-[11px] px-2.5 py-1 rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                                    >
+                                      {savingThis ? "..." : "Save"}
+                                    </button>
+                                  </div>
+                                </td>
+
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-slate-600 whitespace-nowrap">
+                                  {formatDate(order.order_date || order.createdAt)}
+                                </td>
+
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right whitespace-nowrap">
+                                  {row.orderedTotal}
+                                </td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right whitespace-nowrap">
+                                  {row.receivedTotal}
+                                </td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right whitespace-nowrap">
+                                  {row.pendingTotal}
+                                </td>
+
+                                <td className="border-b border-slate-200 px-2 py-1.5 whitespace-nowrap">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10.5px] ${statusClass}`}>
+                                    {statusLabel(order.status)}
+                                  </span>
+                                </td>
+
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right whitespace-nowrap">
                                   <button
                                     type="button"
-                                    onClick={() => handleSaveOrderNoFromListing(order.id)}
-                                    disabled={savingThis}
-                                    className="text-[12px] px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                                    onClick={() => {
+                                      setEmailCounts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[order.id];
+                                        return next;
+                                      });
+                                      fetchEmailCountForOrder(order.id);
+                                    }}
+                                    className="inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 rounded-full
+                                               border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[10.5px] text-slate-700"
+                                    title="Email sent count (click to refresh)"
                                   >
-                                    {savingThis ? "Saving..." : "Save"}
+                                    {emailCounts[order.id] ?? 0}
                                   </button>
-                                </div>
-                              </td>
+                                </td>
 
-                              <td className="border-b border-slate-200 px-2 py-2 text-slate-600">
-                                {formatDate(order.order_date || order.createdAt)}
-                              </td>
+                                <td className="border-b border-slate-200 px-2 py-1.5">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenView(order)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      View
+                                    </button>
 
-                              <td className="border-b border-slate-200 px-2 py-2 text-right">{row.orderedTotal}</td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-right">{row.receivedTotal}</td>
-                              <td className="border-b border-slate-200 px-2 py-2 text-right">{row.pendingTotal}</td>
+                                    {/* ✅ Reorder Pending (affects old order by shifting reordered_qty) */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleReorderPending(order)}
+                                      disabled={isReordering}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-60 text-[11px]"
+                                      title="Reorder pending qty (updates old order reordered_qty)"
+                                    >
+                                      <Repeat className={`w-3 h-3 ${isReordering ? "animate-spin" : ""}`} />
+                                      {isReordering ? "..." : "Reorder"}
+                                    </button>
 
-                              <td className="border-b border-slate-200 px-2 py-2">
-                                <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusClass}`}>
-                                  {statusLabel(order.status)}
-                                </span>
-                              </td>
+                                    {/* ✅ Copy Reorder (manual qty) - SAFE, does NOT touch old order */}
+                                    <button
+                                      type="button"
+                                      onClick={() => openCopyModal(order)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                                      title="Copy reorder with manual qty (does not change old order)"
+                                    >
+                                      <Package className="w-3 h-3" />
+                                      Copy
+                                    </button>
 
-                              <td className="border-b border-slate-200 px-2 py-2">
-                                <div className="flex flex-wrap items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenView(order)}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
-                                  >
-                                    <Eye className="w-3 h-3" />
-                                    View
-                                  </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => openEmailModal(order)}
+                                      disabled={isSending}
+                                      className="relative inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-300
+                                                 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 text-[11px]"
+                                    >
+                                      <Send className="w-3 h-3" />
+                                      Email
+                                      <span
+                                        className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded-full
+                                                   bg-white border border-emerald-200 text-[10px] text-emerald-800"
+                                        title="Emails sent"
+                                      >
+                                        {emailCounts[order.id] ?? 0}
+                                      </span>
+                                    </button>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => handleReorder(order)}
-                                    disabled={isReordering}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-60 text-[11px]"
-                                    title="Create a fresh order copied from this one"
-                                  >
-                                    <Repeat className={`w-3 h-3 ${isReordering ? "animate-spin" : ""}`} />
-                                    {isReordering ? "..." : "Reorder"}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSendEmail(order)}
-                                    disabled={isSending}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-60 text-[11px]"
-                                  >
-                                    <Send className="w-3 h-3" />
-                                    {isSending ? "..." : "Email"}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleViewPdf(order)}
-                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    PDF
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleViewPdf(order)}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      PDF
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -923,10 +1354,10 @@ const SchoolOrdersPageClient: React.FC = () => {
       {/* Modal (Order-only view + meta edit) */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 bg-black/50">
-          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+          <div className="h-full w-full overflow-auto p-2 sm:p-3">
             <div className="mx-auto w-full max-w-[1200px]">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
-                <div className="px-3 py-2 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
+                <div className="px-2 py-2 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
                   {(() => {
                     const school = getOrderSchool(viewOrder);
                     const items = getOrderItems(viewOrder);
@@ -946,24 +1377,24 @@ const SchoolOrdersPageClient: React.FC = () => {
                     return (
                       <>
                         <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-start gap-3 min-w-0">
-                            <div className="h-9 w-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                              <Package className="w-5 h-5" />
+                          <div className="flex items-start gap-2 min-w-0">
+                            <div className="h-8 w-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                              <Package className="w-4 h-4" />
                             </div>
 
                             <div className="min-w-0">
-                              <div className="text-[15px] font-semibold truncate">
+                              <div className="text-[14px] font-semibold truncate">
                                 {school?.name || "School"}{" "}
-                                <span className="text-xs text-slate-500 font-normal">
+                                <span className="text-[11px] text-slate-500 font-normal">
                                   ({viewOrder.academic_session || "-"})
                                 </span>
                               </div>
 
-                              <div className="text-xs text-slate-700 truncate mt-0.5">
+                              <div className="text-[11px] text-slate-700 truncate mt-0.5">
                                 Supplier: <span className="font-semibold text-slate-900">{supplierName}</span>
                               </div>
 
-                              <div className="mt-1 text-[12px] text-slate-700 flex flex-wrap items-center gap-2">
+                              <div className="mt-1 text-[11px] text-slate-700 flex flex-wrap items-center gap-2">
                                 <span>
                                   <span className="font-semibold">O:</span> {totalOrdered}
                                 </span>
@@ -977,7 +1408,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 </span>
                                 <span className="text-slate-400">•</span>
                                 <span
-                                  className={`px-2 py-0.5 rounded-full text-[11px] ${statusChipClass(viewOrder.status)}`}
+                                  className={`px-2 py-0.5 rounded-full text-[10.5px] ${statusChipClass(
+                                    viewOrder.status
+                                  )}`}
                                 >
                                   {statusLabel(viewOrder.status)}
                                 </span>
@@ -985,35 +1418,45 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <button
-                              onClick={() => handleReorder(viewOrder)}
+                              onClick={() => handleReorderPending(viewOrder)}
                               disabled={reorderingId === viewOrder.id}
-                              className="text-[12px] px-3 py-2 rounded-xl border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100 flex items-center gap-2 disabled:opacity-60"
+                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100 flex items-center gap-1.5 disabled:opacity-60"
+                              title="Reorder pending qty (updates old order reordered_qty)"
                             >
-                              <Repeat className={`w-4 h-4 ${reorderingId === viewOrder.id ? "animate-spin" : ""}`} />
-                              {reorderingId === viewOrder.id ? "Reordering..." : "Reorder"}
+                              <Repeat
+                                className={`w-3.5 h-3.5 ${reorderingId === viewOrder.id ? "animate-spin" : ""}`}
+                              />
+                              {reorderingId === viewOrder.id ? "..." : "Reorder"}
+                            </button>
+
+                            <button
+                              onClick={() => openCopyModal(viewOrder)}
+                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1.5"
+                              title="Copy reorder with manual qty (does not change old order)"
+                            >
+                              <Package className="w-3.5 h-3.5" /> Copy
                             </button>
 
                             <button
                               onClick={() => handleViewPdf(viewOrder)}
-                              className="text-[12px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-2"
+                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1.5"
                             >
-                              <FileText className="w-4 h-4" /> PDF
+                              <FileText className="w-3.5 h-3.5" /> PDF
                             </button>
 
                             <button
-                              onClick={() => handleSendEmail(viewOrder)}
+                              onClick={() => openEmailModal(viewOrder)}
                               disabled={sendingOrderId === viewOrder.id}
-                              className="text-[12px] px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-2 disabled:opacity-60"
+                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5 disabled:opacity-60"
                             >
-                              <Send className="w-4 h-4" />{" "}
-                              {sendingOrderId === viewOrder.id ? "Sending..." : "Email"}
+                              <Send className="w-3.5 h-3.5" /> Email
                             </button>
 
                             <button
                               onClick={() => setViewOrder(null)}
-                              className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                              className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
                               title="Close"
                             >
                               <X className="w-4 h-4" />
@@ -1021,34 +1464,34 @@ const SchoolOrdersPageClient: React.FC = () => {
                           </div>
                         </div>
 
-                        <div className="mt-2 grid grid-cols-12 gap-2 items-end">
-                          <div className="col-span-12 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Order No</label>
-                            <div className="flex items-center gap-2">
+                        <div className="mt-2 flex flex-wrap items-end gap-2">
+                          <div className="flex items-end gap-1.5">
+                            <div className="w-[220px]">
+                              <label className="block text-[10.5px] text-slate-600 mb-0.5">Order No</label>
                               <input
                                 value={baseOrderNoDraft}
                                 onChange={(e) => setBaseOrderNoDraft(e.target.value)}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
                               />
-                              <button
-                                type="button"
-                                onClick={handleSaveBaseOrderNo}
-                                disabled={savingBaseOrderNo}
-                                className="text-[12px] px-4 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-                              >
-                                {savingBaseOrderNo ? "Saving..." : "Save"}
-                              </button>
                             </div>
+                            <button
+                              type="button"
+                              onClick={handleSaveBaseOrderNo}
+                              disabled={savingBaseOrderNo}
+                              className="h-[30px] text-[11px] px-3 rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              {savingBaseOrderNo ? "..." : "Save"}
+                            </button>
                           </div>
 
-                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Transport (Option 1)</label>
+                          <div className="w-[240px]">
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">Transport 1</label>
                             <select
                               value={metaTransportId}
                               onChange={(e) => setMetaTransportId(e.target.value)}
-                              className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
                             >
-                              <option value="">-- Select --</option>
+                              <option value="">--</option>
                               {transports.map((t) => (
                                 <option key={t.id} value={String(t.id)}>
                                   {t.name}
@@ -1058,24 +1501,14 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </select>
                           </div>
 
-                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Through (Option 1)</label>
-                            <input
-                              value={metaTransportThrough}
-                              onChange={(e) => setMetaTransportThrough(e.target.value)}
-                              className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                              placeholder="DTDC / By Bus..."
-                            />
-                          </div>
-
-                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Transport (Option 2)</label>
+                          <div className="w-[240px]">
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">Transport 2</label>
                             <select
                               value={metaTransportId2}
                               onChange={(e) => setMetaTransportId2(e.target.value)}
-                              className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
                             >
-                              <option value="">-- Select --</option>
+                              <option value="">--</option>
                               {transports.map((t) => (
                                 <option key={t.id} value={String(t.id)}>
                                   {t.name}
@@ -1085,37 +1518,28 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </select>
                           </div>
 
-                          <div className="col-span-12 md:col-span-6 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Through (Option 2)</label>
-                            <input
-                              value={metaTransportThrough2}
-                              onChange={(e) => setMetaTransportThrough2(e.target.value)}
-                              className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                              placeholder="Optional..."
-                            />
-                          </div>
-
-                          <div className="col-span-12 lg:col-span-4">
-                            <label className="block text-[11px] text-slate-600 mb-1">Notes (prints in PDF footer)</label>
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-end gap-1.5">
+                            <div className="w-[320px]">
+                              <label className="block text-[10.5px] text-slate-600 mb-0.5">Notes (PDF footer)</label>
                               <input
                                 value={metaNotes}
                                 onChange={(e) => setMetaNotes(e.target.value)}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-1.5 text-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
                                 placeholder="Notes..."
                               />
-                              <button
-                                type="button"
-                                onClick={handleMetaSave}
-                                disabled={metaSaving}
-                                className="text-[12px] px-4 py-1.5 rounded-xl text-white font-semibold
-                                           bg-gradient-to-r from-indigo-600 to-blue-600
-                                           hover:brightness-110 active:brightness-95
-                                           disabled:opacity-60"
-                              >
-                                {metaSaving ? "Saving..." : "Save"}
-                              </button>
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={handleMetaSave}
+                              disabled={metaSaving}
+                              className="h-[30px] text-[11px] px-3 rounded-lg text-white font-semibold
+                                         bg-gradient-to-r from-indigo-600 to-blue-600
+                                         hover:brightness-110 active:brightness-95
+                                         disabled:opacity-60"
+                            >
+                              {metaSaving ? "..." : "Save"}
+                            </button>
                           </div>
                         </div>
                       </>
@@ -1123,7 +1547,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                   })()}
                 </div>
 
-                <div className="p-2 overflow-auto text-xs flex-1 bg-white">
+                <div className="p-2 overflow-auto text-[11px] flex-1 bg-white">
                   {(() => {
                     const items = getOrderItems(viewOrder);
                     if (!items?.length) return <div className="p-4 text-slate-500">No items.</div>;
@@ -1132,55 +1556,441 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                     return (
                       <div className="border border-slate-200 rounded-xl overflow-hidden">
-                        <table className="w-full text-xs border-collapse">
+                        <div className="overflow-x-auto overflow-y-hidden">
+                          <div className="min-w-[720px]">
+                            <table className="w-full text-[11px] border-collapse">
+                              <thead className="bg-slate-100">
+                                <tr>
+                                  <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+                                  <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">O</th>
+                                  <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">R</th>
+                                  <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">P</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {items.map((it) => {
+                                  const ordered = Number(it.total_order_qty) || 0;
+                                  const received = Number(it.received_qty) || 0;
+                                  const reordered = Number(it.reordered_qty) || 0;
+
+                                  const pending = closedish
+                                    ? 0
+                                    : it.pending_qty != null
+                                      ? Math.max(Number(it.pending_qty) || 0, 0)
+                                      : Math.max(ordered - received - reordered, 0);
+
+                                  return (
+                                    <tr key={it.id} className="hover:bg-slate-50">
+                                      <td className="border-b border-slate-200 px-2 py-1.5">
+                                        <div className="font-medium text-slate-900">
+                                          {it.book?.title || `Book #${it.book_id}`}
+                                        </div>
+                                      </td>
+                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">{ordered}</td>
+                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">{received}</td>
+                                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">{pending}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div className="h-2" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Copy Reorder Modal (Manual Qty, SAFE) */}
+      {copyOpen && copyOrder && (
+        <div className="fixed inset-0 z-[55] bg-black/50">
+          <div className="h-full w-full overflow-auto p-2 sm:p-3">
+            <div className="mx-auto w-full max-w-[980px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
+                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold truncate">
+                      Copy Reorder (Manual Qty) {copyOrder.order_no ? `- ${copyOrder.order_no}` : ""}
+                    </div>
+                    <div className="text-[11px] text-slate-600 truncate">
+                      This will create a NEW order and will NOT change old order (safe for bulk generate).
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeCopyModal}
+                    className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-3 overflow-auto">
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="overflow-x-auto overflow-y-hidden">
+                      <div className="min-w-[740px]">
+                        <table className="w-full text-[11px]">
                           <thead className="bg-slate-100">
                             <tr>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">O</th>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">R</th>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">P</th>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-left w-40">Class / Subject</th>
-                              <th className="border-b border-slate-200 px-2 py-1.5 text-left w-32">Code</th>
+                              <th className="px-2 py-1.5 text-left border-b">Book</th>
+                              <th className="px-2 py-1.5 text-right border-b w-20">Pending</th>
+                              <th className="px-2 py-1.5 text-right border-b w-28">New Qty</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {items.map((it) => {
+                            {getOrderItems(copyOrder).map((it) => {
                               const ordered = Number(it.total_order_qty) || 0;
                               const received = Number(it.received_qty) || 0;
                               const reordered = Number(it.reordered_qty) || 0;
+                              const pending = Math.max(ordered - received - reordered, 0);
 
-                              const pending =
-                                closedish
-                                  ? 0
-                                  : it.pending_qty != null
-                                  ? Math.max(Number(it.pending_qty) || 0, 0)
-                                  : Math.max(ordered - received - reordered, 0);
+                              const v = copyQtyDrafts[it.id] ?? pending;
 
                               return (
-                                <tr key={it.id} className="hover:bg-slate-50">
-                                  <td className="border-b border-slate-200 px-2 py-1.5">
+                                <tr key={it.id} className="border-t hover:bg-slate-50">
+                                  <td className="px-2 py-1.5">
                                     <div className="font-medium text-slate-900">
                                       {it.book?.title || `Book #${it.book_id}`}
                                     </div>
-                                    <div className="text-[11px] text-slate-500">
-                                      {it.book?.publisher?.name ? `Publisher: ${it.book.publisher.name}` : ""}
+                                    <div className="text-[10px] text-slate-500">
+                                      {it.book?.subject ? it.book.subject : " "}
                                     </div>
                                   </td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{ordered}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{received}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{pending}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5">
-                                    {(it.book?.class_name || "-") + " / " + (it.book?.subject || "-")}
+                                  <td className="px-2 py-1.5 text-right whitespace-nowrap">{pending}</td>
+                                  <td className="px-2 py-1.5 text-right">
+                                    <input
+                                      value={String(v)}
+                                      onChange={(e) =>
+                                        setCopyQtyDrafts((prev) => ({
+                                          ...prev,
+                                          [it.id]: clampInt(e.target.value, 0, 999999),
+                                        }))
+                                      }
+                                      className="w-24 text-right border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                      inputMode="numeric"
+                                    />
                                   </td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5">{it.book?.code || "-"}</td>
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
                       </div>
-                    );
-                  })()}
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-[10px] text-slate-500">
+                    Tip: set New Qty = 0 to skip that book in copy reorder.
+                  </div>
+                </div>
+
+                <div className="px-3 py-2 border-t bg-slate-50 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeCopyModal}
+                    className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitCopyReorder}
+                    disabled={copySaving}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold text-white
+                               bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 disabled:opacity-60"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    {copySaving ? "Creating..." : "Create Copy Reorder"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-2" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Email Modal (NON-TECH: no HTML textarea) */}
+      {emailOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/50">
+          <div className="h-full w-full overflow-auto p-2 sm:p-3">
+            <div className="mx-auto w-full max-w-[980px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
+                <div className="px-2 py-2 border-b bg-slate-50 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold truncate">
+                      Email Purchase Order{emailOrder?.order_no ? ` - ${emailOrder.order_no}` : ""}
+                    </div>
+                    <div className="text-[11px] text-slate-600 truncate">
+                      Sent Count: <span className="font-semibold">{emailCount}</span>
+                      {emailOrder?.supplier?.name ? ` • Supplier: ${emailOrder.supplier.name}` : ""}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={closeEmailModal}
+                    className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {emailLoading ? (
+                  <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    Loading...
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-2 border-b">
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-[11px]">
+                        <div className="md:col-span-5">
+                          <label className="block text-[10.5px] text-slate-600 mb-0.5">To</label>
+                          <input
+                            value={emailTo}
+                            onChange={(e) => setEmailTo(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            placeholder="supplier@email.com"
+                          />
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="block text-[10.5px] text-slate-600 mb-0.5">CC</label>
+                          <input
+                            value={emailCc}
+                            onChange={(e) => setEmailCc(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            placeholder="cc1@email.com, cc2@email.com"
+                          />
+                        </div>
+
+                        <div className="md:col-span-4">
+                          <label className="block text-[10.5px] text-slate-600 mb-0.5">Subject</label>
+                          <input
+                            value={emailSubject}
+                            onChange={(e) => setEmailSubject(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            placeholder="Subject"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => emailOrder && handleViewPdf(emailOrder)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                        >
+                          <FileText className="w-3.5 h-3.5" /> Preview PDF
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setEmailBodyPreviewOpen(true)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                          title="Preview email body"
+                        >
+                          Show Preview
+                        </button>
+
+                        <div className="ml-auto flex items-center gap-2">
+                          <span className="text-[10.5px] text-slate-500 hidden sm:inline">
+                            Tokens: {`{ORDER_NO}`} {`{ORDER_DATE}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={sendEmailFromModal}
+                            disabled={emailSending}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold text-white
+                                       bg-gradient-to-r from-emerald-600 to-teal-600 hover:brightness-110 disabled:opacity-60"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            {emailSending ? "Sending..." : "Send Email"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-auto p-2 grid grid-cols-1 lg:grid-cols-12 gap-2">
+                      <div className="lg:col-span-6">
+                        <div className="text-[11px] font-semibold text-slate-800 mb-1">Message</div>
+
+                        <div className="grid grid-cols-1 gap-2">
+                          <div>
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">Greeting</label>
+                            <input
+                              value={emailGreeting}
+                              onChange={(e) => setEmailGreeting(e.target.value)}
+                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder="Dear Sir/Madam,"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">Main Line</label>
+                            <input
+                              value={emailLine1}
+                              onChange={(e) => setEmailLine1(e.target.value)}
+                              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder="Please find the attached Purchase Order PDF."
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">
+                              Extra Lines (one per line)
+                            </label>
+                            <textarea
+                              value={emailExtraLines}
+                              onChange={(e) => setEmailExtraLines(e.target.value)}
+                              className="w-full min-h-[95px] border border-slate-300 rounded-xl px-2 py-2 text-[11px]
+                                         focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder={"Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}"}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[10.5px] text-slate-600 mb-0.5">Signature</label>
+                            <textarea
+                              value={emailSignature}
+                              onChange={(e) => setEmailSignature(e.target.value)}
+                              className="w-full min-h-[60px] border border-slate-300 rounded-xl px-2 py-2 text-[11px]
+                                         focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              placeholder={"Regards,\nEduBridge ERP"}
+                            />
+                          </div>
+
+                          <div className="text-[10px] text-slate-500">PDF will be attached automatically.</div>
+                        </div>
+                      </div>
+
+                      <div className="lg:col-span-6">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[11px] font-semibold text-slate-800">Send History</div>
+                          {emailOrder?.id ? (
+                            <button
+                              type="button"
+                              onClick={() => refreshEmailLogs(emailOrder.id)}
+                              className="text-[11px] px-2 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                            >
+                              Refresh
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="border border-slate-200 rounded-xl overflow-hidden">
+                          <div className="max-h-[520px] overflow-auto">
+                            {mergedEmailLogs.length === 0 ? (
+                              <div className="p-3 text-[11px] text-slate-500">No logs yet.</div>
+                            ) : (
+                              <table className="w-full text-[11px]">
+                                <thead className="bg-slate-100 sticky top-0 z-10">
+                                  <tr>
+                                    <th className="px-2 py-1 text-left whitespace-nowrap">When</th>
+                                    <th className="px-2 py-1 text-left">To</th>
+                                    <th className="px-2 py-1 text-left">CC</th>
+                                    <th className="px-2 py-1 text-left whitespace-nowrap">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {mergedEmailLogs.map((r) => (
+                                    <tr key={r.key} className="border-t hover:bg-slate-50">
+                                      <td className="px-2 py-1 whitespace-nowrap">{formatDateTime(r.when)}</td>
+                                      <td className="px-2 py-1 truncate max-w-[220px]">{r.to}</td>
+                                      <td className="px-2 py-1 truncate max-w-[220px]">{r.cc}</td>
+                                      <td className="px-2 py-1 whitespace-nowrap">{r.status || "SENT"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-1 text-[10px] text-slate-500">
+                          Count is per “Send” (TO+CC is counted as 1).
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="h-2" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ Email Body Preview Popup */}
+      {emailBodyPreviewOpen && (
+        <div className="fixed inset-0 z-[80] bg-black/50">
+          <div className="h-full w-full overflow-auto p-2 sm:p-3">
+            <div className="mx-auto w-full max-w-[780px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold truncate">Email Preview</div>
+                    <div className="text-[11px] text-slate-600 truncate">
+                      {emailOrder?.order_no ? `Order No: ${emailOrder.order_no}` : ""}
+                      {emailOrder?.supplier?.name ? ` • Supplier: ${emailOrder.supplier.name}` : ""}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {emailOrder ? (
+                      <button
+                        type="button"
+                        onClick={() => handleViewPdf(emailOrder)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
+                      >
+                        <FileText className="w-3.5 h-3.5" /> Open PDF
+                      </button>
+                    ) : null}
+
+                    <button
+                      onClick={() => setEmailBodyPreviewOpen(false)}
+                      className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-3 overflow-auto bg-white">
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="px-3 py-2 bg-slate-100 text-[11px] font-semibold text-slate-800">
+                      Preview (Email Body)
+                    </div>
+                    <div
+                      className="p-4 text-[13px] text-slate-900 bg-white max-h-[70vh] overflow-auto"
+                      dangerouslySetInnerHTML={{ __html: buildEmailHtml(emailOrder) }}
+                    />
+                  </div>
+
+                  <div className="mt-2 text-[10px] text-slate-500">
+                    Tip: Update Greeting / Extra Lines then open preview again.
+                  </div>
+                </div>
+
+                <div className="px-3 py-2 border-t bg-slate-50 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEmailBodyPreviewOpen(false)}
+                    className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
 

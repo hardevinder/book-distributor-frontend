@@ -31,21 +31,19 @@ type SupplierPayment = {
   id: number;
   supplier_id: number;
 
-  // backend may send pay_date / payment_date / txn_date
   payment_date?: string | null;
-  pay_date?: string | null;
-  txn_date?: string | null;
-
   amount: number | string;
 
-  payment_mode?: string | null; // CASH/BANK/UPI/CHEQUE/NEFT/RTGS etc
+  // ✅ new fields (optional for backward compatibility)
+  discount_amount?: number | string | null;
+  discount_percent?: number | string | null;
+  total_settled?: number | string | null;
+
   mode?: string | null;
 
-  ref_no?: string | null; // cheque/utr/txn id
-  txn_ref?: string | null;
-
-  notes?: string | null;
+  ref_no?: string | null;
   narration?: string | null;
+  created_by?: string | null;
 
   createdAt?: string;
   updatedAt?: string;
@@ -60,7 +58,6 @@ type BalanceResponse = {
   balance: number;
 };
 
-// ✅ Ledger types (normalized for popup)
 type LedgerRow = {
   date?: string | null;
   ref_no?: string | null;
@@ -69,7 +66,6 @@ type LedgerRow = {
   credit?: number | string | null;
   balance?: number | string | null;
 
-  // allow backend raw keys too
   txn_date?: string | null;
   narration?: string | null;
   running_balance?: number | string | null;
@@ -83,6 +79,8 @@ const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+const round2 = (n: any) => Math.round(num(n) * 100) / 100;
 
 const clamp = (v: number, min: number, max: number) =>
   Math.max(min, Math.min(max, v));
@@ -107,10 +105,17 @@ const formatDate = (value?: string | null) => {
 };
 
 const pickPaymentDate = (p?: SupplierPayment | null) =>
-  p?.payment_date || p?.pay_date || p?.txn_date || p?.createdAt || null;
+  p?.payment_date || p?.createdAt || null;
 
-const pickPaymentMode = (p?: SupplierPayment | null) =>
-  p?.payment_mode || p?.mode || "-";
+const pickPaymentMode = (p?: SupplierPayment | null) => p?.mode || "-";
+
+const calcTotalSettled = (p?: SupplierPayment | null) => {
+  const paid = num(p?.amount);
+  const disc = num(p?.discount_amount);
+  const total = num(p?.total_settled);
+  // prefer server total_settled if present
+  return total > 0 ? total : round2(paid + disc);
+};
 
 /* ---------------- Component ---------------- */
 
@@ -145,9 +150,13 @@ export default function SupplierPaymentsPageClient() {
     supplier_id: "",
     payment_date: "",
     amount: "",
-    payment_mode: "BANK",
+    mode: "BANK",
     ref_no: "",
-    notes: "",
+    narration: "",
+
+    // ✅ discount fields
+    discount_percent: "",
+    discount_amount: "",
   });
 
   // view modal
@@ -156,13 +165,13 @@ export default function SupplierPaymentsPageClient() {
   const [viewRow, setViewRow] = useState<SupplierPayment | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // ✅ Ledger popup
+  // ledger popup
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
 
-  /* ------------ ✅ FIX: Always get supplier name from masters ------------ */
+  /* ------------ Supplier Helpers ------------ */
 
   const selectedSupplier = useMemo(() => {
     const id = Number(filterSupplierId);
@@ -173,9 +182,7 @@ export default function SupplierPaymentsPageClient() {
   const getSupplierNameById = (supplierId?: number | string | null) => {
     const id = Number(supplierId);
     if (!id) return "-";
-    return (
-      suppliers.find((s) => Number(s.id) === id)?.name || `Supplier #${id}`
-    );
+    return suppliers.find((s) => Number(s.id) === id)?.name || `Supplier #${id}`;
   };
 
   const ledgerHeaderName =
@@ -223,9 +230,7 @@ export default function SupplierPaymentsPageClient() {
         params,
       });
 
-      const list = Array.isArray(res.data)
-        ? res.data
-        : (res.data as any)?.payments;
+      const list = Array.isArray(res.data) ? res.data : (res.data as any)?.payments;
 
       setPayments(Array.isArray(list) ? list : []);
     } catch (e: any) {
@@ -242,9 +247,7 @@ export default function SupplierPaymentsPageClient() {
   const fetchBalance = async (supplierId: number) => {
     setBalanceLoading(true);
     try {
-      const res = await api.get<BalanceResponse>(
-        `/api/suppliers/${supplierId}/balance`
-      );
+      const res = await api.get<BalanceResponse>(`/api/suppliers/${supplierId}/balance`);
       setBalanceRow((res?.data as any) || null);
     } catch (e) {
       console.error("balance load error:", e);
@@ -281,9 +284,38 @@ export default function SupplierPaymentsPageClient() {
       supplier_id: filterSupplierId || "",
       payment_date: "",
       amount: "",
-      payment_mode: "BANK",
+      mode: "BANK",
       ref_no: "",
-      notes: "",
+      narration: "",
+      discount_percent: "",
+      discount_amount: "",
+    });
+  };
+
+  // ✅ auto-calc discount: only one input active
+  const onChangeDiscountPercent = (v: string) => {
+    setForm((p) => {
+      const pct = v;
+      const amt = num(p.amount);
+      const pctNum = round2(pct);
+      if (!pct || pctNum <= 0) {
+        return { ...p, discount_percent: v, discount_amount: "" };
+      }
+      const discAmt = round2((amt * pctNum) / 100);
+      return { ...p, discount_percent: v, discount_amount: discAmt ? String(discAmt) : "" };
+    });
+  };
+
+  const onChangeDiscountAmount = (v: string) => {
+    setForm((p) => {
+      const discAmtStr = v;
+      const amt = num(p.amount);
+      const discAmt = round2(discAmtStr);
+      if (!discAmtStr || discAmt <= 0) {
+        return { ...p, discount_amount: v, discount_percent: "" };
+      }
+      const pct = amt > 0 ? round2((discAmt * 100) / amt) : 0;
+      return { ...p, discount_amount: v, discount_percent: pct ? String(pct) : "" };
     });
   };
 
@@ -297,21 +329,40 @@ export default function SupplierPaymentsPageClient() {
     if (!supplier_id) return setError("Select supplier.");
     if (!amount || amount <= 0) return setError("Enter valid amount.");
 
+    const hasPct = String(form.discount_percent || "").trim() !== "";
+    const hasFix = String(form.discount_amount || "").trim() !== "";
+    if (hasPct && hasFix) {
+      return setError("Enter either Discount % OR Discount ₹ (not both).");
+    }
+
+    const discount_percent = round2(form.discount_percent);
+    const discount_amount = round2(form.discount_amount);
+
+    if (discount_percent < 0 || discount_amount < 0) {
+      return setError("Discount cannot be negative.");
+    }
+    if (discount_percent > 100) {
+      return setError("Discount % cannot exceed 100.");
+    }
+    if (discount_amount > amount) {
+      return setError("Discount ₹ cannot be greater than Amount.");
+    }
+
     setCreating(true);
     try {
-      // backend expects: pay_date (as per your controller)
       const payload: any = {
         amount,
-        pay_date: form.payment_date || undefined,
-        payment_mode: form.payment_mode?.trim() || null,
+        payment_date: form.payment_date || undefined, // ✅ controller expects payment_date
+        mode: form.mode?.trim() || "CASH",            // ✅ controller expects mode
         ref_no: form.ref_no?.trim() || null,
-        notes: form.notes?.trim() || null,
+        narration: form.narration?.trim() || null,
       };
 
-      const res = await api.post(
-        `/api/suppliers/${supplier_id}/payments`,
-        payload
-      );
+      // ✅ send only one discount key
+      if (hasPct) payload.discount_percent = discount_percent;
+      if (hasFix) payload.discount_amount = discount_amount;
+
+      const res = await api.post(`/api/suppliers/${supplier_id}/payments`, payload);
 
       setInfo(res?.data?.message || "Payment saved.");
       setCreateOpen(false);
@@ -344,7 +395,6 @@ export default function SupplierPaymentsPageClient() {
 
     try {
       const res = await api.get(`/api/suppliers/${supplierId}/payments/${id}`);
-
       const payment = (res?.data as any)?.payment ?? res?.data;
       setViewRow(payment || null);
     } catch (e: any) {
@@ -361,12 +411,7 @@ export default function SupplierPaymentsPageClient() {
     const supplierId = Number(viewRow.supplier_id);
     if (!supplierId) return setError("Missing supplier id for this payment.");
 
-    if (
-      !confirm(
-        "Delete this payment? This will reduce CREDIT in supplier ledger."
-      )
-    )
-      return;
+    if (!confirm("Delete this payment? This will reduce CREDIT in supplier ledger.")) return;
 
     setDeleting(true);
     setError(null);
@@ -386,7 +431,7 @@ export default function SupplierPaymentsPageClient() {
     }
   };
 
-  /* ------------ ✅ Ledger Popup ------------ */
+  /* ------------ Ledger Popup ------------ */
 
   const openLedger = async () => {
     const supplierId = Number(filterSupplierId);
@@ -398,7 +443,6 @@ export default function SupplierPaymentsPageClient() {
     setLedgerRows([]);
 
     try {
-      // ✅ FIX: also refresh balance so header supplier is always available
       await Promise.all([
         fetchBalance(supplierId),
         (async () => {
@@ -416,8 +460,7 @@ export default function SupplierPaymentsPageClient() {
           const mapped: LedgerRow[] = list.map((x: any) => ({
             date: x.date ?? x.txn_date ?? x.transaction_date ?? x.createdAt ?? null,
             ref_no: x.ref_no ?? x.reference_no ?? x.refNo ?? null,
-            description:
-              x.description ?? x.narration ?? x.remarks ?? x.txn_type ?? null,
+            description: x.description ?? x.narration ?? x.remarks ?? x.txn_type ?? null,
             debit: x.debit ?? 0,
             credit: x.credit ?? 0,
             balance:
@@ -445,9 +488,19 @@ export default function SupplierPaymentsPageClient() {
   const visible = payments;
 
   const totals = useMemo(() => {
-    const total = visible.reduce((s, r) => s + num(r.amount), 0);
-    return { total };
+    const totalCash = visible.reduce((s, r) => s + num(r.amount), 0);
+    const totalDisc = visible.reduce((s, r) => s + num(r.discount_amount), 0);
+    const totalCredit = visible.reduce((s, r) => s + calcTotalSettled(r), 0);
+    return { totalCash, totalDisc, totalCredit };
   }, [visible]);
+
+  const preview = useMemo(() => {
+    const amt = round2(form.amount);
+    const discAmt = round2(form.discount_amount);
+    const discPct = round2(form.discount_percent);
+    const total = round2(amt + discAmt);
+    return { amt, discAmt, discPct, total };
+  }, [form.amount, form.discount_amount, form.discount_percent]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -464,10 +517,10 @@ export default function SupplierPaymentsPageClient() {
 
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate">
-                Supplier Payments (Credit Entry)
+                Supplier Payments
               </div>
               <div className="text-[11px] text-slate-500 truncate">
-                Payment = <b>Credit</b> in Supplier Ledger (reduces payable)
+                Credit posted = <b>Paid + Discount</b> (reduces payable)
               </div>
             </div>
           </div>
@@ -623,7 +676,7 @@ export default function SupplierPaymentsPageClient() {
             <div>
               <div className="text-sm font-semibold">Payments</div>
               <div className="text-[11px] text-slate-500">
-                Total Credit: ₹{fmtMoney(totals.total)}
+                Cash: ₹{fmtMoney(totals.totalCash)} • Discount: ₹{fmtMoney(totals.totalDisc)} • Total Credit: ₹{fmtMoney(totals.totalCredit)}
               </div>
             </div>
             <div className="text-[11px] text-slate-500">{visible.length} rows</div>
@@ -645,31 +698,20 @@ export default function SupplierPaymentsPageClient() {
               <table className="w-full text-xs border-collapse">
                 <thead className="bg-slate-100">
                   <tr>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">
-                      Supplier
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">
-                      Date
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">
-                      Mode
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">
-                      Ref
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right">
-                      Amount (Credit)
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">
-                      Actions
-                    </th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Supplier</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Date</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Mode</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Ref</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-right">Paid</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-right">Discount</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-right">Total Credit</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visible.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="border-b border-slate-200 px-3 py-2">
-                        {/* ✅ FIX: fall back to masters list if backend doesn't include p.supplier */}
                         {p.supplier?.name || getSupplierNameById(p.supplier_id)}
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
@@ -679,10 +721,16 @@ export default function SupplierPaymentsPageClient() {
                         {pickPaymentMode(p)}
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
-                        {p.ref_no || p.txn_ref || "-"}
+                        {p.ref_no || "-"}
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
                         ₹{fmtMoney(p.amount)}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 text-right">
+                        ₹{fmtMoney(p.discount_amount)}
+                      </td>
+                      <td className="border-b border-slate-200 px-3 py-2 text-right font-extrabold">
+                        ₹{fmtMoney(calcTotalSettled(p))}
                       </td>
                       <td className="border-b border-slate-200 px-3 py-2">
                         <button
@@ -711,11 +759,9 @@ export default function SupplierPaymentsPageClient() {
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
                 <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between">
                   <div>
-                    <div className="text-sm font-semibold">
-                      Add Supplier Payment (Credit)
-                    </div>
+                    <div className="text-sm font-semibold">Add Supplier Payment</div>
                     <div className="text-[11px] text-slate-600 mt-1">
-                      This will add <b>CREDIT</b> entry in Supplier Ledger.
+                      Credit posted = <b>Paid + Discount</b>
                     </div>
                   </div>
                   <button
@@ -735,10 +781,7 @@ export default function SupplierPaymentsPageClient() {
                       <select
                         value={form.supplier_id}
                         onChange={(e) =>
-                          setForm((p) => ({
-                            ...p,
-                            supplier_id: e.target.value,
-                          }))
+                          setForm((p) => ({ ...p, supplier_id: e.target.value }))
                         }
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
                       >
@@ -759,10 +802,7 @@ export default function SupplierPaymentsPageClient() {
                         type="date"
                         value={form.payment_date}
                         onChange={(e) =>
-                          setForm((p) => ({
-                            ...p,
-                            payment_date: e.target.value,
-                          }))
+                          setForm((p) => ({ ...p, payment_date: e.target.value }))
                         }
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
                       />
@@ -770,7 +810,7 @@ export default function SupplierPaymentsPageClient() {
 
                     <div className="col-span-12 md:col-span-4">
                       <label className="block text-[11px] text-slate-600 mb-1">
-                        Amount *
+                        Paid Amount *
                       </label>
                       <input
                         type="number"
@@ -786,36 +826,62 @@ export default function SupplierPaymentsPageClient() {
 
                     <div className="col-span-12 md:col-span-4">
                       <label className="block text-[11px] text-slate-600 mb-1">
+                        Discount %
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={form.discount_percent}
+                        onChange={(e) => onChangeDiscountPercent(e.target.value)}
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                        placeholder="0"
+                        disabled={String(form.discount_amount || "").trim() !== ""}
+                      />
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        Use either % OR ₹
+                      </div>
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[11px] text-slate-600 mb-1">
+                        Discount ₹
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.discount_amount}
+                        onChange={(e) => onChangeDiscountAmount(e.target.value)}
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] text-right"
+                        placeholder="0"
+                        disabled={String(form.discount_percent || "").trim() !== ""}
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[11px] text-slate-600 mb-1">
                         Mode
                       </label>
                       <select
-                        value={form.payment_mode}
-                        onChange={(e) =>
-                          setForm((p) => ({
-                            ...p,
-                            payment_mode: e.target.value,
-                          }))
-                        }
+                        value={form.mode}
+                        onChange={(e) => setForm((p) => ({ ...p, mode: e.target.value }))}
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
                       >
                         <option value="BANK">BANK</option>
                         <option value="CASH">CASH</option>
                         <option value="UPI">UPI</option>
                         <option value="CHEQUE">CHEQUE</option>
-                        <option value="NEFT">NEFT</option>
-                        <option value="RTGS">RTGS</option>
+                        <option value="OTHER">OTHER</option>
                       </select>
                     </div>
 
-                    <div className="col-span-12 md:col-span-4">
+                    <div className="col-span-12 md:col-span-8">
                       <label className="block text-[11px] text-slate-600 mb-1">
                         Ref No (UTR/Cheque/Txn)
                       </label>
                       <input
                         value={form.ref_no}
-                        onChange={(e) =>
-                          setForm((p) => ({ ...p, ref_no: e.target.value }))
-                        }
+                        onChange={(e) => setForm((p) => ({ ...p, ref_no: e.target.value }))}
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
                         placeholder="Optional..."
                       />
@@ -823,16 +889,28 @@ export default function SupplierPaymentsPageClient() {
 
                     <div className="col-span-12">
                       <label className="block text-[11px] text-slate-600 mb-1">
-                        Notes
+                        Narration / Notes
                       </label>
                       <input
-                        value={form.notes}
-                        onChange={(e) =>
-                          setForm((p) => ({ ...p, notes: e.target.value }))
-                        }
+                        value={form.narration}
+                        onChange={(e) => setForm((p) => ({ ...p, narration: e.target.value }))}
                         className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px]"
                         placeholder="Optional..."
                       />
+                    </div>
+
+                    {/* ✅ Preview line */}
+                    <div className="col-span-12">
+                      <div className="border border-slate-200 rounded-2xl p-3 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[11px] text-slate-600">
+                          Preview
+                        </div>
+                        <div className="text-[12px] font-semibold">
+                          Paid: ₹{fmtMoney(preview.amt)} • Discount: ₹{fmtMoney(preview.discAmt)}{" "}
+                          {preview.discPct ? `(${fmtMoney(preview.discPct)}%)` : ""} •{" "}
+                          <span className="font-extrabold">Total Credit: ₹{fmtMoney(preview.total)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -874,7 +952,6 @@ export default function SupplierPaymentsPageClient() {
                     <div className="text-[11px] text-slate-600 mt-1">
                       Supplier:{" "}
                       <span className="font-semibold text-slate-900">
-                        {/* ✅ FIX: fallback to masters list */}
                         {viewRow?.supplier?.name ||
                           getSupplierNameById(viewRow?.supplier_id)}
                       </span>
@@ -901,9 +978,7 @@ export default function SupplierPaymentsPageClient() {
                     <div className="space-y-4">
                       <div className="grid grid-cols-12 gap-3">
                         <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3">
-                          <div className="text-[11px] text-slate-600">
-                            Payment Date
-                          </div>
+                          <div className="text-[11px] text-slate-600">Payment Date</div>
                           <div className="mt-1 text-sm font-semibold">
                             {formatDate(pickPaymentDate(viewRow))}
                           </div>
@@ -917,27 +992,40 @@ export default function SupplierPaymentsPageClient() {
                         </div>
 
                         <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-slate-50">
-                          <div className="text-[11px] text-slate-600">
-                            Amount (Credit)
-                          </div>
+                          <div className="text-[11px] text-slate-600">Total Credit</div>
                           <div className="mt-1 text-sm font-extrabold">
+                            ₹{fmtMoney(calcTotalSettled(viewRow))}
+                          </div>
+                        </div>
+
+                        <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3">
+                          <div className="text-[11px] text-slate-600">Paid</div>
+                          <div className="mt-1 text-sm font-semibold">
                             ₹{fmtMoney(viewRow.amount)}
                           </div>
                         </div>
 
-                        <div className="col-span-12 border border-slate-200 rounded-2xl p-3">
-                          <div className="text-[11px] text-slate-600">
-                            Ref No
-                          </div>
+                        <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3">
+                          <div className="text-[11px] text-slate-600">Discount</div>
                           <div className="mt-1 text-sm font-semibold">
-                            {viewRow.ref_no || viewRow.txn_ref || "-"}
+                            ₹{fmtMoney(viewRow.discount_amount)}{" "}
+                            {num(viewRow.discount_percent) > 0
+                              ? `(${fmtMoney(viewRow.discount_percent)}%)`
+                              : ""}
+                          </div>
+                        </div>
+
+                        <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3">
+                          <div className="text-[11px] text-slate-600">Ref No</div>
+                          <div className="mt-1 text-sm font-semibold">
+                            {viewRow.ref_no || "-"}
                           </div>
                         </div>
 
                         <div className="col-span-12 border border-slate-200 rounded-2xl p-3">
-                          <div className="text-[11px] text-slate-600">Notes</div>
+                          <div className="text-[11px] text-slate-600">Narration</div>
                           <div className="mt-1 text-sm">
-                            {viewRow.notes || viewRow.narration || "-"}
+                            {viewRow.narration || "-"}
                           </div>
                         </div>
                       </div>
@@ -970,7 +1058,7 @@ export default function SupplierPaymentsPageClient() {
         </div>
       )}
 
-      {/* ---------------- ✅ Ledger Modal ---------------- */}
+      {/* ---------------- Ledger Modal (unchanged) ---------------- */}
       {ledgerOpen && (
         <div className="fixed inset-0 z-50 bg-black/50">
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
@@ -978,10 +1066,7 @@ export default function SupplierPaymentsPageClient() {
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
                 <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-start justify-between">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">
-                      Supplier Ledger
-                    </div>
-                    {/* ✅ FIX: Always show proper name */}
+                    <div className="text-sm font-semibold truncate">Supplier Ledger</div>
                     <div className="text-[11px] text-slate-600 mt-1 truncate">
                       {ledgerHeaderName}
                     </div>
@@ -1008,32 +1093,18 @@ export default function SupplierPaymentsPageClient() {
                       Loading ledger...
                     </div>
                   ) : ledgerRows.length === 0 ? (
-                    <div className="p-6 text-sm text-slate-500">
-                      No ledger entries.
-                    </div>
+                    <div className="p-6 text-sm text-slate-500">No ledger entries.</div>
                   ) : (
                     <div className="overflow-auto border border-slate-200 rounded-xl">
                       <table className="w-full text-xs border-collapse">
                         <thead className="bg-slate-100">
                           <tr>
-                            <th className="border-b border-slate-200 px-3 py-2 text-left">
-                              Date
-                            </th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-left">
-                              Ref
-                            </th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-left">
-                              Description
-                            </th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right">
-                              Debit
-                            </th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right">
-                              Credit
-                            </th>
-                            <th className="border-b border-slate-200 px-3 py-2 text-right">
-                              Balance
-                            </th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">Date</th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">Ref</th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-left">Description</th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">Debit</th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">Credit</th>
+                            <th className="border-b border-slate-200 px-3 py-2 text-right">Balance</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1055,9 +1126,7 @@ export default function SupplierPaymentsPageClient() {
                                 ₹{fmtMoney(r.credit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                {r.balance == null
-                                  ? "-"
-                                  : `₹${fmtMoney(r.balance)}`}
+                                {r.balance == null ? "-" : `₹${fmtMoney(r.balance)}`}
                               </td>
                             </tr>
                           ))}
