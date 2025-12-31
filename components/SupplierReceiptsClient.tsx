@@ -1,7 +1,7 @@
 // components/SupplierReceiptsPageClient.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -113,12 +113,21 @@ type SupplierReceiptItem = {
   book?: BookLite | null;
 };
 
+type ReceiveDocType = "CHALLAN" | "INVOICE";
+
 type SupplierReceipt = {
   id: number;
   supplier_id: number;
   school_order_id?: number | null;
 
   receipt_no: string;
+
+  // ✅ NEW (preferred)
+  receive_doc_type?: ReceiveDocType | string | null;
+  doc_no?: string | null;
+  doc_date?: string | null;
+
+  // legacy (kept for compatibility)
   invoice_no?: string | null;
   academic_session?: string | null;
 
@@ -176,6 +185,13 @@ const statusChip = (s: SupplierReceipt["status"]) => {
   return "bg-slate-50 text-slate-700 border border-slate-200";
 };
 
+const docTypePill = (t?: any) => {
+  const x = String(t || "").toUpperCase();
+  if (x === "INVOICE") return "bg-indigo-50 text-indigo-800 border border-indigo-200";
+  if (x === "CHALLAN") return "bg-amber-50 text-amber-800 border border-amber-200";
+  return "bg-slate-50 text-slate-700 border border-slate-200";
+};
+
 const safeSupplierAddress = (s?: SupplierLite | null) => s?.full_address || s?.address || s?.address_line1 || "";
 
 /** ordered qty from different keys */
@@ -222,7 +238,7 @@ type UiItem = {
   pending_qty: number;
 
   rec_qty: string; // receive now
-  unit_price: string;
+  unit_price: string; // MRP
 
   disc_pct: string; // per unit
   disc_amt: string; // per unit
@@ -246,6 +262,34 @@ const pickPublisherNameFromReceipt = (r: SupplierReceipt) => {
   return anyR?.school_order?.publisher?.name || anyR?.publisher?.name || anyR?.publisher_name || "";
 };
 
+const preventWheelChange = (e: React.WheelEvent<HTMLInputElement>) => {
+  (e.currentTarget as HTMLInputElement).blur();
+};
+
+const normalizeDocType = (r: SupplierReceipt): ReceiveDocType => {
+  const t = String((r as any)?.receive_doc_type || "").toUpperCase();
+  if (t === "INVOICE") return "INVOICE";
+  if (t === "CHALLAN") return "CHALLAN";
+  // fallback: if invoice_no exists assume INVOICE
+  return r.invoice_no ? "INVOICE" : "CHALLAN";
+};
+
+const getDocNo = (r: SupplierReceipt) => {
+  return (r as any)?.doc_no || r.invoice_no || "-";
+};
+
+const getDocDate = (r: SupplierReceipt) => {
+  return (r as any)?.doc_date || r.invoice_date || null;
+};
+
+const todayISO = () => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 /* ---------------- Component ---------------- */
 
 export default function SupplierReceiptsPageClient() {
@@ -266,13 +310,14 @@ export default function SupplierReceiptsPageClient() {
   const [schoolOrders, setSchoolOrders] = useState<SchoolOrderLite[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
 
-  // filters (top header)
+  // filters (top header) ✅ default today's date for BOTH (From & To)
   const [filterPublisherId, setFilterPublisherId] = useState("");
   const [filterSupplierId, setFilterSupplierId] = useState("");
-  const [filterInvoiceNo, setFilterInvoiceNo] = useState("");
+  const [filterDocNo, setFilterDocNo] = useState("");
+  const [filterDocType, setFilterDocType] = useState<"" | ReceiveDocType>("");
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
+  const [filterFrom, setFilterFrom] = useState(() => todayISO());
+  const [filterTo, setFilterTo] = useState(() => todayISO());
 
   // create modal
   const [createOpen, setCreateOpen] = useState(false);
@@ -281,26 +326,35 @@ export default function SupplierReceiptsPageClient() {
   // preview before save
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  const [form, setForm] = useState({
-    // selection
-    school_id: "",
-    school_order_id: "",
-    supplier_id: "",
+  const [form, setForm] = useState(() => {
+    const t = todayISO();
+    return {
+      // selection
+      school_id: "",
+      school_order_id: "",
+      supplier_id: "",
 
-    // header fields
-    invoice_no: "",
-    invoice_date: "",
-    received_date: "",
-    // ✅ status is forced internally (no UI field)
-    status: "received" as "draft" | "received",
-    remarks: "",
+      // ✅ NEW header fields
+      receive_doc_type: "CHALLAN" as ReceiveDocType,
+      doc_no: "",
+      doc_date: t, // ✅ default today
+      // legacy kept (not shown; we fill for compatibility)
+      invoice_no: "",
 
-    // charges (bottom)
-    bill_discount_type: "NONE" as "NONE" | "PERCENT" | "AMOUNT",
-    bill_discount_value: "",
-    shipping_charge: "",
-    other_charge: "",
-    round_off: "",
+      invoice_date: "",
+      received_date: t, // ✅ default today
+      status: "received" as "draft" | "received",
+      remarks: "",
+
+      // ✅ bill discount WITHOUT dropdown (sync % <-> ₹)
+      bill_disc_pct: "",
+      bill_disc_amt: "",
+
+      // charges (bottom)
+      shipping_charge: "",
+      other_charge: "",
+      round_off: "",
+    };
   });
 
   const [items, setItems] = useState<UiItem[]>([]);
@@ -311,6 +365,32 @@ export default function SupplierReceiptsPageClient() {
   const [viewRow, setViewRow] = useState<SupplierReceipt | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+
+  /* ------------ Enter-to-next-cell (table) ------------ */
+
+  const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const cellKey = (rowIdx: number, field: "rec" | "mrp" | "pct" | "amt") => `${rowIdx}-${field}`;
+  const focusCell = (rowIdx: number, field: "rec" | "mrp" | "pct" | "amt") => {
+    const el = cellRefs.current[cellKey(rowIdx, field)];
+    el?.focus();
+    el?.select?.();
+  };
+
+  const onCellEnter = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    rowIdx: number,
+    field: "rec" | "mrp" | "pct" | "amt"
+  ) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+
+    const order: Array<"rec" | "mrp" | "pct" | "amt"> = ["rec", "mrp", "pct", "amt"];
+    const pos = order.indexOf(field);
+    if (pos === -1) return;
+
+    if (pos < order.length - 1) focusCell(rowIdx, order[pos + 1]);
+    else focusCell(rowIdx + 1, "rec");
+  };
 
   /* ------------ Fetch masters ------------ */
 
@@ -361,7 +441,6 @@ export default function SupplierReceiptsPageClient() {
       if (filterFrom) params.from = filterFrom;
       if (filterTo) params.to = filterTo;
 
-      // NOTE: publisher + invoice filters are applied client-side (safe even if backend doesn't support)
       const res = await api.get<ListResponse>("/api/supplier-receipts", { params });
       const list = (res?.data as any)?.receipts;
       setReceipts(Array.isArray(list) ? list : []);
@@ -433,8 +512,7 @@ export default function SupplierReceiptsPageClient() {
       if (found?.items?.length) return found;
       try {
         const res = await api.get(`/api/school-orders/${orderId}`);
-        const row: SchoolOrderLite =
-          (res.data as any)?.order || (res.data as any)?.schoolOrder || (res.data as any);
+        const row: SchoolOrderLite = (res.data as any)?.order || (res.data as any)?.schoolOrder || (res.data as any);
         return row || null;
       } catch (e) {
         console.error("order detail load failed:", e);
@@ -455,14 +533,19 @@ export default function SupplierReceiptsPageClient() {
         const pending = Math.max(ordered - already, 0);
 
         const title = it.book?.title || `Book #${it.book_id}`;
-        const metaParts = [it.book?.class_name ? `C:${it.book.class_name}` : null, it.book?.subject ? `S:${it.book.subject}` : null, it.book?.code ? `Code:${it.book.code}` : null].filter(Boolean);
-        const meta = metaParts.join(" • ");
+        // const metaParts = [
+        //   it.book?.class_name ? `C:${it.book.class_name}` : null,
+        //   it.book?.subject ? `S:${it.book.subject}` : null,
+        //   it.book?.code ? `Code:${it.book.code}` : null,
+        // ].filter(Boolean);
+        // const meta = metaParts.join(" • ");
+        const meta = "";
+
 
         const up = it.unit_price != null ? num(it.unit_price) : 0;
         const dp = it.discount_pct != null ? num(it.discount_pct) : 0;
         const da = it.discount_amt != null ? num(it.discount_amt) : 0;
 
-        // keep row discount in AMOUNT internally (per unit)
         let discAmt = 0;
         let discPct = 0;
         let discMode: UiItem["disc_mode"] = "NONE";
@@ -500,7 +583,6 @@ export default function SupplierReceiptsPageClient() {
       ...p,
       school_order_id: String(orderId),
       supplier_id: autoSupplierId ? String(autoSupplierId) : p.supplier_id,
-      // ✅ force received
       status: "received",
     }));
 
@@ -515,26 +597,26 @@ export default function SupplierReceiptsPageClient() {
     setCreateOpen(true);
     setPreviewOpen(false);
 
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const todayStr = `${yyyy}-${mm}-${dd}`;
+    const todayStr = todayISO();
 
     setForm({
       school_id: "",
       school_order_id: "",
       supplier_id: "",
 
+      receive_doc_type: "CHALLAN",
+      doc_no: "",
+      doc_date: todayStr, // ✅ default today
       invoice_no: "",
+
       invoice_date: "",
-      received_date: todayStr,
-      // ✅ force received
+      received_date: todayStr, // ✅ default today
       status: "received",
       remarks: "",
 
-      bill_discount_type: "NONE",
-      bill_discount_value: "",
+      bill_disc_pct: "",
+      bill_disc_amt: "",
+
       shipping_charge: "",
       other_charge: "",
       round_off: "",
@@ -551,14 +633,12 @@ export default function SupplierReceiptsPageClient() {
     return `${pub} • ${ord} • ${dt}`;
   };
 
-  /* ------------ Row discount syncing (only one input) ------------ */
+  /* ------------ Row discount syncing ------------ */
 
-  const setRowRecQty = (idx: number, v: string) => {
+  const setRowRecQty = (idx: number, v: string) =>
     setItems((p) => p.map((r, i) => (i === idx ? { ...r, rec_qty: v } : r)));
-  };
 
   const setRowUnit = (idx: number, v: string) => {
-    // when unit price changes, re-sync pct/amt based on current mode
     setItems((p) =>
       p.map((r, i) => {
         if (i !== idx) return r;
@@ -622,9 +702,9 @@ export default function SupplierReceiptsPageClient() {
     );
   };
 
-  /* ------------ Totals (show Gross + Net separately) ------------ */
+  /* ------------ Totals (Gross + Net overall) ------------ */
 
-  const totals = useMemo(() => {
+  const totalsBase = useMemo(() => {
     let gross = 0;
     let itemDisc = 0;
     let net = 0;
@@ -632,39 +712,59 @@ export default function SupplierReceiptsPageClient() {
     items.forEach((it) => {
       const qty = Math.max(0, Math.floor(num(it.rec_qty)));
       const up = Math.max(0, num(it.unit_price));
-      const discAmt = Math.max(0, num(it.disc_amt)); // per unit (synced)
+      const discAmt = Math.max(0, num(it.disc_amt));
       const row = computeRow(qty, up, discAmt);
       gross += row.grossLine;
       itemDisc += row.discLine;
       net += row.netLine;
     });
 
+    return { gross, itemDisc, net };
+  }, [items]);
+
+  const syncBillDiscFromPct = (pctStr: string) => {
+    const pct = clamp(num(pctStr), 0, 100);
+    const net = totalsBase.net;
+    const amt = (net * pct) / 100;
+    setForm((p) => ({
+      ...p,
+      bill_disc_pct: pctStr,
+      bill_disc_amt: pct > 0 ? String(Math.round(amt * 100) / 100) : "",
+    }));
+  };
+
+  const syncBillDiscFromAmt = (amtStr: string) => {
+    const net = totalsBase.net;
+    const amt = clamp(num(amtStr), 0, Math.max(net, 0));
+    const pct = net > 0 ? (amt / net) * 100 : 0;
+    setForm((p) => ({
+      ...p,
+      bill_disc_amt: amtStr,
+      bill_disc_pct: amt > 0 ? String(Math.round(pct * 100) / 100) : "",
+    }));
+  };
+
+  const totals = useMemo(() => {
+    const { gross, itemDisc, net } = totalsBase;
+
     const ship = Math.max(0, num(form.shipping_charge));
     const other = Math.max(0, num(form.other_charge));
     const ro = num(form.round_off);
 
-    let billDisc = 0;
-    const bdt = String(form.bill_discount_type || "NONE").toUpperCase();
-    const bdv = Math.max(0, num(form.bill_discount_value));
-
-    if (bdt === "PERCENT") billDisc = (net * bdv) / 100;
-    else if (bdt === "AMOUNT") billDisc = bdv;
-
-    if (billDisc > net) billDisc = net;
-
-    const grand = net - billDisc + ship + other + ro;
+    const bdAmt = clamp(num(form.bill_disc_amt), 0, net);
+    const grand = net - bdAmt + ship + other + ro;
 
     return {
       gross,
       itemDisc,
       net,
-      billDisc,
+      billDisc: bdAmt,
       ship,
       other,
       ro,
       grand,
     };
-  }, [items, form]);
+  }, [totalsBase, form.shipping_charge, form.other_charge, form.round_off, form.bill_disc_amt]);
 
   /* ------------ Submit (with Preview Confirm) ------------ */
 
@@ -701,10 +801,10 @@ export default function SupplierReceiptsPageClient() {
 
         return {
           book_id: it.book_id,
-
           ordered_qty,
           received_qty,
 
+          // legacy fields (backend uses these currently)
           qty: received_qty,
           rate: unit_price,
 
@@ -714,21 +814,43 @@ export default function SupplierReceiptsPageClient() {
       })
       .filter((x) => x.book_id && x.received_qty > 0);
 
+    const billPct = clamp(num(form.bill_disc_pct), 0, 100);
+    const billAmt = clamp(num(form.bill_disc_amt), 0, totalsBase.net);
+
+    let bill_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
+    let bill_discount_value: number | null = null;
+
+    if (billPct > 0) {
+      bill_discount_type = "PERCENT";
+      bill_discount_value = billPct;
+    } else if (billAmt > 0) {
+      bill_discount_type = "AMOUNT";
+      bill_discount_value = billAmt;
+    }
+
+    const docType = form.receive_doc_type;
+    const docNo = form.doc_no?.trim() || null;
+
+    // ✅ compatibility: if INVOICE, also send invoice_no = doc_no
+    // if CHALLAN, keep invoice_no null
     const payload: any = {
       supplier_id,
       school_order_id: Number(form.school_order_id),
 
-      invoice_no: form.invoice_no?.trim() || null,
+      receive_doc_type: docType,
+      doc_no: docNo,
+      doc_date: form.doc_date || undefined,
+
+      invoice_no: docType === "INVOICE" ? docNo : null,
 
       invoice_date: form.invoice_date || undefined,
       received_date: form.received_date || undefined,
 
-      // ✅ always received (no UI field)
       status: "received",
       remarks: form.remarks?.trim() || null,
 
-      bill_discount_type: form.bill_discount_type,
-      bill_discount_value: form.bill_discount_value ? num(form.bill_discount_value) : null,
+      bill_discount_type,
+      bill_discount_value,
 
       shipping_charge: form.shipping_charge ? num(form.shipping_charge) : 0,
       other_charge: form.other_charge ? num(form.other_charge) : 0,
@@ -745,6 +867,9 @@ export default function SupplierReceiptsPageClient() {
     if (!supplier_id) return "Supplier * required.";
     if (!form.school_id) return "School * required.";
     if (!form.school_order_id) return "Order * required.";
+
+    // invoice should have number
+    if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) return "Invoice No * required.";
 
     const anyTooMuch = items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty);
     if (anyTooMuch) return "Fix Rec. qty (cannot exceed pending).";
@@ -852,12 +977,11 @@ export default function SupplierReceiptsPageClient() {
     }
   };
 
-  /* ------------ Listing: client-side filters for Publisher + Invoice ------------ */
+  /* ------------ Listing: client-side filters for Publisher + DocNo + DocType ------------ */
 
   const visible = useMemo(() => {
     let list = receipts || [];
 
-    // Publisher filter (works only if backend returns publisher info with receipt; otherwise it won't filter)
     if (filterPublisherId) {
       const pub = publishers.find((p) => String(p.id) === String(filterPublisherId));
       const name = pub?.name || "";
@@ -866,14 +990,17 @@ export default function SupplierReceiptsPageClient() {
       }
     }
 
-    // Invoice filter (always works)
-    if (filterInvoiceNo.trim()) {
-      const q = filterInvoiceNo.trim().toLowerCase();
-      list = list.filter((r) => String(r.invoice_no || "").toLowerCase().includes(q));
+    if (filterDocType) {
+      list = list.filter((r) => normalizeDocType(r) === filterDocType);
+    }
+
+    if (filterDocNo.trim()) {
+      const q = filterDocNo.trim().toLowerCase();
+      list = list.filter((r) => String(getDocNo(r) || "").toLowerCase().includes(q));
     }
 
     return list;
-  }, [receipts, filterPublisherId, filterInvoiceNo, publishers]);
+  }, [receipts, filterPublisherId, filterDocNo, filterDocType, publishers]);
 
   const viewTotals = useMemo(() => {
     if (!viewRow) return null;
@@ -894,17 +1021,24 @@ export default function SupplierReceiptsPageClient() {
       viewRow.bill_discount_amount != null
         ? num(viewRow.bill_discount_amount)
         : bdt === "PERCENT"
-          ? (sub_total * Math.max(0, bdv)) / 100
-          : bdt === "AMOUNT"
-            ? Math.max(0, bdv)
-            : 0;
+        ? (sub_total * Math.max(0, bdv)) / 100
+        : bdt === "AMOUNT"
+        ? Math.max(0, bdv)
+        : 0;
 
     if (discAmt > sub_total) discAmt = sub_total;
 
     const grand = viewRow.grand_total != null ? num(viewRow.grand_total) : sub_total - discAmt + ship + other + ro;
 
+    // gross + itemDisc from view items (best-effort)
+    const gross = items2.reduce((sum, it) => sum + num(it.unit_price) * Math.max(0, num(it.received_qty)), 0);
+    const net = itemsNetComputed;
+    const itemDisc = Math.max(gross - net, 0);
+
     return {
       itemsNetComputed,
+      gross,
+      itemDisc,
       sub_total,
       bill_discount_type: bdt as "NONE" | "PERCENT" | "AMOUNT",
       bill_discount_value: bdv,
@@ -921,12 +1055,18 @@ export default function SupplierReceiptsPageClient() {
     <div className="text-[10px] text-slate-500 leading-none mb-1">{children}</div>
   );
 
-  const TinyPill = ({ label, value }: { label: string; value: string }) => (
-    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-200">
+  const BigPill = ({ label, value }: { label: string; value: string }) => (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 border border-slate-200">
       <div className="text-[10px] text-slate-600">{label}</div>
-      <div className="text-[12px] font-bold text-slate-900">{value}</div>
+      <div className="text-[14px] font-extrabold text-slate-900">{value}</div>
     </div>
   );
+
+  const selectedSupplierName =
+    suppliers.find((s) => String(s.id) === String(form.supplier_id))?.name ||
+    (form.supplier_id ? `Supplier #${form.supplier_id}` : "");
+
+  const isInvoice = form.receive_doc_type === "INVOICE";
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -939,7 +1079,7 @@ export default function SupplierReceiptsPageClient() {
             </Link>
 
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate">Supplier Receipts (GRN / Invoice)</div>
+              <div className="text-sm font-semibold truncate">Supplier Receipts (Challan / Invoice)</div>
               <div className="text-[11px] text-slate-500 truncate">
                 Inventory IN + Supplier Ledger posting happens on <b>status = received</b>
               </div>
@@ -954,7 +1094,7 @@ export default function SupplierReceiptsPageClient() {
           </div>
         </div>
 
-        {/* Filters (Publisher -> Invoice first) */}
+        {/* Filters */}
         <div className="px-3 pb-3 flex flex-wrap items-end gap-2">
           <div>
             <MiniLabel>Publisher</MiniLabel>
@@ -974,13 +1114,27 @@ export default function SupplierReceiptsPageClient() {
           </div>
 
           <div>
-            <MiniLabel>Invoice</MiniLabel>
+            <MiniLabel>Doc Type</MiniLabel>
+            <select
+              value={filterDocType}
+              onChange={(e) => setFilterDocType(e.target.value as any)}
+              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[140px]"
+              title="Doc Type"
+            >
+              <option value="">All</option>
+              <option value="CHALLAN">Challan</option>
+              <option value="INVOICE">Invoice</option>
+            </select>
+          </div>
+
+          <div>
+            <MiniLabel>Doc No</MiniLabel>
             <input
-              value={filterInvoiceNo}
-              onChange={(e) => setFilterInvoiceNo(e.target.value)}
+              value={filterDocNo}
+              onChange={(e) => setFilterDocNo(e.target.value)}
               className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[160px]"
-              placeholder="Invoice no"
-              title="Invoice No"
+              placeholder="Challan/Invoice no"
+              title="Doc No"
             />
           </div>
 
@@ -1101,56 +1255,71 @@ export default function SupplierReceiptsPageClient() {
                   <tr>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Receipt</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Supplier</th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">Invoice</th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">Rcv Date</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Doc</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">GRN</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-right">Grand</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Status</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="border-b border-slate-200 px-3 py-2 font-semibold text-slate-900">
-                        {r.receipt_no || `#${r.id}`}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2">{r.supplier?.name || `Supplier #${r.supplier_id}`}</td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-slate-700">{r.invoice_no || "-"}</td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-slate-700">{formatDate(r.received_date || r.invoice_date)}</td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">₹{fmtMoney(r.grand_total)}</td>
-                      <td className="border-b border-slate-200 px-3 py-2">
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusChip(r.status)}`}>{r.status}</span>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openView(r.id)}
-                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                            title="View"
-                          >
-                            <FileText className="w-4 h-4" />
-                            View
-                          </button>
+                  {visible.map((r) => {
+                    const t = normalizeDocType(r);
+                    const docNo = getDocNo(r);
+                    const invoiceRow = t === "INVOICE";
+                    return (
+                      <tr key={r.id} className={`hover:bg-slate-50 ${invoiceRow ? "bg-indigo-50/40" : ""}`}>
+                        <td className="border-b border-slate-200 px-3 py-2 font-semibold text-slate-900">
+                          {r.receipt_no || `#${r.id}`}
+                        </td>
+                        <td className="border-b border-slate-200 px-3 py-2">{r.supplier?.name || `Supplier #${r.supplier_id}`}</td>
+                        <td className="border-b border-slate-200 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(t)}`}>{t}</span>
+                            <span className="font-semibold text-slate-900">{docNo}</span>
+                          </div>
+                        </td>
+                        <td className="border-b border-slate-200 px-3 py-2 text-slate-700">
+                          {formatDate(r.received_date || r.invoice_date)}
+                        </td>
+                        <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                          ₹{fmtMoney(r.grand_total)}
+                        </td>
+                        <td className="border-b border-slate-200 px-3 py-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusChip(r.status)}`}>{r.status}</span>
+                        </td>
+                        <td className="border-b border-slate-200 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openView(r.id)}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                              title="View"
+                            >
+                              <FileText className="w-4 h-4" />
+                              View
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleViewPdf(r.id)}
-                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                            title="PDF"
-                          >
-                            <FileText className="w-4 h-4" />
-                            PDF
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            <button
+                              type="button"
+                              onClick={() => handleViewPdf(r.id)}
+                              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
+                              title="PDF"
+                            >
+                              <FileText className="w-4 h-4" />
+                              PDF
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
               <div className="px-4 py-2 text-[10px] text-slate-500 border-t">
-                Note: Publisher filter works if backend sends publisher details with receipts; invoice filter always works.
+                Note: Invoice rows are highlighted. Partial receiving is supported (new receipt for pending items with new
+                challan/invoice and new rates).
               </div>
             </div>
           )}
@@ -1163,11 +1332,16 @@ export default function SupplierReceiptsPageClient() {
           <div className="h-full w-full p-2 sm:p-3">
             <div className="mx-auto w-full max-w-[1220px] h-full">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-[96vh] flex flex-col">
-                {/* HEADER: super compact (more space to listing) */}
+                {/* HEADER */}
                 <div className="border-b bg-slate-50">
                   <div className="px-3 py-2 flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate">Receipt</div>
+                      <div className="text-sm font-semibold truncate">
+                        Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                      </div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {isInvoice ? "Receiving as INVOICE (highlighted)" : "Receiving as CHALLAN"}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
@@ -1193,9 +1367,13 @@ export default function SupplierReceiptsPageClient() {
                     </div>
                   </div>
 
-                  {/* ✅ top portion minimized: row-1 fields, row-2 remarks + totals (gross/net/grand) */}
+                  {/* Top form */}
                   <div className="px-3 pb-2">
-                    <div className="grid grid-cols-12 gap-2">
+                    <div
+                      className={`grid grid-cols-12 gap-2 p-2 rounded-2xl border ${
+                        isInvoice ? "bg-indigo-50/60 border-indigo-200" : "bg-white border-slate-200"
+                      }`}
+                    >
                       {/* School */}
                       <div className="col-span-12 md:col-span-2">
                         <MiniLabel>School *</MiniLabel>
@@ -1272,27 +1450,53 @@ export default function SupplierReceiptsPageClient() {
                         </select>
                       </div>
 
-                      {/* Invoice no */}
-                      <div className="col-span-12 md:col-span-2">
-                        <MiniLabel>Invoice</MiniLabel>
+                      {/* Doc Type */}
+                      <div className="col-span-6 md:col-span-2">
+                        <MiniLabel>Receiving As *</MiniLabel>
+                        <select
+                          value={form.receive_doc_type}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              receive_doc_type: e.target.value as ReceiveDocType,
+                              doc_date: p.doc_date || todayISO(),
+                            }))
+                          }
+                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
+                            isInvoice ? "border-indigo-300" : "border-slate-300"
+                          }`}
+                          title="Receiving As"
+                        >
+                          <option value="CHALLAN">Challan</option>
+                          <option value="INVOICE">Invoice</option>
+                        </select>
+                      </div>
+
+                      {/* Doc No */}
+                      <div className="col-span-6 md:col-span-2">
+                        <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
                         <input
-                          value={form.invoice_no}
-                          onChange={(e) => setForm((p) => ({ ...p, invoice_no: e.target.value, status: "received" }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px]"
-                          placeholder="No"
-                          title="Invoice No"
+                          value={form.doc_no}
+                          onChange={(e) => setForm((p) => ({ ...p, doc_no: e.target.value, status: "received" }))}
+                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] ${
+                            isInvoice ? "border-indigo-300 bg-white" : "border-slate-300 bg-white"
+                          }`}
+                          placeholder={isInvoice ? "Invoice number" : "Challan number"}
+                          title="Doc No"
                         />
                       </div>
 
-                      {/* Bill Date */}
+                      {/* Doc Date */}
                       <div className="col-span-6 md:col-span-1">
-                        <MiniLabel>Bill</MiniLabel>
+                        <MiniLabel>Doc Date</MiniLabel>
                         <input
                           type="date"
-                          value={form.invoice_date}
-                          onChange={(e) => setForm((p) => ({ ...p, invoice_date: e.target.value, status: "received" }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px]"
-                          title="Invoice Date"
+                          value={form.doc_date}
+                          onChange={(e) => setForm((p) => ({ ...p, doc_date: e.target.value, status: "received" }))}
+                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] ${
+                            isInvoice ? "border-indigo-300 bg-white" : "border-slate-300 bg-white"
+                          }`}
+                          title="Doc Date"
                         />
                       </div>
 
@@ -1309,9 +1513,9 @@ export default function SupplierReceiptsPageClient() {
                       </div>
                     </div>
 
-                    {/* ✅ Row-2: Remarks + Totals (Gross/Net/Grand) in same line */}
+                    {/* Row-2 */}
                     <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <div className="flex-1 min-w-[220px]">
+                      <div className="min-w-[260px] w-[380px] md:w-[520px]">
                         <MiniLabel>Remarks</MiniLabel>
                         <input
                           value={form.remarks}
@@ -1323,11 +1527,11 @@ export default function SupplierReceiptsPageClient() {
                       </div>
 
                       <div className="ml-auto flex flex-wrap items-center gap-2">
-                        <TinyPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                        <TinyPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                        <div className="px-3 py-1.5 rounded-lg bg-slate-900 text-white">
+                        <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
+                        <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
+                        <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
                           <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                          <div className="text-[12px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                          <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
                         </div>
 
                         <button
@@ -1344,7 +1548,7 @@ export default function SupplierReceiptsPageClient() {
                   </div>
                 </div>
 
-                {/* LISTING (gets more height now) */}
+                {/* LISTING */}
                 <div className="flex-1 min-h-0">
                   {items.length === 0 ? (
                     <div className="p-4 text-sm text-slate-500">Select an order to load books.</div>
@@ -1357,11 +1561,12 @@ export default function SupplierReceiptsPageClient() {
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Rec.</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Unit</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">MRP</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Net</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Line</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Net</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
                           </tr>
                         </thead>
@@ -1383,14 +1588,19 @@ export default function SupplierReceiptsPageClient() {
                                 </td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">{it.pending_qty}</td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+                                  {it.pending_qty}
+                                </td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
+                                    ref={(el) => (cellRefs.current[cellKey(idx, "rec")] = el)}
                                     type="number"
                                     min={0}
                                     value={it.rec_qty}
                                     onChange={(e) => setRowRecQty(idx, e.target.value)}
+                                    onWheel={preventWheelChange}
+                                    onKeyDown={(e) => onCellEnter(e, idx, "rec")}
                                     className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right ${
                                       tooMuch ? "border-rose-400 bg-rose-50" : "border-slate-300"
                                     }`}
@@ -1401,22 +1611,28 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
+                                    ref={(el) => (cellRefs.current[cellKey(idx, "mrp")] = el)}
                                     type="number"
                                     min={0}
                                     value={it.unit_price}
                                     onChange={(e) => setRowUnit(idx, e.target.value)}
+                                    onWheel={preventWheelChange}
+                                    onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
                                     className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right"
-                                    title="Unit price"
+                                    title="MRP"
                                   />
                                 </td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
+                                    ref={(el) => (cellRefs.current[cellKey(idx, "pct")] = el)}
                                     type="number"
                                     min={0}
                                     max={100}
                                     value={it.disc_pct}
                                     onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                                    onWheel={preventWheelChange}
+                                    onKeyDown={(e) => onCellEnter(e, idx, "pct")}
                                     className={`w-16 border rounded-xl px-2 py-1.5 text-[12px] text-right ${
                                       it.disc_mode === "PERCENT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
                                     }`}
@@ -1426,10 +1642,13 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
+                                    ref={(el) => (cellRefs.current[cellKey(idx, "amt")] = el)}
                                     type="number"
                                     min={0}
                                     value={it.disc_amt}
                                     onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                                    onWheel={preventWheelChange}
+                                    onKeyDown={(e) => onCellEnter(e, idx, "amt")}
                                     className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right ${
                                       it.disc_mode === "AMOUNT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
                                     }`}
@@ -1437,8 +1656,9 @@ export default function SupplierReceiptsPageClient() {
                                   />
                                 </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.netUp)}</td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.grossLine)}</td>
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">₹{fmtMoney(row.netLine)}</td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <button
@@ -1455,37 +1675,43 @@ export default function SupplierReceiptsPageClient() {
                           })}
                         </tbody>
                       </table>
+
+                      <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
+                        Tip: Enter key will jump to next cell (Rec → MRP → %Disc → Disc₹ → next row).
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* BOTTOM BAR: Charges + Preview/Save */}
+                {/* BOTTOM BAR */}
                 <div className="border-t bg-white">
                   <div className="px-4 py-2 bg-slate-50 flex flex-wrap items-end gap-2">
                     <div>
-                      <MiniLabel>Bill Disc</MiniLabel>
-                      <select
-                        value={form.bill_discount_type}
-                        onChange={(e) => setForm((p) => ({ ...p, bill_discount_type: e.target.value as any }))}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] bg-white min-w-[110px]"
-                        title="Bill discount type"
-                      >
-                        <option value="NONE">NONE</option>
-                        <option value="PERCENT">%</option>
-                        <option value="AMOUNT">₹</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <MiniLabel>Disc Val</MiniLabel>
+                      <MiniLabel>Bill Disc %</MiniLabel>
                       <input
                         type="number"
                         min={0}
-                        value={form.bill_discount_value}
-                        onChange={(e) => setForm((p) => ({ ...p, bill_discount_value: e.target.value }))}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[105px]"
+                        max={100}
+                        value={form.bill_disc_pct}
+                        onChange={(e) => syncBillDiscFromPct(e.target.value)}
+                        onWheel={preventWheelChange}
+                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px]"
                         placeholder="0"
-                        title="Bill discount value"
+                        title="Bill discount percent (auto sync ₹)"
+                      />
+                    </div>
+
+                    <div>
+                      <MiniLabel>Bill Disc ₹</MiniLabel>
+                      <input
+                        type="number"
+                        min={0}
+                        value={form.bill_disc_amt}
+                        onChange={(e) => syncBillDiscFromAmt(e.target.value)}
+                        onWheel={preventWheelChange}
+                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[130px]"
+                        placeholder="0"
+                        title="Bill discount amount (auto sync %)"
                       />
                     </div>
 
@@ -1496,7 +1722,8 @@ export default function SupplierReceiptsPageClient() {
                         min={0}
                         value={form.shipping_charge}
                         onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[100px]"
+                        onWheel={preventWheelChange}
+                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px]"
                         placeholder="0"
                         title="Shipping charge"
                       />
@@ -1509,7 +1736,8 @@ export default function SupplierReceiptsPageClient() {
                         min={0}
                         value={form.other_charge}
                         onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[100px]"
+                        onWheel={preventWheelChange}
+                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px]"
                         placeholder="0"
                         title="Other charge"
                       />
@@ -1521,18 +1749,19 @@ export default function SupplierReceiptsPageClient() {
                         type="number"
                         value={form.round_off}
                         onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[100px]"
+                        onWheel={preventWheelChange}
+                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px]"
                         placeholder="0"
                         title="Round off"
                       />
                     </div>
 
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <TinyPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                      <TinyPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                      <div className="px-3 py-2 rounded-xl bg-slate-900 text-white">
+                      <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+                      <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
+                      <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
                         <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                        <div className="text-[12px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                        <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
                       </div>
 
                       <button
@@ -1568,14 +1797,32 @@ export default function SupplierReceiptsPageClient() {
                   </div>
                 </div>
 
-                {/* Preview Modal (inside create) */}
+                {/* Preview Modal */}
                 {previewOpen && (
                   <div className="fixed inset-0 z-[60] bg-black/60">
-                    <div className="h-full w-full p-3 sm:p-4 overflow-auto">
-                      <div className="mx-auto w-full max-w-[980px]">
-                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                    <div className="h-full w-full p-2 sm:p-3">
+                      <div className="mx-auto w-full max-w-[1180px] h-[96vh]">
+                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-full flex flex-col">
                           <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between">
-                            <div className="text-sm font-semibold">Preview Receipt</div>
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold truncate">
+                                Preview Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-600">
+                                <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(form.receive_doc_type)}`}>
+                                  {form.receive_doc_type}
+                                </span>{" "}
+                                <b className="ml-2">{form.doc_no || "-"}</b> • Doc Date: <b>{form.doc_date || "-"}</b> • GRN:{" "}
+                                <b>{form.received_date || "-"}</b>
+                                {form.remarks?.trim() ? (
+                                  <>
+                                    {" "}
+                                    • Remarks: <b>{form.remarks.trim()}</b>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
+
                             <button
                               onClick={() => setPreviewOpen(false)}
                               className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
@@ -1585,57 +1832,20 @@ export default function SupplierReceiptsPageClient() {
                             </button>
                           </div>
 
-                          <div className="p-4">
-                            <div className="grid grid-cols-12 gap-3">
-                              <div className="col-span-12 border border-slate-200 rounded-2xl p-3">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div>
-                                    <div className="text-[11px] text-slate-600">Supplier</div>
-                                    <div className="mt-1 font-semibold text-slate-900">
-                                      {suppliers.find((s) => String(s.id) === String(form.supplier_id))?.name || "-"}
-                                    </div>
-                                    <div className="mt-1 text-[11px] text-slate-500">
-                                      Invoice: <b>{form.invoice_no || "-"}</b>
-                                    </div>
-                                    <div className="mt-1 text-[11px] text-slate-500">
-                                      Bill Date: <b>{form.invoice_date || "-"}</b> • GRN Date: <b>{form.received_date || "-"}</b>
-                                    </div>
-                                    {form.remarks?.trim() ? (
-                                      <div className="mt-1 text-[11px] text-slate-500">
-                                        Remarks: <b>{form.remarks.trim()}</b>
-                                      </div>
-                                    ) : null}
-                                  </div>
-
-                                  <div className="flex flex-wrap gap-2 justify-end">
-                                    <TinyPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                                    <TinyPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                                    <TinyPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                                    <TinyPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                                    <TinyPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
-                                    <TinyPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
-                                    <TinyPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
-                                    <div className="px-3 py-2 rounded-xl bg-slate-900 text-white">
-                                      <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                                      <div className="text-[12px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
+                          <div className="flex-1 min-h-0 p-3">
+                            <div className="h-full border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
                               <div className="px-3 py-2 bg-slate-100 text-xs font-semibold">Lines</div>
-                              <div className="overflow-auto">
+                              <div className="flex-1 min-h-0 overflow-auto">
                                 <table className="w-full text-xs border-collapse">
-                                  <thead className="bg-white">
+                                  <thead className="bg-white sticky top-0">
                                     <tr>
                                       <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
                                       <th className="border-b border-slate-200 px-3 py-2 text-right">Rec</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Unit</th>
+                                      <th className="border-b border-slate-200 px-3 py-2 text-right">MRP</th>
                                       <th className="border-b border-slate-200 px-3 py-2 text-right">Disc</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Net Unit</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Line</th>
+                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Gross</th>
+                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Net</th>
+                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -1650,20 +1860,22 @@ export default function SupplierReceiptsPageClient() {
                                           it.disc_mode === "PERCENT"
                                             ? `${fmtMoney(num(it.disc_pct))}%`
                                             : it.disc_mode === "AMOUNT"
-                                              ? `₹${fmtMoney(num(it.disc_amt))}`
-                                              : "-";
+                                            ? `₹${fmtMoney(num(it.disc_amt))}`
+                                            : "-";
 
                                         return (
                                           <tr key={it.book_id} className="hover:bg-slate-50">
                                             <td className="border-b border-slate-200 px-3 py-2">
                                               <div className="font-medium">{it.title}</div>
-                                              <div className="text-[11px] text-slate-500">{it.meta}</div>
                                             </td>
                                             <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
                                             <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(up)}</td>
                                             <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.netUp)}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.grossLine)}</td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.netLine)}</td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                              ₹{fmtMoney(row.netLine)}
+                                            </td>
                                           </tr>
                                         );
                                       })}
@@ -1671,26 +1883,42 @@ export default function SupplierReceiptsPageClient() {
                                 </table>
                               </div>
                             </div>
+                          </div>
 
-                            <div className="mt-4 flex justify-end gap-2">
-                              <button
-                                onClick={() => setPreviewOpen(false)}
-                                className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                              >
-                                Back
-                              </button>
-                              <button
-                                onClick={submitCreate}
-                                disabled={creating}
-                                className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                              >
-                                {creating ? "Saving..." : "Confirm Save"}
-                              </button>
+                          <div className="border-t bg-white px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2 justify-end">
+                              <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
+                              <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+                              <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
+                              <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
+                              <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
+                              <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
+                              <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
+                              <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                                <div className="text-[10px] opacity-80 leading-none">Grand</div>
+                                <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                              </div>
+
+                              <div className="ml-2 flex items-center gap-2">
+                                <button
+                                  onClick={() => setPreviewOpen(false)}
+                                  className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                                >
+                                  Back
+                                </button>
+                                <button
+                                  onClick={submitCreate}
+                                  disabled={creating}
+                                  className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                                >
+                                  {creating ? "Saving..." : "Confirm Save"}
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="h-6" />
+                        <div className="h-2" />
                       </div>
                     </div>
                   </div>
@@ -1721,6 +1949,15 @@ export default function SupplierReceiptsPageClient() {
                         </span>
                       </span>
 
+                      {viewRow ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(normalizeDocType(viewRow))}`}>
+                            {normalizeDocType(viewRow)}
+                          </span>
+                          <span className="font-semibold">{getDocNo(viewRow)}</span>
+                        </span>
+                      ) : null}
+
                       {viewRow?.supplier?.phone ? (
                         <span className="inline-flex items-center gap-1">
                           <Phone className="w-3.5 h-3.5 text-slate-500" />
@@ -1749,7 +1986,7 @@ export default function SupplierReceiptsPageClient() {
                       <button
                         onClick={() => handleViewPdf(viewId)}
                         className="text-[12px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-2"
-                        title="Open PDF (if endpoint exists)"
+                        title="Open PDF"
                       >
                         <FileText className="w-4 h-4" /> PDF
                       </button>
@@ -1779,25 +2016,27 @@ export default function SupplierReceiptsPageClient() {
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
                           <div className="text-[11px] text-slate-600">Status</div>
                           <div className="mt-1">
-                            <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusChip(viewRow.status)}`}>{viewRow.status}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] ${statusChip(viewRow.status)}`}>
+                              {viewRow.status}
+                            </span>
                           </div>
                         </div>
 
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
                           <div className="text-[11px] text-slate-600 inline-flex items-center gap-1">
-                            <Hash className="w-3.5 h-3.5" /> Invoice No
+                            <Hash className="w-3.5 h-3.5" /> Doc No
                           </div>
-                          <div className="mt-1 text-sm font-semibold">{viewRow.invoice_no || "-"}</div>
+                          <div className="mt-1 text-sm font-semibold">{getDocNo(viewRow)}</div>
                         </div>
 
                         <div className="col-span-12 md:col-span-3 border border-slate-200 rounded-2xl p-3">
                           <div className="text-[11px] text-slate-600 inline-flex items-center gap-1">
-                            <CalendarDays className="w-3.5 h-3.5" /> Bill / GRN
+                            <CalendarDays className="w-3.5 h-3.5" /> Doc / GRN
                           </div>
                           <div className="mt-1 text-[12px] text-slate-800">
                             <div>
-                              <span className="text-slate-500">Bill:</span>{" "}
-                              <span className="font-semibold">{formatDate(viewRow.invoice_date)}</span>
+                              <span className="text-slate-500">Doc:</span>{" "}
+                              <span className="font-semibold">{formatDate(getDocDate(viewRow))}</span>
                             </div>
                             <div>
                               <span className="text-slate-500">GRN:</span>{" "}
@@ -1814,6 +2053,101 @@ export default function SupplierReceiptsPageClient() {
                         </div>
                       </div>
 
+                      {viewRow?.remarks?.trim() ? (
+                        <div className="mt-3 text-[12px] text-slate-700 border border-slate-200 rounded-2xl px-3 py-2 bg-white">
+                          <span className="text-slate-500">Remarks:</span> <b>{viewRow.remarks.trim()}</b>
+                        </div>
+                      ) : null}
+
+                      {/* ✅ View Lines + Charges (more space + single horizontal charge line) */}
+                      <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
+                        <div className="px-3 py-2 bg-slate-100 flex flex-wrap items-center gap-2 justify-between">
+                          <div className="text-xs font-semibold">Lines</div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-white">
+                              Sub: <b>₹{fmtMoney(viewTotals?.sub_total)}</b>
+                            </span>
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-white">
+                              Bill Disc: <b>₹{fmtMoney(viewTotals?.bill_discount_amount)}</b>
+                            </span>
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-white">
+                              Ship: <b>₹{fmtMoney(viewTotals?.shipping_charge)}</b>
+                            </span>
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-white">
+                              Other: <b>₹{fmtMoney(viewTotals?.other_charge)}</b>
+                            </span>
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-white">
+                              Round: <b>₹{fmtMoney(viewTotals?.round_off)}</b>
+                            </span>
+                            <span className="px-2 py-1 rounded-xl border border-slate-200 bg-slate-900 text-white">
+                              Grand: <b>₹{fmtMoney(viewTotals?.grand_total ?? viewRow.grand_total)}</b>
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="max-h-[52vh] overflow-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead className="bg-white sticky top-0 z-10">
+                              <tr>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right w-[80px]">Rec</th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right w-[120px]">MRP</th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right w-[120px]">Disc</th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right w-[140px]">Net/Unit</th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right w-[150px]">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(viewTotals?.items || []).map((it) => {
+                                const title = it.book?.title || `Book #${it.book_id}`;
+                                const rec = Math.max(0, num(it.received_qty));
+                                const mrp = Math.max(0, num(it.unit_price));
+                                const discAmt = Math.max(0, num(it.discount_amt));
+                                const discPct = Math.max(0, num(it.discount_pct));
+                                const netUnit = Math.max(0, num(it.net_unit_price) || (mrp - discAmt));
+                                const amount = Math.max(0, num(it.line_amount));
+
+                                const discText =
+                                  discAmt > 0 ? `₹${fmtMoney(discAmt)}` : discPct > 0 ? `${fmtMoney(discPct)}%` : "-";
+
+                                return (
+                                  <tr key={`${it.book_id}-${it.id || ""}`} className="hover:bg-slate-50">
+                                    <td className="border-b border-slate-200 px-3 py-2">
+                                      <div className="font-medium text-slate-900">{title}</div>
+                                      <div className="text-[11px] text-slate-500">
+                                        {[
+                                          it.book?.class_name ? `C:${it.book.class_name}` : null,
+                                          it.book?.subject ? `S:${it.book.subject}` : null,
+                                          it.book?.code ? `Code:${it.book.code}` : null,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(" • ")}
+                                      </div>
+                                    </td>
+                                    <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">{rec}</td>
+                                    <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(mrp)}</td>
+                                    <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
+                                    <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(netUnit)}</td>
+                                    <td className="border-b border-slate-200 px-3 py-2 text-right font-extrabold">
+                                      ₹{fmtMoney(amount)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {!viewTotals?.items?.length ? (
+                                <tr>
+                                  <td colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
+                                    No line items found.
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Status buttons */}
                       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
                         <button
                           disabled={statusSaving || viewRow.status === "draft"}
