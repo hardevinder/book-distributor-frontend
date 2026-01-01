@@ -61,8 +61,6 @@ type SupplierInvoiceLite = {
   invoice_no?: string | null;
   bill_no?: string | null;
   doc_no?: string | null;
-
-  // backend sometimes uses receipt_no
   receipt_no?: string | null;
 
   invoice_date?: string | null;
@@ -70,15 +68,17 @@ type SupplierInvoiceLite = {
   received_date?: string | null;
   createdAt?: string | null;
 
-  doc_type?: string | null; // INVOICE/CHALLAN etc
+  doc_type?: string | null;
   status?: string | null;
 
   total_amount?: number | string | null;
   amount?: number | string | null;
   net_amount?: number | string | null;
-
-  // IMPORTANT: backend returns grand_total / grandTotal
   grand_total?: number | string | null;
+
+  // ✅ NEW: school
+  school_id?: number | null;
+  school_name?: string | null;
 
   supplier_id?: number | null;
   pdf_url?: string | null;
@@ -97,6 +97,7 @@ type InvoiceItem = {
 
 type SupplierInvoiceDetail = SupplierInvoiceLite & {
   supplier?: { id: number; name: string } | null;
+  school?: { id?: number | null; name?: string | null } | null; // ✅ NEW (backend sends school object sometimes)
   items?: InvoiceItem[];
   notes?: string | null;
   ref_no?: string | null;
@@ -156,7 +157,6 @@ const pickInvoiceNo = (x: SupplierInvoiceLite) =>
 const pickInvoiceDate = (x: SupplierInvoiceLite) =>
   x.invoice_date || x.doc_date || x.received_date || x.createdAt || null;
 
-// include grand_total / grandTotal
 const pickAmount = (x: SupplierInvoiceLite) =>
   x.total_amount ??
   x.net_amount ??
@@ -167,6 +167,7 @@ const pickAmount = (x: SupplierInvoiceLite) =>
 
 const pickStatus = (x: SupplierInvoiceLite) => x.status || "-";
 const pickDocType = (x: SupplierInvoiceLite) => x.doc_type || "-";
+const pickSchoolName = (x: SupplierInvoiceLite) => x.school_name || "-";
 
 const sumItemsAmount = (items?: InvoiceItem[]) =>
   (items || []).reduce((s, it) => s + num(it?.amount), 0);
@@ -762,6 +763,10 @@ const SuppliersPageClient: React.FC = () => {
             net_amount: x.net_amount ?? x.netAmount ?? grand ?? null,
             amount: x.amount ?? null,
 
+            // ✅ NEW: school
+            school_id: x.school_id ?? x.schoolId ?? null,
+            school_name: x.school_name ?? x.schoolName ?? x.school?.name ?? null,
+
             supplier_id: x.supplier_id ?? x.supplierId ?? null,
             pdf_url: x.pdf_url ?? x.pdfUrl ?? x.file_url ?? null,
           };
@@ -794,7 +799,7 @@ const SuppliersPageClient: React.FC = () => {
     await openInvoicesPopup(invSupplier);
   };
 
-  // ✅ FIXED: unwrap nested response + better totals fallback
+  // ✅ FIXED: unwrap nested response + better totals fallback + school_name support
   const fetchInvoiceDetail = async (supplierId: number, invoiceId: number) => {
     setInvDetailLoading(true);
     setInvDetailError(null);
@@ -814,7 +819,6 @@ const SuppliersPageClient: React.FC = () => {
 
         const raw = (res.data as any) || null;
 
-        // ✅ MOST IMPORTANT: backend often wraps in receipt/data/row/etc.
         const x =
           raw?.receipt ??
           raw?.data ??
@@ -847,7 +851,6 @@ const SuppliersPageClient: React.FC = () => {
 
         const itemsSum = sumItemsAmount(items);
 
-        // ✅ totals can exist in many places
         const grand =
           x?.grand_total ??
           x?.grandTotal ??
@@ -866,6 +869,23 @@ const SuppliersPageClient: React.FC = () => {
           raw?.amount ??
           raw?.total ??
           itemsSum ??
+          null;
+
+        // ✅ NEW: school from multiple shapes
+        const schoolName =
+          x?.school_name ??
+          x?.schoolName ??
+          x?.school?.name ??
+          raw?.school?.name ??
+          raw?.invoice?.school_name ??
+          raw?.receipt?.school_name ??
+          null;
+
+        const schoolId =
+          x?.school_id ??
+          x?.schoolId ??
+          x?.school?.id ??
+          raw?.school?.id ??
           null;
 
         const detail: SupplierInvoiceDetail = {
@@ -898,6 +918,11 @@ const SuppliersPageClient: React.FC = () => {
 
           supplier_id: x?.supplier_id ?? x?.supplierId ?? supplierId,
           pdf_url: x?.pdf_url ?? x?.pdfUrl ?? x?.file_url ?? null,
+
+          // ✅ NEW: school fields
+          school_id: schoolId,
+          school_name: schoolName,
+          school: raw?.school ?? x?.school ?? (schoolName ? { id: schoolId, name: schoolName } : null),
 
           notes: x?.notes ?? x?.remark ?? x?.remarks ?? null,
           ref_no: x?.ref_no ?? x?.refNo ?? x?.reference_no ?? null,
@@ -950,6 +975,7 @@ const SuppliersPageClient: React.FC = () => {
     return invoices.filter((x) => {
       const hay = [
         pickInvoiceNo(x),
+        pickSchoolName(x), // ✅ include in search
         pickDocType(x),
         pickStatus(x),
         pickInvoiceDate(x),
@@ -1459,7 +1485,7 @@ const SuppliersPageClient: React.FC = () => {
                         ref={invSearchRef}
                         value={invQ}
                         onChange={(e) => setInvQ(e.target.value)}
-                        placeholder="Search invoices (no/date/type/status)…"
+                        placeholder="Search invoices (no/school/date/type/status)…"
                         className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-[12px] outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                       />
                       {invQ.trim() && (
@@ -1506,6 +1532,9 @@ const SuppliersPageClient: React.FC = () => {
                                   Invoice No
                                 </th>
                                 <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                  School
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">
                                   Date
                                 </th>
                                 <th className="border-b border-slate-200 px-3 py-2 text-left">
@@ -1536,6 +1565,11 @@ const SuppliersPageClient: React.FC = () => {
                                     {pickInvoiceNo(x)}
                                   </td>
                                   <td className="border-b border-slate-200 px-3 py-2">
+                                    <span className="line-clamp-1">
+                                      {pickSchoolName(x)}
+                                    </span>
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2">
                                     {formatDate(pickInvoiceDate(x))}
                                   </td>
                                   <td className="border-b border-slate-200 px-3 py-2">
@@ -1545,7 +1579,7 @@ const SuppliersPageClient: React.FC = () => {
                                     {pickStatus(x)}
                                   </td>
                                   <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                    ₹{fmtMoney(pickAmount(x))}
+                                    {fmtMoney(pickAmount(x))}
                                   </td>
                                   <td className="border-b border-slate-200 px-3 py-2 text-center">
                                     <button
@@ -1611,6 +1645,17 @@ const SuppliersPageClient: React.FC = () => {
                                 </div>
                               </div>
 
+                              <div className="col-span-12">
+                                <div className="text-[11px] text-slate-500">
+                                  School
+                                </div>
+                                <div className="text-[12px] font-semibold">
+                                  {invDetail.school_name ||
+                                    invDetail.school?.name ||
+                                    "-"}
+                                </div>
+                              </div>
+
                               <div className="col-span-12 md:col-span-6">
                                 <div className="text-[11px] text-slate-500">
                                   Type / Status
@@ -1626,7 +1671,6 @@ const SuppliersPageClient: React.FC = () => {
                                   Amount
                                 </div>
                                 <div className="text-[13px] font-extrabold">
-                                  ₹
                                   {fmtMoney(
                                     pickAmount(invDetail) ||
                                       sumItemsAmount(invDetail.items)
@@ -1721,10 +1765,10 @@ const SuppliersPageClient: React.FC = () => {
                                             {it.qty ?? "-"}
                                           </td>
                                           <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                            ₹{fmtMoney(it.rate)}
+                                            {fmtMoney(it.rate)}
                                           </td>
                                           <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                            ₹{fmtMoney(it.amount)}
+                                            {fmtMoney(it.amount)}
                                           </td>
                                         </tr>
                                       ))}
@@ -1922,16 +1966,15 @@ const SuppliersPageClient: React.FC = () => {
                     <div className="col-span-12">
                       <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
                         <span>
-                          Cash Paid: <b>₹{fmtMoney(num(payForm.amount))}</b>
+                          Cash Paid: <b>{fmtMoney(num(payForm.amount))}</b>
                         </span>
                         <span>
                           Discount:{" "}
-                          <b>₹{fmtMoney(num(payForm.discount_amount || 0))}</b>
+                          <b>{fmtMoney(num(payForm.discount_amount || 0))}</b>
                         </span>
                         <span>
                           Total Settled:{" "}
                           <b>
-                            ₹
                             {fmtMoney(
                               num(payForm.amount) +
                                 num(payForm.discount_amount || 0)
@@ -1997,7 +2040,7 @@ const SuppliersPageClient: React.FC = () => {
                         Debit Total
                       </div>
                       <div className="mt-1 text-sm font-extrabold">
-                        ₹{fmtMoney(balanceRow?.debit_total ?? 0)}
+                        {fmtMoney(balanceRow?.debit_total ?? 0)}
                       </div>
                     </div>
                     <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-slate-50">
@@ -2005,7 +2048,7 @@ const SuppliersPageClient: React.FC = () => {
                         Credit Total
                       </div>
                       <div className="mt-1 text-sm font-extrabold">
-                        ₹{fmtMoney(balanceRow?.credit_total ?? 0)}
+                        {fmtMoney(balanceRow?.credit_total ?? 0)}
                       </div>
                     </div>
                     <div className="col-span-12 md:col-span-4 border border-slate-200 rounded-2xl p-3 bg-white">
@@ -2013,7 +2056,7 @@ const SuppliersPageClient: React.FC = () => {
                         Balance (Debit - Credit)
                       </div>
                       <div className="mt-1 text-sm font-extrabold">
-                        ₹{fmtMoney(balanceRow?.balance ?? 0)}
+                        {fmtMoney(balanceRow?.balance ?? 0)}
                       </div>
                       {balanceLoading && (
                         <div className="text-[11px] text-slate-500 mt-1">
@@ -2076,15 +2119,13 @@ const SuppliersPageClient: React.FC = () => {
                                 {r.description || "-"}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                ₹{fmtMoney(r.debit)}
+                                {fmtMoney(r.debit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                ₹{fmtMoney(r.credit)}
+                                {fmtMoney(r.credit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                {r.balance == null
-                                  ? "-"
-                                  : `₹${fmtMoney(r.balance)}`}
+                                {r.balance == null ? "-" : fmtMoney(r.balance)}
                               </td>
                             </tr>
                           ))}
