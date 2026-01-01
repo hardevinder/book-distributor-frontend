@@ -1,6 +1,7 @@
+// components/SuppliersPageClient.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -15,6 +16,9 @@ import {
   IndianRupee,
   X,
   Search,
+  FileText,
+  Eye,
+  RefreshCcw,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -49,6 +53,53 @@ type LedgerRow = {
   running_balance?: number | string | null;
   createdAt?: string | null;
   txn_type?: string | null;
+};
+
+type SupplierInvoiceLite = {
+  id: number;
+
+  invoice_no?: string | null;
+  bill_no?: string | null;
+  doc_no?: string | null;
+
+  // backend sometimes uses receipt_no
+  receipt_no?: string | null;
+
+  invoice_date?: string | null;
+  doc_date?: string | null;
+  received_date?: string | null;
+  createdAt?: string | null;
+
+  doc_type?: string | null; // INVOICE/CHALLAN etc
+  status?: string | null;
+
+  total_amount?: number | string | null;
+  amount?: number | string | null;
+  net_amount?: number | string | null;
+
+  // IMPORTANT: backend returns grand_total / grandTotal
+  grand_total?: number | string | null;
+
+  supplier_id?: number | null;
+  pdf_url?: string | null;
+};
+
+type InvoiceItem = {
+  id?: number;
+  book_id?: number | null;
+  title?: string | null;
+  class_name?: string | null;
+  subject?: string | null;
+  qty?: number | string | null;
+  rate?: number | string | null;
+  amount?: number | string | null;
+};
+
+type SupplierInvoiceDetail = SupplierInvoiceLite & {
+  supplier?: { id: number; name: string } | null;
+  items?: InvoiceItem[];
+  notes?: string | null;
+  ref_no?: string | null;
 };
 
 /* ---------------- Helpers ---------------- */
@@ -97,6 +148,29 @@ const formatDate = (value?: string | null) => {
   });
 };
 
+const normalize = (v: any) => String(v ?? "").toLowerCase().trim();
+
+const pickInvoiceNo = (x: SupplierInvoiceLite) =>
+  x.invoice_no || x.receipt_no || x.bill_no || x.doc_no || `#${x.id}`;
+
+const pickInvoiceDate = (x: SupplierInvoiceLite) =>
+  x.invoice_date || x.doc_date || x.received_date || x.createdAt || null;
+
+// include grand_total / grandTotal
+const pickAmount = (x: SupplierInvoiceLite) =>
+  x.total_amount ??
+  x.net_amount ??
+  x.amount ??
+  x.grand_total ??
+  (x as any).grandTotal ??
+  0;
+
+const pickStatus = (x: SupplierInvoiceLite) => x.status || "-";
+const pickDocType = (x: SupplierInvoiceLite) => x.doc_type || "-";
+
+const sumItemsAmount = (items?: InvoiceItem[]) =>
+  (items || []).reduce((s, it) => s + num(it?.amount), 0);
+
 /* ---------------- Component ---------------- */
 
 const SuppliersPageClient: React.FC = () => {
@@ -106,14 +180,14 @@ const SuppliersPageClient: React.FC = () => {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // ✅ refs to always have latest values (fix "saving previous")
+  // refs to always have latest values (fix "saving previous")
   const formRef = useRef(emptyForm);
 
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // (Optional) import/export
+  // import/export
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
@@ -129,12 +203,12 @@ const SuppliersPageClient: React.FC = () => {
     []
   );
 
-  // ✅ order: name, contact_person, phone, email, address => 0..4
+  // order: name, contact_person, phone, email, address => 0..4
   const LAST_INDEX = 4;
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  /* ---------------- ✅ Search State ---------------- */
+  /* ---------------- Search State ---------------- */
 
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -154,9 +228,7 @@ const SuppliersPageClient: React.FC = () => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const normalize = (v: any) => String(v ?? "").toLowerCase().trim();
-
-  /* ---------------- ✅ Payment Popup State ---------------- */
+  /* ---------------- Payment Popup State ---------------- */
 
   const [payOpen, setPayOpen] = useState(false);
   const [paySupplier, setPaySupplier] = useState<Supplier | null>(null);
@@ -166,14 +238,14 @@ const SuppliersPageClient: React.FC = () => {
   const [payForm, setPayForm] = useState({
     payment_date: "",
     amount: "",
-    discount_percent: "", // ✅ NEW
-    discount_amount: "", // ✅ NEW
+    discount_percent: "",
+    discount_amount: "",
     payment_mode: "BANK",
     ref_no: "",
     notes: "",
   });
 
-  /* ---------------- ✅ Discount Helpers ---------------- */
+  /* ---------------- Discount Helpers ---------------- */
 
   const setDiscountPercent = (pct: string) => {
     setPayForm((p) => {
@@ -222,7 +294,7 @@ const SuppliersPageClient: React.FC = () => {
     });
   };
 
-  /* ---------------- ✅ Ledger Popup State ---------------- */
+  /* ---------------- Ledger Popup State ---------------- */
 
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerSupplier, setLedgerSupplier] = useState<Supplier | null>(null);
@@ -231,6 +303,22 @@ const SuppliersPageClient: React.FC = () => {
   const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [balanceRow, setBalanceRow] = useState<BalanceResponse | null>(null);
+
+  /* ---------------- Invoices Popup State ---------------- */
+
+  const [invOpen, setInvOpen] = useState(false);
+  const [invSupplier, setInvSupplier] = useState<Supplier | null>(null);
+  const [invLoading, setInvLoading] = useState(false);
+  const [invError, setInvError] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<SupplierInvoiceLite[]>([]);
+  const [invQ, setInvQ] = useState("");
+  const invSearchRef = useRef<HTMLInputElement | null>(null);
+
+  const [invDetailLoading, setInvDetailLoading] = useState(false);
+  const [invDetailError, setInvDetailError] = useState<string | null>(null);
+  const [invDetail, setInvDetail] = useState<SupplierInvoiceDetail | null>(
+    null
+  );
 
   /* ---------------- Helpers: set form + ref ---------------- */
 
@@ -255,8 +343,6 @@ const SuppliersPageClient: React.FC = () => {
     setListLoading(true);
     try {
       const res = await api.get<Supplier[]>("/api/suppliers");
-
-      // ✅ latest on top (id DESC)
       const sorted = [...(res.data || [])].sort(
         (a, b) => (b.id || 0) - (a.id || 0)
       );
@@ -373,7 +459,7 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- Optional: Export/Import ---------------- */
+  /* ---------------- Export/Import ---------------- */
 
   const handleExport = async () => {
     setError(null);
@@ -476,7 +562,7 @@ const SuppliersPageClient: React.FC = () => {
       }
     };
 
-  /* ---------------- ✅ Payment Popup handlers ---------------- */
+  /* ---------------- Payment handlers ---------------- */
 
   const openPaymentPopup = (s: Supplier) => {
     setPaySupplier(s);
@@ -544,7 +630,7 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- ✅ Ledger Popup handlers ---------------- */
+  /* ---------------- Ledger handlers ---------------- */
 
   const fetchBalance = async (supplierId: number) => {
     setBalanceLoading(true);
@@ -614,26 +700,267 @@ const SuppliersPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- ✅ Search Filter ---------------- */
+  /* ---------------- Invoices handlers ---------------- */
+
+  const openInvoicesPopup = async (s: Supplier) => {
+    if (!s?.id) return;
+
+    setInvSupplier(s);
+    setInvOpen(true);
+    setInvLoading(true);
+    setInvError(null);
+    setInvoices([]);
+    setInvQ("");
+    setInvDetail(null);
+    setInvDetailError(null);
+
+    try {
+      const res = await api.get(`/api/suppliers/${s.id}/invoices`);
+      const raw =
+        (res.data as any)?.rows ??
+        (res.data as any)?.invoices ??
+        (Array.isArray(res.data) ? res.data : []);
+
+      const list: SupplierInvoiceLite[] = (Array.isArray(raw) ? raw : []).map(
+        (x: any) => {
+          const grand =
+            x.grand_total ??
+            x.grandTotal ??
+            x.total_amount ??
+            x.totalAmount ??
+            x.net_amount ??
+            x.netAmount ??
+            x.amount ??
+            x.total ??
+            null;
+
+          return {
+            id: Number(x.id),
+
+            invoice_no:
+              x.invoice_no ??
+              x.invoiceNo ??
+              x.bill_no ??
+              x.billNo ??
+              x.receipt_no ??
+              x.receiptNo ??
+              null,
+            receipt_no: x.receipt_no ?? x.receiptNo ?? null,
+            bill_no: x.bill_no ?? x.billNo ?? null,
+            doc_no: x.doc_no ?? x.docNo ?? null,
+
+            invoice_date: x.invoice_date ?? x.invoiceDate ?? null,
+            doc_date: x.doc_date ?? x.docDate ?? null,
+            received_date: x.received_date ?? x.receivedDate ?? null,
+            createdAt: x.createdAt ?? x.created_at ?? null,
+
+            doc_type: x.doc_type ?? x.docType ?? x.type ?? null,
+            status: x.status ?? null,
+
+            grand_total: grand,
+            total_amount: x.total_amount ?? x.totalAmount ?? grand ?? null,
+            net_amount: x.net_amount ?? x.netAmount ?? grand ?? null,
+            amount: x.amount ?? null,
+
+            supplier_id: x.supplier_id ?? x.supplierId ?? null,
+            pdf_url: x.pdf_url ?? x.pdfUrl ?? x.file_url ?? null,
+          };
+        }
+      );
+
+      list.sort((a, b) => {
+        const da = new Date(pickInvoiceDate(a) || 0).getTime();
+        const db = new Date(pickInvoiceDate(b) || 0).getTime();
+        return (db || 0) - (da || 0);
+      });
+
+      setInvoices(list);
+      setTimeout(() => invSearchRef.current?.focus(), 50);
+    } catch (e: any) {
+      console.error(e);
+      setInvError(
+        e?.response?.data?.error ||
+          e?.response?.data?.message ||
+          "Failed to load invoices."
+      );
+      setInvoices([]);
+    } finally {
+      setInvLoading(false);
+    }
+  };
+
+  const refreshInvoices = async () => {
+    if (!invSupplier?.id) return;
+    await openInvoicesPopup(invSupplier);
+  };
+
+  // ✅ FIXED: unwrap nested response + better totals fallback
+  const fetchInvoiceDetail = async (supplierId: number, invoiceId: number) => {
+    setInvDetailLoading(true);
+    setInvDetailError(null);
+    setInvDetail(null);
+
+    const candidates = [
+      `/api/suppliers/${supplierId}/invoices/${invoiceId}`,
+      `/api/supplier-receipts/${invoiceId}`,
+      `/api/supplier-receipts/${invoiceId}/detail`,
+    ];
+
+    let lastErr: any = null;
+
+    for (const url of candidates) {
+      try {
+        const res = await api.get(url);
+
+        const raw = (res.data as any) || null;
+
+        // ✅ MOST IMPORTANT: backend often wraps in receipt/data/row/etc.
+        const x =
+          raw?.receipt ??
+          raw?.data ??
+          raw?.row ??
+          raw?.invoice ??
+          raw?.supplierReceipt ??
+          raw;
+
+        const itemsRaw =
+          x?.items ??
+          x?.receipt_items ??
+          raw?.items ??
+          raw?.receipt_items ??
+          raw?.receipt?.items ??
+          raw?.receipt?.receipt_items ??
+          [];
+
+        const items: InvoiceItem[] = Array.isArray(itemsRaw)
+          ? itemsRaw.map((it: any) => ({
+              id: it?.id,
+              book_id: it?.book_id ?? it?.bookId ?? null,
+              title: it?.title ?? it?.book?.title ?? null,
+              class_name: it?.class_name ?? it?.className ?? null,
+              subject: it?.subject ?? null,
+              qty: it?.qty ?? it?.quantity ?? null,
+              rate: it?.rate ?? it?.price ?? null,
+              amount: it?.amount ?? null,
+            }))
+          : [];
+
+        const itemsSum = sumItemsAmount(items);
+
+        // ✅ totals can exist in many places
+        const grand =
+          x?.grand_total ??
+          x?.grandTotal ??
+          x?.total_amount ??
+          x?.totalAmount ??
+          x?.net_amount ??
+          x?.netAmount ??
+          x?.amount ??
+          x?.total ??
+          raw?.grand_total ??
+          raw?.grandTotal ??
+          raw?.total_amount ??
+          raw?.totalAmount ??
+          raw?.net_amount ??
+          raw?.netAmount ??
+          raw?.amount ??
+          raw?.total ??
+          itemsSum ??
+          null;
+
+        const detail: SupplierInvoiceDetail = {
+          id: Number(x?.id ?? invoiceId),
+
+          invoice_no:
+            x?.invoice_no ??
+            x?.invoiceNo ??
+            x?.bill_no ??
+            x?.billNo ??
+            x?.receipt_no ??
+            x?.receiptNo ??
+            null,
+          receipt_no: x?.receipt_no ?? x?.receiptNo ?? null,
+          bill_no: x?.bill_no ?? x?.billNo ?? null,
+          doc_no: x?.doc_no ?? x?.docNo ?? null,
+
+          invoice_date: x?.invoice_date ?? x?.invoiceDate ?? null,
+          doc_date: x?.doc_date ?? x?.docDate ?? null,
+          received_date: x?.received_date ?? x?.receivedDate ?? null,
+          createdAt: x?.createdAt ?? x?.created_at ?? null,
+
+          doc_type: x?.doc_type ?? x?.docType ?? x?.type ?? null,
+          status: x?.status ?? null,
+
+          grand_total: grand,
+          total_amount: x?.total_amount ?? x?.totalAmount ?? grand ?? null,
+          net_amount: x?.net_amount ?? x?.netAmount ?? grand ?? null,
+          amount: x?.amount ?? grand ?? null,
+
+          supplier_id: x?.supplier_id ?? x?.supplierId ?? supplierId,
+          pdf_url: x?.pdf_url ?? x?.pdfUrl ?? x?.file_url ?? null,
+
+          notes: x?.notes ?? x?.remark ?? x?.remarks ?? null,
+          ref_no: x?.ref_no ?? x?.refNo ?? x?.reference_no ?? null,
+
+          supplier:
+            (x?.supplier && (x?.supplier?.id || x?.supplier?.name)) ||
+            (raw?.supplier && (raw?.supplier?.id || raw?.supplier?.name))
+              ? {
+                  id: Number((x?.supplier ?? raw?.supplier)?.id),
+                  name: String((x?.supplier ?? raw?.supplier)?.name ?? ""),
+                }
+              : null,
+
+          items,
+        };
+
+        setInvDetail(detail);
+        setInvDetailLoading(false);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+      }
+    }
+
+    console.error(lastErr);
+    setInvDetailError(
+      lastErr?.response?.data?.error ||
+        lastErr?.response?.data?.message ||
+        "Failed to load invoice detail."
+    );
+    setInvDetailLoading(false);
+  };
 
   const visibleSuppliers = useMemo(() => {
     const q = normalize(search);
     if (!q) return suppliers;
 
     return suppliers.filter((s) => {
-      const hay = [
-        s.name,
-        s.contact_person,
-        s.phone,
-        s.email,
-        s.address,
-        s.id,
-      ]
+      const hay = [s.name, s.contact_person, s.phone, s.email, s.address, s.id]
         .map((x) => normalize(x))
         .join(" ");
       return hay.includes(q);
     });
   }, [suppliers, search]);
+
+  const visibleInvoices = useMemo(() => {
+    const q = normalize(invQ);
+    if (!q) return invoices;
+
+    return invoices.filter((x) => {
+      const hay = [
+        pickInvoiceNo(x),
+        pickDocType(x),
+        pickStatus(x),
+        pickInvoiceDate(x),
+        pickAmount(x),
+        x.id,
+      ]
+        .map((v) => normalize(v))
+        .join(" ");
+      return hay.includes(q);
+    });
+  }, [invoices, invQ]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
@@ -644,7 +971,7 @@ const SuppliersPageClient: React.FC = () => {
         <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000" />
       </div>
 
-      {/* ✅ ULTRA COMPACT TOP BAR */}
+      {/* ULTRA COMPACT TOP BAR */}
       <header className="relative z-10 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow">
         <div className="px-2 sm:px-3 py-2">
           <div className="flex items-center gap-2 flex-wrap">
@@ -1012,6 +1339,16 @@ const SuppliersPageClient: React.FC = () => {
                       </td>
                       <td className="px-2 py-2 border-b border-slate-200">
                         <div className="flex items-center justify-center gap-2">
+                          {/* Invoices */}
+                          <button
+                            type="button"
+                            onClick={() => openInvoicesPopup(s)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-violet-600 text-white shadow"
+                            title="Invoices"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => openLedgerPopup(s)}
@@ -1071,7 +1408,364 @@ const SuppliersPageClient: React.FC = () => {
         </div>
       )}
 
-      {/* ---------------- ✅ Payment Modal ---------------- */}
+      {/* ---------------- Invoices Modal ---------------- */}
+      {invOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50">
+          <div className="h-full w-full overflow-auto p-3 sm:p-4">
+            <div className="mx-auto w-full max-w-[1250px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-violet-50 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">
+                      Supplier Invoices
+                    </div>
+                    <div className="text-[11px] text-slate-600 mt-1 truncate">
+                      Supplier:{" "}
+                      <span className="font-semibold text-slate-900">
+                        {invSupplier?.name || "-"}
+                      </span>
+                      <span className="ml-2 text-slate-500">
+                        ({visibleInvoices.length}
+                        {invQ.trim() ? `/${invoices.length}` : ""})
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={refreshInvoices}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-[12px] font-semibold"
+                      title="Refresh"
+                    >
+                      <RefreshCcw className="w-4 h-4" />
+                      Refresh
+                    </button>
+
+                    <button
+                      onClick={() => setInvOpen(false)}
+                      className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4">
+                  <div className="flex flex-col md:flex-row md:items-center gap-3">
+                    <div className="relative flex-1">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        ref={invSearchRef}
+                        value={invQ}
+                        onChange={(e) => setInvQ(e.target.value)}
+                        placeholder="Search invoices (no/date/type/status)…"
+                        className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 bg-white text-[12px] outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                      />
+                      {invQ.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setInvQ("")}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-slate-100"
+                          title="Clear"
+                        >
+                          <X className="w-4 h-4 text-slate-500" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] text-slate-500">
+                      Tip: click <b>Eye</b> to see invoice detail.
+                    </div>
+                  </div>
+
+                  {invError && (
+                    <div className="mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-2">
+                      {invError}
+                    </div>
+                  )}
+
+                  <div className="mt-4 grid grid-cols-12 gap-4">
+                    {/* Left: list */}
+                    <div className="col-span-12 lg:col-span-7">
+                      {invLoading ? (
+                        <div className="p-6 text-sm text-slate-500 flex items-center gap-2 border border-slate-200 rounded-xl">
+                          <div className="w-4 h-4 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                          Loading invoices...
+                        </div>
+                      ) : visibleInvoices.length === 0 ? (
+                        <div className="p-6 text-sm text-slate-500 border border-slate-200 rounded-xl">
+                          No invoices found.
+                        </div>
+                      ) : (
+                        <div className="overflow-auto border border-slate-200 rounded-xl max-h-[60vh]">
+                          <table className="w-full text-xs border-collapse">
+                            <thead className="bg-slate-100 sticky top-0 z-10">
+                              <tr>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                  Invoice No
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                  Date
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                  Type
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                  Status
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-right">
+                                  Amount
+                                </th>
+                                <th className="border-b border-slate-200 px-3 py-2 text-center">
+                                  View
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {visibleInvoices.map((x) => (
+                                <tr
+                                  key={x.id}
+                                  className={`hover:bg-slate-50 ${
+                                    invDetail?.id === x.id
+                                      ? "bg-violet-50/60"
+                                      : ""
+                                  }`}
+                                >
+                                  <td className="border-b border-slate-200 px-3 py-2 font-semibold">
+                                    {pickInvoiceNo(x)}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2">
+                                    {formatDate(pickInvoiceDate(x))}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2">
+                                    {pickDocType(x)}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2">
+                                    {pickStatus(x)}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                    ₹{fmtMoney(pickAmount(x))}
+                                  </td>
+                                  <td className="border-b border-slate-200 px-3 py-2 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        fetchInvoiceDetail(
+                                          invSupplier?.id || 0,
+                                          x.id
+                                        )
+                                      }
+                                      className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-slate-900 text-white shadow"
+                                      title="Invoice Details"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: detail */}
+                    <div className="col-span-12 lg:col-span-5">
+                      <div className="border border-slate-200 rounded-2xl p-3 bg-white">
+                        <div className="text-sm font-semibold">
+                          Invoice Detail
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Select an invoice from left.
+                        </div>
+
+                        {invDetailError && (
+                          <div className="mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-2">
+                            {invDetailError}
+                          </div>
+                        )}
+
+                        {invDetailLoading ? (
+                          <div className="mt-4 text-sm text-slate-500 flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                            Loading detail...
+                          </div>
+                        ) : invDetail ? (
+                          <div className="mt-4 space-y-3">
+                            <div className="grid grid-cols-12 gap-2">
+                              <div className="col-span-12 md:col-span-7">
+                                <div className="text-[11px] text-slate-500">
+                                  Invoice No
+                                </div>
+                                <div className="text-[13px] font-extrabold">
+                                  {pickInvoiceNo(invDetail)}
+                                </div>
+                              </div>
+                              <div className="col-span-12 md:col-span-5">
+                                <div className="text-[11px] text-slate-500">
+                                  Date
+                                </div>
+                                <div className="text-[13px] font-semibold">
+                                  {formatDate(pickInvoiceDate(invDetail))}
+                                </div>
+                              </div>
+
+                              <div className="col-span-12 md:col-span-6">
+                                <div className="text-[11px] text-slate-500">
+                                  Type / Status
+                                </div>
+                                <div className="text-[12px] font-semibold">
+                                  {pickDocType(invDetail)} •{" "}
+                                  {pickStatus(invDetail)}
+                                </div>
+                              </div>
+
+                              <div className="col-span-12 md:col-span-6">
+                                <div className="text-[11px] text-slate-500">
+                                  Amount
+                                </div>
+                                <div className="text-[13px] font-extrabold">
+                                  ₹
+                                  {fmtMoney(
+                                    pickAmount(invDetail) ||
+                                      sumItemsAmount(invDetail.items)
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="col-span-12">
+                                <div className="text-[11px] text-slate-500">
+                                  Ref / Notes
+                                </div>
+                                <div className="text-[12px]">
+                                  {(invDetail.ref_no || "").trim() ? (
+                                    <span className="font-semibold">
+                                      {invDetail.ref_no}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">-</span>
+                                  )}
+                                  {invDetail.notes ? (
+                                    <span className="text-slate-600">
+                                      {" "}
+                                      — {invDetail.notes}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {invDetail.pdf_url ? (
+                                <div className="col-span-12">
+                                  <a
+                                    href={invDetail.pdf_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-2 text-[12px] font-semibold text-violet-700 hover:text-violet-800"
+                                  >
+                                    <FileText className="w-4 h-4" />
+                                    Open PDF
+                                  </a>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {/* Items */}
+                            <div className="pt-2">
+                              <div className="text-[12px] font-semibold mb-2">
+                                Items
+                              </div>
+
+                              {invDetail.items && invDetail.items.length > 0 ? (
+                                <div className="overflow-auto border border-slate-200 rounded-xl max-h-[32vh]">
+                                  <table className="w-full text-xs border-collapse">
+                                    <thead className="bg-slate-100 sticky top-0 z-10">
+                                      <tr>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                          Book
+                                        </th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-left">
+                                          Class
+                                        </th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">
+                                          Qty
+                                        </th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">
+                                          Rate
+                                        </th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">
+                                          Amount
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {invDetail.items.map((it, idx) => (
+                                        <tr
+                                          key={idx}
+                                          className="hover:bg-slate-50"
+                                        >
+                                          <td className="border-b border-slate-200 px-3 py-2">
+                                            <div className="font-semibold text-slate-800">
+                                              {it.title || "-"}
+                                            </div>
+                                            {it.subject ? (
+                                              <div className="text-[11px] text-slate-500">
+                                                {it.subject}
+                                              </div>
+                                            ) : null}
+                                          </td>
+                                          <td className="border-b border-slate-200 px-3 py-2">
+                                            {it.class_name || "-"}
+                                          </td>
+                                          <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                            {it.qty ?? "-"}
+                                          </td>
+                                          <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                            ₹{fmtMoney(it.rate)}
+                                          </td>
+                                          <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                            ₹{fmtMoney(it.amount)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : (
+                                <div className="text-[12px] text-slate-500 border border-slate-200 rounded-xl p-3 bg-slate-50">
+                                  No items found (or detail endpoint doesn’t
+                                  return items).
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-4 text-[12px] text-slate-500">
+                            No invoice selected.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={() => setInvOpen(false)}
+                      className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-3" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------- Payment Modal ---------------- */}
       {payOpen && (
         <div className="fixed inset-0 z-50 bg-black/50">
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
@@ -1137,7 +1831,7 @@ const SuppliersPageClient: React.FC = () => {
                       />
                     </div>
 
-                    {/* ✅ Discount % */}
+                    {/* Discount % */}
                     <div className="col-span-12 md:col-span-6">
                       <label className="block text-[11px] text-slate-600 mb-1">
                         Discount %
@@ -1157,7 +1851,7 @@ const SuppliersPageClient: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* ✅ Discount Amount */}
+                    {/* Discount Amount */}
                     <div className="col-span-12 md:col-span-6">
                       <label className="block text-[11px] text-slate-600 mb-1">
                         Discount Amount
@@ -1224,7 +1918,7 @@ const SuppliersPageClient: React.FC = () => {
                       />
                     </div>
 
-                    {/* ✅ Summary line */}
+                    {/* Summary line */}
                     <div className="col-span-12">
                       <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
                         <span>
@@ -1232,9 +1926,7 @@ const SuppliersPageClient: React.FC = () => {
                         </span>
                         <span>
                           Discount:{" "}
-                          <b>
-                            ₹{fmtMoney(num(payForm.discount_amount || 0))}
-                          </b>
+                          <b>₹{fmtMoney(num(payForm.discount_amount || 0))}</b>
                         </span>
                         <span>
                           Total Settled:{" "}
@@ -1274,7 +1966,7 @@ const SuppliersPageClient: React.FC = () => {
         </div>
       )}
 
-      {/* ---------------- ✅ Ledger Modal ---------------- */}
+      {/* ---------------- Ledger Modal ---------------- */}
       {ledgerOpen && (
         <div className="fixed inset-0 z-50 bg-black/50">
           <div className="h-full w-full overflow-auto p-3 sm:p-4">
@@ -1390,7 +2082,9 @@ const SuppliersPageClient: React.FC = () => {
                                 ₹{fmtMoney(r.credit)}
                               </td>
                               <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                {r.balance == null ? "-" : `₹${fmtMoney(r.balance)}`}
+                                {r.balance == null
+                                  ? "-"
+                                  : `₹${fmtMoney(r.balance)}`}
                               </td>
                             </tr>
                           ))}

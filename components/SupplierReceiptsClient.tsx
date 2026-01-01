@@ -341,7 +341,7 @@ export default function SupplierReceiptsPageClient() {
       school_order_id: "",
       supplier_id: "",
 
-      receive_doc_type: "CHALLAN" as ReceiveDocType,
+      receive_doc_type: "INVOICE" as ReceiveDocType,
       doc_no: "",
       doc_date: t,
       invoice_no: "",
@@ -625,7 +625,7 @@ export default function SupplierReceiptsPageClient() {
       school_order_id: "",
       supplier_id: "",
 
-      receive_doc_type: "CHALLAN",
+      receive_doc_type: "INVOICE",
       doc_no: "",
       doc_date: todayStr,
       invoice_no: "",
@@ -1352,7 +1352,7 @@ export default function SupplierReceiptsPageClient() {
             </Link>
 
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate">Supplier Receipts (Challan / Invoice)</div>
+              <div className="text-sm font-semibold truncate">Supplier Receipts (Invoice / Challan)</div>
               <div className="text-[11px] text-slate-500 truncate">
                 Posting (Inventory IN + Ledger) happens only on <b>status = received</b>. Challan can be saved as{" "}
                 <b>draft</b> with qty only.
