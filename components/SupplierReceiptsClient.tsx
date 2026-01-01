@@ -235,6 +235,17 @@ const normalizeItemForView = (it: SupplierReceiptItem) => {
   };
 };
 
+const pickSchoolNameFromReceipt = (r: SupplierReceipt) => {
+  const anyR: any = r as any;
+  return (
+    anyR?.school_order?.school?.name ||
+    anyR?.school?.name ||
+    anyR?.school_name ||
+    ""
+  );
+};
+
+
 type UiItem = {
   book_id: number;
   title: string;
@@ -1529,6 +1540,7 @@ export default function SupplierReceiptsPageClient() {
                   <tr>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Receipt</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Supplier</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">School</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Doc</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">GRN</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-right">Grand</th>
@@ -1549,6 +1561,10 @@ export default function SupplierReceiptsPageClient() {
                         <td className="border-b border-slate-200 px-3 py-2">
                           {r.supplier?.name || `Supplier #${r.supplier_id}`}
                         </td>
+                        <td className="border-b border-slate-200 px-3 py-2">
+                          {pickSchoolNameFromReceipt(r) || "-"}
+                        </td>
+
                         <td className="border-b border-slate-200 px-3 py-2">
                           <div className="flex items-center gap-2">
                             <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(t)}`}>{t}</span>
