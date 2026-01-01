@@ -1,4 +1,3 @@
-// components/SchoolPublisherBillingPageClient.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -16,9 +15,11 @@ import {
   School as SchoolIcon,
   Building2,
   FileText,
+  PackageOpen,
+  Lock,
 } from "lucide-react";
 
-/* ---------- Types ---------- */
+/* ---------- Types (UPDATED to match new API) ---------- */
 
 type School = { id: number; name: string };
 type SupplierMini = { id: number; name: string };
@@ -41,28 +42,44 @@ type ReportBookRow = {
 
   ordered_qty: number;
   received_qty: number;
-  short_qty: number;
+  pending_qty: number;
 
   rate: number;
   gross_amount: number;
   discount_pct: number | null;
   discount_amt: number | null;
-  net_amount: number;
+
+  net_unit_price: number;
+
+  ordered_net_amount: number;
+  received_net_amount: number;
+  pending_net_amount: number;
 };
 
 type ReportClassBlock = {
   class_name: string;
+  totals: {
+    orderedQty: number;
+    receivedQty: number;
+    pendingQty: number;
+    gross: number;
+    orderedNet: number;
+    receivedNet: number;
+    pendingNet: number;
+  };
   books: ReportBookRow[];
 };
 
 type SupplierBlock = {
   supplier: SupplierMini | null;
   totals: {
-    orderedTotal: number;
-    receivedTotal: number;
-    shortTotal: number;
-    grossTotal: number;
-    netTotal: number;
+    orderedQty: number;
+    receivedQty: number;
+    pendingQty: number;
+    gross: number;
+    orderedNet: number;
+    receivedNet: number;
+    pendingNet: number;
   };
   classes: ReportClassBlock[];
 };
@@ -71,13 +88,21 @@ type ReportResponse = {
   mode: string;
   school: School;
   academic_session: string | null;
-  filters: { supplierId: number | null; from: string | null; to: string | null };
+  filters: {
+    supplierId: number | null;
+    from: string | null;
+    to: string | null;
+    includeDraft: boolean;
+    view: "ALL" | "RECEIVED" | "PENDING" | string;
+  };
   totals: {
-    orderedTotal: number;
-    receivedTotal: number;
-    shortTotal: number;
-    grossTotal: number;
-    netTotal: number;
+    orderedQty: number;
+    receivedQty: number;
+    pendingQty: number;
+    gross: number;
+    orderedNet: number;
+    receivedNet: number;
+    pendingNet: number;
   };
   suppliers: SupplierBlock[];
 };
@@ -135,13 +160,55 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
   else if (s === "partial_received") cls = "bg-amber-100 text-amber-900 border-amber-200";
   else if (s === "sent") cls = "bg-indigo-100 text-indigo-800 border-indigo-200";
   else if (s === "cancelled") cls = "bg-rose-100 text-rose-800 border-rose-200";
-
+  else if (s === "draft") cls = "bg-slate-100 text-slate-700 border-slate-200";
   return (
     <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-medium ${cls}`}>
       {status}
     </span>
   );
 };
+
+const ViewPill: React.FC<{ active: boolean; onClick: () => void; label: string }> = ({
+  active,
+  onClick,
+  label,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+      active
+        ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+        : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+    }`}
+  >
+    {label}
+  </button>
+);
+
+/* ---------- Auth header helper ---------- */
+/**
+ * ✅ Fixes 401: adds Authorization header explicitly.
+ * - tries user.token / user.accessToken / localStorage
+ */
+function getAuthHeaders(user: any) {
+  let token =
+    user?.token ||
+    user?.accessToken ||
+    user?.jwt ||
+    "";
+
+  if (!token && typeof window !== "undefined") {
+    token =
+      localStorage.getItem("token") ||
+      localStorage.getItem("accessToken") ||
+      localStorage.getItem("jwt") ||
+      "";
+  }
+
+  token = safeStr(token);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 const SchoolPublisherBillingPageClient: React.FC = () => {
   const { user } = useAuth();
@@ -156,28 +223,54 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
 
+  const [view, setView] = useState<"ALL" | "RECEIVED" | "PENDING">("ALL");
+  const [includeDraft, setIncludeDraft] = useState<boolean>(false);
+
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ✅ masters loading state
+  const [mastersErr, setMastersErr] = useState<string | null>(null);
+  const [mastersLoading, setMastersLoading] = useState(false);
 
   // UX
   const [q, setQ] = useState("");
   const [openSuppliers, setOpenSuppliers] = useState<Record<string, boolean>>({});
   const [openClasses, setOpenClasses] = useState<Record<string, boolean>>({});
 
-  /* ---------- Load Schools + Suppliers ---------- */
+  /* ---------- Load Schools + Suppliers (AUTH FIX) ---------- */
   useEffect(() => {
     const run = async () => {
+      setMastersErr(null);
+      setMastersLoading(true);
       try {
-        const [sRes, supRes] = await Promise.all([api.get("/api/schools"), api.get("/api/suppliers")]);
+        const headers = getAuthHeaders(user);
+
+        const [sRes, supRes] = await Promise.all([
+          api.get("/api/schools", { headers }),
+          api.get("/api/suppliers", { headers }),
+        ]);
+
         setSchools(normalizeSchools(sRes?.data));
         setSuppliers(normalizeSuppliers(supRes?.data));
-      } catch (err) {
+      } catch (err: any) {
         console.error("Failed to load masters", err);
+
+        const status = err?.response?.status;
+        if (status === 401) {
+          setMastersErr("Unauthorized (401). Token missing/invalid. Please login again, then refresh this page.");
+        } else {
+          setMastersErr(err?.response?.data?.error || err?.message || "Failed to load schools/suppliers.");
+        }
+      } finally {
+        setMastersLoading(false);
       }
     };
+
+    // ✅ run when user changes (token becomes available)
     run();
-  }, []);
+  }, [user]);
 
   const selectedSchool = useMemo(() => {
     const idNum = Number(schoolId);
@@ -197,14 +290,18 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
     try {
       setLoading(true);
 
-      // ✅ UPDATED ROUTE (Supplier-based)
+      const headers = getAuthHeaders(user);
+
       const res = await api.get("/api/reports/school-supplier-billing", {
+        headers,
         params: {
           schoolId,
           academic_session: session || undefined,
           supplierId: supplierId || undefined,
           from: fromDate || undefined,
           to: toDate || undefined,
+          includeDraft: includeDraft ? "true" : undefined,
+          view: view || undefined,
         },
       });
 
@@ -218,7 +315,6 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
       (payload.suppliers || []).forEach((sb) => {
         const key = sb.supplier?.id ? String(sb.supplier.id) : "0";
         sOpen[key] = true;
-
         (sb.classes || []).forEach((c) => {
           cOpen[`${key}__${c.class_name}`] = true;
         });
@@ -229,7 +325,13 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
     } catch (err: any) {
       console.error("Failed to load report", err);
       setData(null);
-      setError(err?.response?.data?.message || "Failed to load report.");
+
+      const status = err?.response?.status;
+      if (status === 401) {
+        setError("Unauthorized (401). Please login again, then try Load.");
+      } else {
+        setError(err?.response?.data?.message || err?.response?.data?.error || "Failed to load report.");
+      }
     } finally {
       setLoading(false);
     }
@@ -238,7 +340,6 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
   const filteredSuppliers = useMemo(() => {
     const query = safeStr(q).toLowerCase();
     const blocks = data?.suppliers || [];
-
     if (!query) return blocks;
 
     return blocks
@@ -249,7 +350,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
               const sup = sb.supplier?.name || "";
               const hay = `${b.title || ""} ${b.subject || ""} ${b.code || ""} ${sup} ${b.order_no || ""} ${
                 b.bill_no || ""
-              }`.toLowerCase();
+              } ${b.class_name || ""}`.toLowerCase();
               return hay.includes(query);
             });
             return { ...cls, books };
@@ -262,21 +363,37 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
   }, [data, q]);
 
   const summary = useMemo(() => {
-    let ordered = 0,
-      received = 0,
-      short = 0,
+    if (data?.totals) {
+      return {
+        orderedQty: num(data.totals.orderedQty),
+        receivedQty: num(data.totals.receivedQty),
+        pendingQty: num(data.totals.pendingQty),
+        gross: num(data.totals.gross),
+        orderedNet: num(data.totals.orderedNet),
+        receivedNet: num(data.totals.receivedNet),
+        pendingNet: num(data.totals.pendingNet),
+      };
+    }
+
+    let orderedQty = 0,
+      receivedQty = 0,
+      pendingQty = 0,
       gross = 0,
-      net = 0;
+      orderedNet = 0,
+      receivedNet = 0,
+      pendingNet = 0;
 
     (data?.suppliers || []).forEach((sb) => {
-      ordered += num(sb.totals?.orderedTotal);
-      received += num(sb.totals?.receivedTotal);
-      short += num(sb.totals?.shortTotal);
-      gross += num(sb.totals?.grossTotal);
-      net += num(sb.totals?.netTotal);
+      orderedQty += num(sb.totals?.orderedQty);
+      receivedQty += num(sb.totals?.receivedQty);
+      pendingQty += num(sb.totals?.pendingQty);
+      gross += num(sb.totals?.gross);
+      orderedNet += num(sb.totals?.orderedNet);
+      receivedNet += num(sb.totals?.receivedNet);
+      pendingNet += num(sb.totals?.pendingNet);
     });
 
-    return { ordered, received, short, gross, net };
+    return { orderedQty, receivedQty, pendingQty, gross, orderedNet, receivedNet, pendingNet };
   }, [data]);
 
   const toggleAll = (open: boolean) => {
@@ -327,9 +444,10 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                       ) : (
                         ""
                       )}
+                      {data?.filters?.view ? ` • ${data.filters.view}` : ""}
                     </>
                   ) : (
-                    <>Select school and load billing summary</>
+                    <>Select school and load supplier-wise billing</>
                   )}
                 </div>
               </div>
@@ -338,6 +456,23 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
 
           <div className="text-xs text-slate-600 shrink-0 hidden sm:block">{user?.name || "User"}</div>
         </div>
+
+        {/* Masters (optional info banner) */}
+        {(mastersLoading || mastersErr) && (
+          <div className="px-4 pb-3">
+            {mastersLoading && (
+              <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2">
+                Loading schools & suppliers…
+              </div>
+            )}
+            {mastersErr && (
+              <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2 flex items-center gap-2">
+                <Lock className="w-4 h-4" />
+                {mastersErr}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Filters */}
         <div className="px-4 pb-4">
@@ -422,8 +557,30 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
             </div>
           </div>
 
+          {/* View & Search Row */}
           <div className="grid grid-cols-12 gap-3 mt-3 items-end">
-            <div className="col-span-12 md:col-span-10">
+            <div className="col-span-12 md:col-span-4">
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">View</label>
+              <div className="flex gap-2 flex-wrap">
+                <ViewPill active={view === "ALL"} onClick={() => setView("ALL")} label="All" />
+                <ViewPill active={view === "RECEIVED"} onClick={() => setView("RECEIVED")} label="Only Received" />
+                <ViewPill active={view === "PENDING"} onClick={() => setView("PENDING")} label="Only Pending" />
+                <button
+                  type="button"
+                  onClick={() => setIncludeDraft((p) => !p)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                    includeDraft
+                      ? "bg-slate-800 text-white border-slate-800"
+                      : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                  }`}
+                  title="Include draft orders"
+                >
+                  Draft: {includeDraft ? "ON" : "OFF"}
+                </button>
+              </div>
+            </div>
+
+            <div className="col-span-12 md:col-span-6">
               <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
               <div className="relative">
                 <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
@@ -469,19 +626,26 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
           {data && (
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <span className="text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-medium">
-                Ordered: <b>{summary.ordered}</b>
+                Ordered Qty: <b>{summary.orderedQty}</b>
               </span>
               <span className="text-xs px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 font-medium">
-                Received: <b>{summary.received}</b>
+                Received Qty: <b>{summary.receivedQty}</b>
               </span>
               <span className="text-xs px-3 py-1.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-bold">
-                Short: <b>{summary.short}</b>
+                Pending Qty: <b>{summary.pendingQty}</b>
               </span>
+
               <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-medium">
                 Gross: <b>₹{fmtINR(summary.gross)}</b>
               </span>
               <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold">
-                Net: <b>₹{fmtINR(summary.net)}</b>
+                Ordered Net: <b>₹{fmtINR(summary.orderedNet)}</b>
+              </span>
+              <span className="text-xs px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold">
+                Received Net: <b>₹{fmtINR(summary.receivedNet)}</b>
+              </span>
+              <span className="text-xs px-3 py-1.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-bold">
+                Pending Net: <b>₹{fmtINR(summary.pendingNet)}</b>
               </span>
             </div>
           )}
@@ -502,7 +666,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
           <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-600 shadow-sm">
             <div className="text-base font-medium mb-2">Ready?</div>
             <div className="text-sm">
-              Select a school and click <b>Load</b> to view Ordered/Received/Short and billing amounts supplier-wise.
+              Select a school and click <b>Load</b> to view Ordered/Received/Pending and billing amounts supplier-wise.
             </div>
           </div>
         )}
@@ -545,7 +709,6 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                 {filteredSuppliers.map((sb) => {
                   const sKey = sb.supplier?.id ? String(sb.supplier.id) : "0";
                   const sOpen = openSuppliers[sKey] ?? true;
-
                   const sName = sb.supplier?.name ? sb.supplier.name : "Unknown Supplier";
 
                   return (
@@ -567,14 +730,18 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                             {sName}
                           </div>
                           <div className="text-xs text-slate-500 mt-1">
-                            Ordered: <b>{sb.totals.orderedTotal}</b> • Received: <b>{sb.totals.receivedTotal}</b> •
-                            Short: <b>{sb.totals.shortTotal}</b> • Net: <b>₹{fmtINR(sb.totals.netTotal)}</b>
+                            Ordered: <b>{num(sb.totals.orderedQty)}</b> • Received: <b>{num(sb.totals.receivedQty)}</b>{" "}
+                            • Pending: <b>{num(sb.totals.pendingQty)}</b> • Ordered Net:{" "}
+                            <b>₹{fmtINR(sb.totals.orderedNet)}</b>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-3">
-                          <span className="text-xs px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-medium">
-                            Net ₹{fmtINR(sb.totals.netTotal)}
+                          <span className="text-xs px-3 py-1.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold">
+                            Rec Net ₹{fmtINR(sb.totals.receivedNet)}
+                          </span>
+                          <span className="text-xs px-3 py-1.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-bold">
+                            Pend Net ₹{fmtINR(sb.totals.pendingNet)}
                           </span>
                           <ChevronDown
                             className={`w-5 h-5 text-slate-500 transition-transform ${sOpen ? "rotate-180" : ""}`}
@@ -588,10 +755,13 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                             const cKey = `${sKey}__${cls.class_name}`;
                             const cOpen = openClasses[cKey] ?? true;
 
-                            const clsOrdered = cls.books.reduce((a, b) => a + num(b.ordered_qty), 0);
-                            const clsReceived = cls.books.reduce((a, b) => a + num(b.received_qty), 0);
-                            const clsShort = cls.books.reduce((a, b) => a + num(b.short_qty), 0);
-                            const clsNet = cls.books.reduce((a, b) => a + num(b.net_amount), 0);
+                            const clsOrdered = num(cls.totals?.orderedQty);
+                            const clsReceived = num(cls.totals?.receivedQty);
+                            const clsPending = num(cls.totals?.pendingQty);
+
+                            const clsOrderedNet = num(cls.totals?.orderedNet);
+                            const clsReceivedNet = num(cls.totals?.receivedNet);
+                            const clsPendingNet = num(cls.totals?.pendingNet);
 
                             return (
                               <div key={cKey} className="border border-slate-200 rounded-2xl overflow-hidden">
@@ -604,16 +774,17 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                     }))
                                   }
                                   className={`w-full px-4 py-3 flex items-center justify-between transition border-b border-slate-200 ${
-                                    clsShort > 0 ? "bg-rose-50 hover:bg-rose-100" : "bg-white hover:bg-slate-50"
+                                    clsPending > 0 ? "bg-rose-50 hover:bg-rose-100" : "bg-white hover:bg-slate-50"
                                   }`}
                                 >
                                   <div className="min-w-0 text-left">
-                                    <div className={`text-sm font-bold truncate ${clsShort > 0 ? "text-rose-900" : ""}`}>
+                                    <div className={`text-sm font-bold truncate ${clsPending > 0 ? "text-rose-900" : ""}`}>
                                       Class: {cls.class_name}
                                     </div>
                                     <div className="text-xs text-slate-500 mt-0.5">
-                                      Ordered: <b>{clsOrdered}</b> • Received: <b>{clsReceived}</b> • Short:{" "}
-                                      <b>{clsShort}</b> • Net: <b>₹{fmtINR(clsNet)}</b>
+                                      Ordered: <b>{clsOrdered}</b> • Received: <b>{clsReceived}</b> • Pending:{" "}
+                                      <b>{clsPending}</b> • Ordered Net: <b>₹{fmtINR(clsOrderedNet)}</b> • Rec Net:{" "}
+                                      <b>₹{fmtINR(clsReceivedNet)}</b> • Pend Net: <b>₹{fmtINR(clsPendingNet)}</b>
                                     </div>
                                   </div>
 
@@ -637,7 +808,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                             Rec.
                                           </th>
                                           <th className="border-b-2 border-slate-300 px-3 py-3 text-center font-bold text-slate-800 w-24">
-                                            Short
+                                            Pending
                                           </th>
                                           <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-28">
                                             Rate
@@ -645,11 +816,20 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                           <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-32">
                                             Gross
                                           </th>
-                                          <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-32">
+                                          <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-28">
                                             Disc.
                                           </th>
+                                          <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-28">
+                                            Net/Unit
+                                          </th>
                                           <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-32">
-                                            Net
+                                            Ordered Net
+                                          </th>
+                                          <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-32">
+                                            Rec Net
+                                          </th>
+                                          <th className="border-b-2 border-slate-300 px-3 py-3 text-right font-bold text-slate-800 w-32">
+                                            Pend Net
                                           </th>
                                           <th className="border-b-2 border-slate-300 px-3 py-3 text-left font-bold text-slate-800 w-56">
                                             Order / Bill
@@ -659,7 +839,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
 
                                       <tbody>
                                         {cls.books.map((b) => {
-                                          const isShort = num(b.short_qty) > 0;
+                                          const isPending = num(b.pending_qty) > 0;
 
                                           const discLabel =
                                             b.discount_amt != null && num(b.discount_amt) > 0
@@ -672,7 +852,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                             <tr
                                               key={`${b.order_id}-${b.book_id}`}
                                               className={`border-b border-slate-100 transition hover:bg-slate-50 ${
-                                                isShort ? "bg-rose-50/40" : ""
+                                                isPending ? "bg-rose-50/40" : ""
                                               }`}
                                             >
                                               <td className="px-3 py-3">
@@ -687,9 +867,9 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                               <td className="px-3 py-3 text-center font-medium">{num(b.received_qty)}</td>
 
                                               <td className="px-3 py-3 text-center">
-                                                {isShort ? (
+                                                {isPending ? (
                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border bg-rose-100 text-rose-800 border-rose-200">
-                                                    {num(b.short_qty)}
+                                                    {num(b.pending_qty)}
                                                   </span>
                                                 ) : (
                                                   <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-100 text-emerald-800 border-emerald-200">
@@ -701,7 +881,22 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                               <td className="px-3 py-3 text-right font-medium">₹{fmtINR(b.rate)}</td>
                                               <td className="px-3 py-3 text-right font-medium">₹{fmtINR(b.gross_amount)}</td>
                                               <td className="px-3 py-3 text-right font-medium">{discLabel}</td>
-                                              <td className="px-3 py-3 text-right font-bold">₹{fmtINR(b.net_amount)}</td>
+
+                                              <td className="px-3 py-3 text-right font-semibold">
+                                                ₹{fmtINR(b.net_unit_price)}
+                                              </td>
+
+                                              <td className="px-3 py-3 text-right font-bold">
+                                                ₹{fmtINR(b.ordered_net_amount)}
+                                              </td>
+
+                                              <td className="px-3 py-3 text-right font-bold text-indigo-900">
+                                                ₹{fmtINR(b.received_net_amount)}
+                                              </td>
+
+                                              <td className="px-3 py-3 text-right font-bold text-rose-900">
+                                                ₹{fmtINR(b.pending_net_amount)}
+                                              </td>
 
                                               <td className="px-3 py-3">
                                                 <div className="flex items-start justify-between gap-2">
@@ -728,6 +923,13 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
                                         })}
                                       </tbody>
                                     </table>
+
+                                    {cls.books.length === 0 && (
+                                      <div className="p-6 text-center text-sm text-slate-500">
+                                        <PackageOpen className="w-6 h-6 mx-auto mb-2 text-slate-400" />
+                                        No items in this class for current filters.
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>

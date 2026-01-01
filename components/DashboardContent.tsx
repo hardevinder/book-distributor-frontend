@@ -21,6 +21,7 @@ import {
   IndianRupee,
   Star,
   Search,
+  ClipboardSignature, // ✅ ADDED
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -45,10 +46,7 @@ type DashCard = {
 
 /* ---------------- Colors ---------------- */
 
-const accentMap: Record<
-  DashCard["accent"],
-  { iconBg: string; ring: string; hover: string }
-> = {
+const accentMap: Record<DashCard["accent"], { iconBg: string; ring: string; hover: string }> = {
   emerald: {
     iconBg: "from-emerald-500 to-teal-600",
     ring: "ring-emerald-200/70",
@@ -150,9 +148,7 @@ function Tile({
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-extrabold text-slate-900">
-            {card.title}
-          </div>
+          <div className="truncate text-[13px] font-extrabold text-slate-900">{card.title}</div>
           <div className="mt-0.5 h-[3px] w-10 rounded-full bg-slate-200/70 group-hover:w-14 transition-all" />
         </div>
 
@@ -194,6 +190,9 @@ const DashboardContent: React.FC = () => {
       { title: "Issue Bundles", href: "/issue-bundles", icon: <PackageCheck className="h-5 w-5" />, accent: "cyan" },
       { title: "Dispatches", href: "/bundle-dispatches", icon: <FileText className="h-5 w-5" />, accent: "indigo" },
       { title: "Stock", href: "/stock", icon: <Layers className="h-5 w-5" />, accent: "emerald" },
+
+      // ✅ ADDED BUTTON (Tile): School-Supplier Billing Report
+      { title: "School Order Billing Status", href: "/reports/school-supplier-billing", icon: <ClipboardSignature className="h-5 w-5" />, accent: "slate" },
     ],
     []
   );
@@ -218,9 +217,7 @@ const DashboardContent: React.FC = () => {
   }, [pins]);
 
   const togglePin = (href: string) => {
-    setPins((prev) =>
-      prev.includes(href) ? prev.filter((x) => x !== href) : [href, ...prev].slice(0, 12)
-    );
+    setPins((prev) => (prev.includes(href) ? prev.filter((x) => x !== href) : [href, ...prev].slice(0, 12)));
   };
 
   const pinnedCards = useMemo(() => {
@@ -232,9 +229,7 @@ const DashboardContent: React.FC = () => {
     const s = q.trim().toLowerCase();
     const base = allCards.filter((c) => !pins.includes(c.href));
     if (!s) return base;
-    return base.filter(
-      (c) => c.title.toLowerCase().includes(s) || c.href.toLowerCase().includes(s)
-    );
+    return base.filter((c) => c.title.toLowerCase().includes(s) || c.href.toLowerCase().includes(s));
   }, [q, allCards, pins]);
 
   return (
@@ -246,9 +241,7 @@ const DashboardContent: React.FC = () => {
             <BookOpen className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-[13px] sm:text-sm font-extrabold leading-tight">
-              Book Distribution Panel
-            </div>
+            <div className="truncate text-[13px] sm:text-sm font-extrabold leading-tight">Book Distribution Panel</div>
             <div className="truncate text-[11px] text-slate-500 font-semibold">
               {user?.name || "User"}
               {user?.role ? ` • ${user.role}` : ""}
@@ -277,10 +270,7 @@ const DashboardContent: React.FC = () => {
               className="w-full bg-transparent outline-none text-sm placeholder:text-slate-400"
             />
             {q ? (
-              <button
-                className="text-[12px] font-bold text-slate-500 hover:text-slate-800"
-                onClick={() => setQ("")}
-              >
+              <button className="text-[12px] font-bold text-slate-500 hover:text-slate-800" onClick={() => setQ("")}>
                 Clear
               </button>
             ) : null}
@@ -295,19 +285,12 @@ const DashboardContent: React.FC = () => {
                 <Star className="h-4 w-4 text-amber-500" />
                 Frequently Used
               </div>
-              <div className="text-[11px] text-slate-500 font-semibold">
-                {pinnedCards.length}/12
-              </div>
+              <div className="text-[11px] text-slate-500 font-semibold">{pinnedCards.length}/12</div>
             </div>
 
             <div className="grid grid-cols-4 gap-2">
               {pinnedCards.map((c) => (
-                <Tile
-                  key={c.href}
-                  card={c}
-                  pinned
-                  onTogglePin={() => togglePin(c.href)}
-                />
+                <Tile key={c.href} card={c} pinned onTogglePin={() => togglePin(c.href)} />
               ))}
             </div>
           </section>
@@ -317,19 +300,12 @@ const DashboardContent: React.FC = () => {
         <section>
           <div className="grid grid-cols-4 gap-2">
             {filteredCards.map((c) => (
-              <Tile
-                key={c.href}
-                card={c}
-                pinned={pins.includes(c.href)}
-                onTogglePin={() => togglePin(c.href)}
-              />
+              <Tile key={c.href} card={c} pinned={pins.includes(c.href)} onTogglePin={() => togglePin(c.href)} />
             ))}
           </div>
 
           {filteredCards.length === 0 && (
-            <div className="mt-6 text-center text-sm font-semibold text-slate-500">
-              No match.
-            </div>
+            <div className="mt-6 text-center text-sm font-semibold text-slate-500">No match.</div>
           )}
         </section>
       </main>
