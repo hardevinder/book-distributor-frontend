@@ -1898,7 +1898,9 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
-                                    ref={(el) => (cellRefs.current[cellKey(idx, "rec")] = el)}
+                                    ref={(el) => {
+                                      cellRefs.current[cellKey(idx, "rec")] = el;
+                                    }}
                                     type="number"
                                     min={0}
                                     value={it.rec_qty}
@@ -1917,7 +1919,9 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
-                                    ref={(el) => (cellRefs.current[cellKey(idx, "mrp")] = el)}
+                                    ref={(el) => {
+                                      cellRefs.current[cellKey(idx, "mrp")] = el;
+                                    }}
                                     type="number"
                                     min={0}
                                     value={it.unit_price}
@@ -1933,7 +1937,9 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
-                                    ref={(el) => (cellRefs.current[cellKey(idx, "pct")] = el)}
+                                    ref={(el) => {
+                                      cellRefs.current[cellKey(idx, "pct")] = el;
+                                    }}
                                     type="number"
                                     min={0}
                                     max={100}
@@ -1950,7 +1956,9 @@ export default function SupplierReceiptsPageClient() {
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
-                                    ref={(el) => (cellRefs.current[cellKey(idx, "amt")] = el)}
+                                    ref={(el) => {
+                                      cellRefs.current[cellKey(idx, "amt")] = el;
+                                    }}
                                     type="number"
                                     min={0}
                                     value={it.disc_amt}
