@@ -95,6 +95,14 @@ const SchoolsPageClient: React.FC = () => {
   );
   const LAST_INDEX = 8; // index of sort_order
 
+  // ✅ Auto-grow textarea (helps long school names remain visible)
+  const autoGrow = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    const max = 56; // ~2 lines; increase if needed
+    el.style.height = Math.min(el.scrollHeight, max) + "px";
+  };
+
   /* -------------------- FETCH HELPERS -------------------- */
 
   const fetchSchools = async (query?: string, activeFilter?: string) => {
@@ -617,18 +625,31 @@ const SchoolsPageClient: React.FC = () => {
                 {/* ADD ROW */}
                 <tr className="bg-slate-50/80">
                   <td className="border-b border-slate-200 px-3 py-1.5">
-                    <input
+                    {/* ✅ School name as textarea (auto-grow) */}
+                    <textarea
                       name="name"
                       value={form.name}
-                      onChange={handleChange}
+                      onChange={(e) => {
+                        handleChange(e);
+                        autoGrow(e.currentTarget);
+                      }}
                       ref={(el) => {
                         addRowRefs.current[0] = el;
+                        if (el) autoGrow(el);
                       }}
-                      onKeyDown={makeAddRowKeyDown(0)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      onKeyDown={(e) => {
+                        // Enter -> next cell (Excel feel), Shift+Enter -> newline
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          makeAddRowKeyDown(0)(e as any);
+                        }
+                      }}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none leading-5"
+                      rows={1}
                       placeholder="School name"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="contact_person"
@@ -642,6 +663,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="Contact person"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="phone"
@@ -655,6 +677,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="+91..."
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="email"
@@ -669,6 +692,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="Email"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <textarea
                       name="address"
@@ -683,6 +707,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="Address"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="city"
@@ -696,6 +721,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="City"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="state"
@@ -709,6 +735,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="State"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5">
                     <input
                       name="pincode"
@@ -722,6 +749,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="PIN"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5 text-right">
                     <input
                       name="sort_order"
@@ -736,6 +764,7 @@ const SchoolsPageClient: React.FC = () => {
                       placeholder="0"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5 text-center">
                     <input
                       type="checkbox"
@@ -744,6 +773,7 @@ const SchoolsPageClient: React.FC = () => {
                       className="h-4 w-4"
                     />
                   </td>
+
                   <td className="border-b border-slate-200 px-3 py-1.5 text-center">
                     <button
                       type="button"
@@ -762,17 +792,29 @@ const SchoolsPageClient: React.FC = () => {
                     // EDIT ROW
                     <tr key={s.id} className="bg-yellow-50/70">
                       <td className="border-b border-slate-200 px-3 py-1.5">
-                        <input
+                        {/* ✅ School name as textarea in edit mode */}
+                        <textarea
                           name="name"
                           value={form.name}
-                          onChange={handleChange}
+                          onChange={(e) => {
+                            handleChange(e);
+                            autoGrow(e.currentTarget);
+                          }}
                           ref={(el) => {
                             editRowRefs.current[0] = el;
+                            if (el) autoGrow(el);
                           }}
-                          onKeyDown={makeEditRowKeyDown(0)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              makeEditRowKeyDown(0)(e as any);
+                            }
+                          }}
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none leading-5"
+                          rows={1}
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="contact_person"
@@ -785,6 +827,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="phone"
@@ -797,6 +840,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="email"
@@ -810,6 +854,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <textarea
                           name="address"
@@ -823,6 +868,7 @@ const SchoolsPageClient: React.FC = () => {
                           rows={1}
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="city"
@@ -835,6 +881,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="state"
@@ -847,6 +894,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5">
                         <input
                           name="pincode"
@@ -859,6 +907,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5 text-right">
                         <input
                           name="sort_order"
@@ -872,6 +921,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="w-full border border-amber-300 rounded-md px-2 py-1 bg-white text-right focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5 text-center">
                         <input
                           type="checkbox"
@@ -880,6 +930,7 @@ const SchoolsPageClient: React.FC = () => {
                           className="h-4 w-4"
                         />
                       </td>
+
                       <td className="border-b border-slate-200 px-3 py-1.5 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <button
@@ -908,7 +959,11 @@ const SchoolsPageClient: React.FC = () => {
                     >
                       {/* School */}
                       <td className="border-b border-slate-200 px-3 py-2">
-                        <div className="font-semibold truncate max-w-[220px] text-slate-800">
+                        {/* ✅ show full on hover via title; still keeps table neat */}
+                        <div
+                          className="font-semibold truncate max-w-[260px] text-slate-800"
+                          title={s.name}
+                        >
                           {s.name}
                         </div>
                       </td>
