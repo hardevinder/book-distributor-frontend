@@ -97,7 +97,7 @@ type InvoiceItem = {
 
 type SupplierInvoiceDetail = SupplierInvoiceLite & {
   supplier?: { id: number; name: string } | null;
-  school?: { id?: number | null; name?: string | null } | null; // ✅ NEW (backend sends school object sometimes)
+  school?: { id?: number | null; name?: string | null } | null; // ✅ NEW
   items?: InvoiceItem[];
   notes?: string | null;
   ref_no?: string | null;
@@ -765,7 +765,8 @@ const SuppliersPageClient: React.FC = () => {
 
             // ✅ NEW: school
             school_id: x.school_id ?? x.schoolId ?? null,
-            school_name: x.school_name ?? x.schoolName ?? x.school?.name ?? null,
+            school_name:
+              x.school_name ?? x.schoolName ?? x.school?.name ?? null,
 
             supplier_id: x.supplier_id ?? x.supplierId ?? null,
             pdf_url: x.pdf_url ?? x.pdfUrl ?? x.file_url ?? null,
@@ -922,7 +923,10 @@ const SuppliersPageClient: React.FC = () => {
           // ✅ NEW: school fields
           school_id: schoolId,
           school_name: schoolName,
-          school: raw?.school ?? x?.school ?? (schoolName ? { id: schoolId, name: schoolName } : null),
+          school:
+            raw?.school ??
+            x?.school ??
+            (schoolName ? { id: schoolId, name: schoolName } : null),
 
           notes: x?.notes ?? x?.remark ?? x?.remarks ?? null,
           ref_no: x?.ref_no ?? x?.refNo ?? x?.reference_no ?? null,
@@ -975,7 +979,7 @@ const SuppliersPageClient: React.FC = () => {
     return invoices.filter((x) => {
       const hay = [
         pickInvoiceNo(x),
-        pickSchoolName(x), // ✅ include in search
+        pickSchoolName(x),
         pickDocType(x),
         pickStatus(x),
         pickInvoiceDate(x),
@@ -1383,6 +1387,7 @@ const SuppliersPageClient: React.FC = () => {
                           >
                             <ScrollText className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             type="button"
                             onClick={() => openPaymentPopup(s)}
@@ -1391,6 +1396,7 @@ const SuppliersPageClient: React.FC = () => {
                           >
                             <IndianRupee className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             type="button"
                             onClick={() => handleEdit(s)}
@@ -1399,6 +1405,7 @@ const SuppliersPageClient: React.FC = () => {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             type="button"
                             onClick={() => handleDelete(s.id)}

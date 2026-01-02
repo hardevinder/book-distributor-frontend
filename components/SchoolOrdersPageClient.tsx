@@ -89,7 +89,10 @@ type SchoolOrder = {
   transport_id_2?: number | null;
   transport2?: TransportLite | null;
 
+  // ✅ Notes (2 options)
   notes?: string | null;
+  notes_2?: string | null; // preferred
+  notes2?: string | null; // fallback
 
   email_sent_count?: number;
   last_email_sent_at?: string | null;
@@ -326,7 +329,67 @@ const clampInt = (v: any, min = 0, max = 999999) => {
   return Math.max(min, Math.min(max, Math.floor(n)));
 };
 
+// ✅ Notes helper (works with notes_2 or notes2)
+const getNotes2 = (order: SchoolOrder | null) => (order?.notes_2 ?? order?.notes2 ?? "") || "";
+
+/* ---------- SweetAlert helper (dynamic import) ---------- */
+
+type SwalLike = any;
+
+const getSwal = async (): Promise<SwalLike | null> => {
+  try {
+    const mod: any = await import("sweetalert2");
+    return mod?.default || mod;
+  } catch {
+    return null;
+  }
+};
+
+const sweetConfirm = async (opts: {
+  title: string;
+  html?: string;
+  confirmText?: string;
+  cancelText?: string;
+  icon?: "warning" | "question" | "info" | "success" | "error";
+}) => {
+  const Swal = await getSwal();
+  if (!Swal) {
+    const ok = window.confirm(`${opts.title}\n\n${String(opts.html || "").replace(/<[^>]+>/g, "")}`);
+    return ok;
+  }
+
+  const res = await Swal.fire({
+    title: opts.title,
+    html: opts.html || "",
+    icon: opts.icon || "question",
+    showCancelButton: true,
+    confirmButtonText: opts.confirmText || "Yes",
+    cancelButtonText: opts.cancelText || "Cancel",
+    reverseButtons: true,
+    focusCancel: true,
+    width: 520,
+  });
+
+  return !!res.isConfirmed;
+};
+
+const sweetToast = async (opts: { icon: "success" | "error" | "info" | "warning"; title: string }) => {
+  const Swal = await getSwal();
+  if (!Swal) return;
+  Swal.fire({
+    toast: true,
+    position: "top-end",
+    showConfirmButton: false,
+    timer: 1800,
+    timerProgressBar: true,
+    icon: opts.icon,
+    title: opts.title,
+  });
+};
+
 /* ---------- Component ---------- */
+
+type BulkTargetMode = "visible" | "school";
 
 const SchoolOrdersPageClient: React.FC = () => {
   const { user, logout } = useAuth();
@@ -353,7 +416,10 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [metaSaving, setMetaSaving] = useState(false);
   const [metaTransportId, setMetaTransportId] = useState<string>("");
   const [metaTransportId2, setMetaTransportId2] = useState<string>("");
+
+  // ✅ Notes 1 + Notes 2
   const [metaNotes, setMetaNotes] = useState<string>("");
+  const [metaNotes2, setMetaNotes2] = useState<string>("");
 
   // Order No edit
   const [baseOrderNoDraft, setBaseOrderNoDraft] = useState<string>("");
@@ -371,8 +437,6 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [copyOrder, setCopyOrder] = useState<SchoolOrder | null>(null);
   const [copySaving, setCopySaving] = useState(false);
   const [copyQtyDrafts, setCopyQtyDrafts] = useState<Record<number, number>>({}); // item_id -> qty
-
-  // ✅ NEW: trash/remove from copy
   const [copyDeletedIds, setCopyDeletedIds] = useState<Record<number, boolean>>({});
 
   // ✅ Email modal state
@@ -403,6 +467,45 @@ const SchoolOrdersPageClient: React.FC = () => {
   // ✅ Email count cache for listing (orderId -> count)
   const [emailCounts, setEmailCounts] = useState<Record<number, number>>({});
 
+  /* ---------- ✅ Bulk Meta (Transport-1 + Notes1+Notes2 ONLY) ---------- */
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkTransportId, setBulkTransportId] = useState<string>("");
+  const [bulkNotes1, setBulkNotes1] = useState<string>("");
+  const [bulkNotes2, setBulkNotes2] = useState<string>("");
+
+  // ✅ Bulk modal preselect
+  const [bulkInitialMode, setBulkInitialMode] = useState<BulkTargetMode>("visible");
+  const [bulkInitialSchoolId, setBulkInitialSchoolId] = useState<string>("");
+  const [bulkKey, setBulkKey] = useState(1);
+
+  const openBulkModal = (preset?: { mode?: BulkTargetMode; schoolId?: number | string }) => {
+    setBulkOpen(true);
+    setBulkSaving(false);
+
+    setBulkTransportId(metaTransportId || "");
+    setBulkNotes1(metaNotes || "");
+    setBulkNotes2(metaNotes2 || "");
+
+    setBulkInitialMode(preset?.mode || "visible");
+    setBulkInitialSchoolId(preset?.schoolId != null ? String(preset.schoolId) : "");
+    setBulkKey((k) => k + 1);
+
+    setError(null);
+    setInfo(null);
+  };
+
+  const closeBulkModal = () => {
+    setBulkOpen(false);
+    setBulkSaving(false);
+    setBulkTransportId("");
+    setBulkNotes1("");
+    setBulkNotes2("");
+    setBulkInitialMode("visible");
+    setBulkInitialSchoolId("");
+  };
+
   /* ---------- Data fetching ---------- */
 
   const fetchSchools = async () => {
@@ -423,6 +526,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
+  // ✅ NOTE: listSchoolOrders already; if your backend supports filters, you can pass params here.
   const fetchOrders = async () => {
     setLoading(true);
     setError(null);
@@ -459,6 +563,97 @@ const SchoolOrdersPageClient: React.FC = () => {
     fetchOrders();
   }, []);
 
+  /* ---------- ✅ AUTH PDF FIX ----------
+   * window.open("/api/.../pdf") will NOT send Authorization header => 401
+   * So we fetch with axios (apiClient includes JWT header) then open blob url.
+   * ----------------------------------- */
+
+  const fetchPdfBlobUrl = async (orderId: number) => {
+    const res = await api.get(`/api/school-orders/${orderId}/pdf`, { responseType: "blob" });
+
+    const contentType = (res.headers as any)?.["content-type"] || "";
+    if (!String(contentType).includes("application/pdf")) {
+      const blob = res.data as Blob;
+      const text = await blob.text().catch(() => "");
+      throw new Error(text || "Not a PDF.");
+    }
+
+    const blob = new Blob([res.data], { type: "application/pdf" });
+    return window.URL.createObjectURL(blob);
+  };
+
+  const openPdfWithAuth = async (orderId: number, targetWin?: Window | null) => {
+    const url = await fetchPdfBlobUrl(orderId);
+    if (targetWin && !targetWin.closed) targetWin.location.href = url;
+    else window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  // ✅ Single PDF open
+  const openPdfDirect = (orderId: number) => {
+    if (!orderId) return;
+
+    const w = window.open("about:blank", "_blank", "noopener,noreferrer");
+    openPdfWithAuth(orderId, w).catch((err: any) => {
+      console.error(err);
+      if (w && !w.closed) {
+        w.document.title = "PDF Error";
+        w.document.body.innerHTML =
+          `<pre style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace; padding:12px; white-space:pre-wrap;">` +
+          escapeHtml(err?.message || "PDF failed") +
+          `</pre>`;
+      } else {
+        setError(err?.response?.data?.message || err?.message || "PDF failed.");
+      }
+    });
+  };
+
+  // ✅ NEW: Print ALL visible in ONE PDF (uses new backend route /pdf/all)
+  const openAllPdf = async () => {
+    if (!visibleOrders.length) return;
+
+    const ok = await sweetConfirm({
+      title: "Print ALL visible in one PDF?",
+      icon: "info",
+      html: `<div style="text-align:left;font-size:13px;">
+        <div><b>Orders:</b> ${visibleOrders.length}</div>
+        <div style="margin-top:6px;color:#64748b;font-size:12px;">
+          This will generate a single PDF (each order on new page).
+        </div>
+      </div>`,
+      confirmText: "Print",
+      cancelText: "Cancel",
+    });
+    if (!ok) return;
+
+    // Build query params from current filters (best-effort)
+    const params: Record<string, string> = {};
+    if (filterSession) params.academic_session = filterSession;
+    if (filterSchoolId) params.school_id = filterSchoolId;
+    if (filterStatus && filterStatus !== "not_received") params.status = filterStatus;
+
+    const qs = new URLSearchParams(params).toString();
+    const url = `/api/school-orders/pdf/all${qs ? `?${qs}` : ""}`;
+
+    try {
+      const res = await api.get(url, { responseType: "blob" });
+
+      const contentType = (res.headers as any)?.["content-type"] || "";
+      if (!String(contentType).includes("application/pdf")) {
+        const blob = res.data as Blob;
+        const text = await blob.text().catch(() => "");
+        throw new Error(text || "Not a PDF.");
+      }
+
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const blobUrl = window.URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      console.error("print-all error:", err);
+      setError(err?.response?.data?.message || err?.message || "Print all failed.");
+      await sweetToast({ icon: "error", title: "Print all failed" });
+    }
+  };
+
   /* ---------- Actions ---------- */
 
   const handleGenerate = async (e: React.FormEvent) => {
@@ -478,41 +673,46 @@ const SchoolOrdersPageClient: React.FC = () => {
       });
       setInfo(res?.data?.message || "Generated.");
       await fetchOrders();
+      await sweetToast({ icon: "success", title: "Generated" });
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Generate failed.");
+      await sweetToast({ icon: "error", title: "Generate failed" });
     } finally {
       setGenerating(false);
     }
   };
 
-  const handleViewPdf = async (order: SchoolOrder) => {
-    if (!order.id) return;
-    setError(null);
-    setInfo(null);
-
-    try {
-      const res = await api.get(`/api/school-orders/${order.id}/pdf`, { responseType: "blob" });
-
-      const contentType = (res.headers as any)?.["content-type"] || "";
-      if (!contentType.includes("application/pdf")) {
-        const blob = res.data as Blob;
-        const text = await blob.text().catch(() => "");
-        throw new Error(text || "Not a PDF.");
-      }
-
-      const blob = new Blob([res.data], { type: "application/pdf" });
-      const pdfUrl = window.URL.createObjectURL(blob);
-      window.open(pdfUrl, "_blank", "noopener,noreferrer");
-    } catch (err: any) {
-      console.error("PDF error:", err);
-      setError(err?.response?.data?.message || err?.message || "PDF failed.");
-    }
-  };
-
-  // ✅ Pending reorder (shifts reordered_qty in old order)
+  // ✅ Pending reorder + confirm
   const handleReorderPending = async (order: SchoolOrder) => {
     if (!order?.id) return;
+
+    const items = getOrderItems(order);
+    const ord = totalQtyFromItems(items);
+    const rec = totalReceivedFromItems(items);
+    const re = totalReorderedFromItems(items);
+    const pending = isClosedishStatus(order.status) ? 0 : Math.max(ord - rec - re, 0);
+
+    if (pending <= 0) {
+      await sweetToast({ icon: "info", title: "No pending qty to reorder" });
+      return;
+    }
+
+    const ok = await sweetConfirm({
+      title: "Reorder Pending?",
+      icon: "warning",
+      html: `<div style="text-align:left;font-size:13px;">
+        <div><b>Order:</b> ${escapeHtml(order.order_no || `#${order.id}`)}</div>
+        <div><b>Pending Qty:</b> ${pending}</div>
+        <div style="margin-top:10px;color:#b45309;">
+          This will create a <b>NEW</b> order and update <b>reordered qty</b> in the <b>OLD</b> order.
+        </div>
+      </div>`,
+      confirmText: "Yes, Reorder",
+      cancelText: "No",
+    });
+    if (!ok) return;
+
     setError(null);
     setInfo(null);
     setReorderingId(order.id);
@@ -530,6 +730,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         res?.data?.message ||
         (res?.data?.new_order?.id ? `Reordered. New Order #${res.data.new_order.id}` : "Reordered.");
       setInfo(msg);
+      await sweetToast({ icon: "success", title: "Reorder created" });
 
       await fetchOrders();
 
@@ -538,16 +739,16 @@ const SchoolOrdersPageClient: React.FC = () => {
     } catch (err: any) {
       console.error("reorder error:", err);
       setError(err?.response?.data?.message || "Reorder failed.");
+      await sweetToast({ icon: "error", title: "Reorder failed" });
     } finally {
       setReorderingId(null);
     }
   };
 
-  // ✅ Copy reorder (manual qty) - does NOT touch old order (safe for bulk generate flow)
+  // ✅ Copy reorder (manual qty)
   const openCopyModal = (order: SchoolOrder) => {
     const items = getOrderItems(order);
 
-    // prefill with pending qty (suggestion), but allow user to edit
     const drafts: Record<number, number> = {};
     items.forEach((it) => {
       const ordered = Number(it.total_order_qty) || 0;
@@ -559,7 +760,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     setCopyOrder(order);
     setCopyQtyDrafts(drafts);
-    setCopyDeletedIds({}); // ✅ reset trash state
+    setCopyDeletedIds({});
     setCopyOpen(true);
     setError(null);
     setInfo(null);
@@ -569,7 +770,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     setCopyOpen(false);
     setCopyOrder(null);
     setCopyQtyDrafts({});
-    setCopyDeletedIds({}); // ✅ reset
+    setCopyDeletedIds({});
     setCopySaving(false);
   };
 
@@ -578,7 +779,6 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     const items = getOrderItems(copyOrder);
 
-    // ✅ exclude trashed items + exclude 0 qty
     const payloadItems = items
       .filter((it) => !copyDeletedIds[it.id])
       .map((it) => ({
@@ -592,6 +792,18 @@ const SchoolOrdersPageClient: React.FC = () => {
       return;
     }
 
+    const ok = await sweetConfirm({
+      title: "Create Copy Reorder?",
+      icon: "question",
+      html: `<div style="text-align:left;font-size:13px;">
+        <div>This will create a <b>NEW</b> order.</div>
+        <div style="margin-top:8px;color:#64748b;">Old order will remain unchanged.</div>
+      </div>`,
+      confirmText: "Create",
+      cancelText: "Cancel",
+    });
+    if (!ok) return;
+
     setCopySaving(true);
     setError(null);
     setInfo(null);
@@ -602,6 +814,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       });
 
       setInfo(res?.data?.message || "Copy reorder created.");
+      await sweetToast({ icon: "success", title: "Copy reorder created" });
       await fetchOrders();
 
       const newOrder = (res?.data?.new_order || res?.data?.order) as SchoolOrder | undefined;
@@ -610,6 +823,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Copy reorder failed.");
+      await sweetToast({ icon: "error", title: "Copy reorder failed" });
     } finally {
       setCopySaving(false);
     }
@@ -622,6 +836,8 @@ const SchoolOrdersPageClient: React.FC = () => {
     setMetaTransportId2(order.transport_id_2 ? String(order.transport_id_2) : "");
 
     setMetaNotes(order.notes || "");
+    setMetaNotes2(getNotes2(order));
+
     setBaseOrderNoDraft(order.order_no || "");
   };
 
@@ -632,10 +848,11 @@ const SchoolOrdersPageClient: React.FC = () => {
     setMetaSaving(true);
 
     try {
-      const payload = {
+      const payload: any = {
         transport_id: metaTransportId ? Number(metaTransportId) : null,
         transport_id_2: metaTransportId2 ? Number(metaTransportId2) : null,
         notes: metaNotes.trim() ? metaNotes.trim() : null,
+        notes_2: metaNotes2.trim() ? metaNotes2.trim() : null,
       };
 
       const res = await api.patch(`/api/school-orders/${viewOrder.id}/meta`, payload);
@@ -646,14 +863,73 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setMetaTransportId(updatedOrder.transport_id ? String(updatedOrder.transport_id) : "");
       setMetaTransportId2(updatedOrder.transport_id_2 ? String(updatedOrder.transport_id_2) : "");
+
       setMetaNotes(updatedOrder.notes || "");
+      setMetaNotes2(getNotes2(updatedOrder));
 
       setInfo(res.data?.message || "Meta saved.");
+      await sweetToast({ icon: "success", title: "Saved" });
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Meta save failed.");
+      await sweetToast({ icon: "error", title: "Save failed" });
     } finally {
       setMetaSaving(false);
+    }
+  };
+
+  // ✅ Bulk save: Transport-1 + Notes1 + Notes2 ONLY
+  const handleBulkMetaSave = async (targetOrders: SchoolOrder[]) => {
+    if (!targetOrders.length) return;
+
+    const payload: any = {
+      transport_id: bulkTransportId ? Number(bulkTransportId) : null,
+      notes: bulkNotes1.trim() ? bulkNotes1.trim() : null,
+      notes_2: bulkNotes2.trim() ? bulkNotes2.trim() : null,
+    };
+
+    const ok = await sweetConfirm({
+      title: "Bulk update meta?",
+      icon: "warning",
+      html: `<div style="text-align:left;font-size:13px;">
+        <div><b>Orders:</b> ${targetOrders.length}</div>
+        <div style="margin-top:8px;">
+          Will update: <b>Transport 1</b>, <b>Notes 1</b>, <b>Notes 2</b>
+        </div>
+        <div style="margin-top:6px;color:#64748b;">
+          Transport 2 will NOT be changed.
+        </div>
+      </div>`,
+      confirmText: "Update",
+      cancelText: "Cancel",
+    });
+    if (!ok) return;
+
+    setBulkSaving(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const chunk = async (arr: SchoolOrder[], size: number) => {
+        for (let i = 0; i < arr.length; i += size) {
+          const part = arr.slice(i, i + size);
+          await Promise.all(part.map((o) => api.patch(`/api/school-orders/${o.id}/meta`, payload).catch(() => null)));
+        }
+      };
+
+      await chunk(targetOrders, 6);
+
+      setInfo(`Bulk updated ${targetOrders.length} order(s).`);
+      await sweetToast({ icon: "success", title: "Bulk updated" });
+
+      await fetchOrders();
+      closeBulkModal();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.response?.data?.message || "Bulk update failed.");
+      await sweetToast({ icon: "error", title: "Bulk update failed" });
+    } finally {
+      setBulkSaving(false);
     }
   };
 
@@ -671,15 +947,17 @@ const SchoolOrdersPageClient: React.FC = () => {
     setSavingBaseOrderNo(true);
 
     try {
-      const res = await api.patch(`/api/school-orders/${viewOrder.id}/order-no`, { order_no: newNo });
-      setInfo(res?.data?.message || "Order no updated.");
+      await api.patch(`/api/school-orders/${viewOrder.id}/order-no`, { order_no: newNo });
 
       setViewOrder((prev) => (prev ? { ...prev, order_no: newNo } : prev));
       setOrders((prev) => prev.map((o) => (o.id === viewOrder.id ? { ...o, order_no: newNo } : o)));
       setOrderNoDrafts((prev) => ({ ...prev, [viewOrder.id]: newNo }));
+
+      await sweetToast({ icon: "success", title: "Order No updated" });
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Order no update failed.");
+      await sweetToast({ icon: "error", title: "Order No update failed" });
     } finally {
       setSavingBaseOrderNo(false);
     }
@@ -698,14 +976,16 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     try {
       await api.patch(`/api/school-orders/${orderId}/order-no`, { order_no: newNo });
-      setInfo("Order no updated.");
 
       setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, order_no: newNo } : o)));
       setViewOrder((prev) => (prev?.id === orderId ? { ...prev, order_no: newNo } : prev));
       if (viewOrder?.id === orderId) setBaseOrderNoDraft(newNo);
+
+      await sweetToast({ icon: "success", title: "Saved" });
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Order no update failed.");
+      await sweetToast({ icon: "error", title: "Save failed" });
     } finally {
       setSavingOrderNoId(null);
     }
@@ -870,9 +1150,12 @@ const SchoolOrdersPageClient: React.FC = () => {
         ...prev,
         [emailOrder.id]: Number(prev[emailOrder.id] ?? 0) + 1,
       }));
+
+      await sweetToast({ icon: "success", title: "Email sent" });
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Email failed.");
+      await sweetToast({ icon: "error", title: "Email failed" });
     } finally {
       setEmailSending(false);
     }
@@ -1119,6 +1402,42 @@ const SchoolOrdersPageClient: React.FC = () => {
               Refresh
             </button>
 
+            {/* ✅ Bulk meta */}
+            <button
+              type="button"
+              onClick={() => openBulkModal({ mode: "visible" })}
+              disabled={!visibleOrders.length}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
+                         text-slate-800 border border-slate-200
+                         bg-gradient-to-r from-slate-50 to-indigo-50
+                         hover:from-slate-100 hover:to-indigo-100
+                         shadow-sm hover:shadow
+                         focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:ring-offset-2
+                         disabled:opacity-50 disabled:shadow-none"
+              title="Bulk update Transport-1 + Notes (2) for visible orders"
+            >
+              <Package className="w-3.5 h-3.5" />
+              Bulk Meta
+            </button>
+
+            {/* ✅ NEW: Print ALL visible in ONE PDF */}
+            <button
+              type="button"
+              onClick={openAllPdf}
+              disabled={!visibleOrders.length}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
+                         text-blue-800 border border-blue-200
+                         bg-gradient-to-r from-blue-50 to-sky-50
+                         hover:from-blue-100 hover:to-sky-100
+                         shadow-sm hover:shadow
+                         focus:outline-none focus:ring-2 focus:ring-blue-200 focus:ring-offset-2
+                         disabled:opacity-50 disabled:shadow-none"
+              title="Generate ONE PDF for all visible orders"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Print All (1 PDF)
+            </button>
+
             <div className="ml-auto flex items-center gap-2 text-[11px] text-slate-600">
               <span title="Orders">{visibleOrders.length}</span>
               <span title="Ordered">O:{orderedTotal}</span>
@@ -1170,7 +1489,20 @@ const SchoolOrdersPageClient: React.FC = () => {
                         <span className="text-[11px] text-slate-500 font-normal"> ({group.school.city})</span>
                       ) : null}
                     </div>
-                    <div className="text-[11px] text-slate-500">{group.rows.length}</div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] text-slate-500">{group.rows.length}</div>
+
+                      {/* ✅ bulk meta for this school */}
+                      <button
+                        type="button"
+                        onClick={() => openBulkModal({ mode: "school", schoolId: group.schoolId })}
+                        className="text-[10.5px] px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100"
+                        title="Bulk meta for this school only"
+                      >
+                        Bulk School
+                      </button>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto overflow-y-hidden">
@@ -1335,9 +1667,10 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       </span>
                                     </button>
 
+                                    {/* ✅ PDF (AUTH SAFE) */}
                                     <button
                                       type="button"
-                                      onClick={() => handleViewPdf(order)}
+                                      onClick={() => openPdfDirect(order.id)}
                                       className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                                     >
                                       <FileText className="w-3 h-3" />
@@ -1359,12 +1692,61 @@ const SchoolOrdersPageClient: React.FC = () => {
         </section>
       </main>
 
+      {/* ---------- Bulk Modal ---------- */}
+      {bulkOpen && (
+        <div className="fixed inset-0 z-[45] bg-black/50">
+          <div className="h-full w-full overflow-auto p-2 sm:p-3">
+            <div className="mx-auto w-full max-w-[900px]">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+                <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold truncate">Bulk Update Meta</div>
+                    <div className="text-[11px] text-slate-600">
+                      Updates only: <span className="font-semibold">Transport 1</span>,{" "}
+                      <span className="font-semibold">Notes 1</span>, <span className="font-semibold">Notes 2</span>
+                      <span className="text-slate-400"> • </span>
+                      <span className="text-slate-500">Transport 2 untouched</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeBulkModal}
+                    className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <BulkTargetBlock
+                  key={bulkKey}
+                  visibleOrders={visibleOrders}
+                  schoolGroups={schoolGroups}
+                  onApply={(targetOrders) => handleBulkMetaSave(targetOrders)}
+                  transports={transports}
+                  bulkTransportId={bulkTransportId}
+                  setBulkTransportId={setBulkTransportId}
+                  bulkNotes1={bulkNotes1}
+                  setBulkNotes1={setBulkNotes1}
+                  bulkNotes2={bulkNotes2}
+                  setBulkNotes2={setBulkNotes2}
+                  bulkSaving={bulkSaving}
+                  closeBulkModal={closeBulkModal}
+                  initialMode={bulkInitialMode}
+                  initialSchoolId={bulkInitialSchoolId}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal (Order-only view + meta edit) */}
       {viewOrder && (
         <div className="fixed inset-0 z-40 bg-black/50">
           <div className="h-full w-full overflow-auto p-2 sm:p-3">
             <div className="mx-auto w-full max-w-[1200px]">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+                {/* Header + Meta */}
                 <div className="px-2 py-2 border-b bg-gradient-to-r from-slate-50 to-indigo-50">
                   {(() => {
                     const school = getOrderSchool(viewOrder);
@@ -1447,8 +1829,9 @@ const SchoolOrdersPageClient: React.FC = () => {
                               <Package className="w-3.5 h-3.5" /> Copy
                             </button>
 
+                            {/* ✅ PDF AUTH SAFE */}
                             <button
-                              onClick={() => handleViewPdf(viewOrder)}
+                              onClick={() => openPdfDirect(viewOrder.id)}
                               className="text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1.5"
                             >
                               <FileText className="w-3.5 h-3.5" /> PDF
@@ -1526,14 +1909,29 @@ const SchoolOrdersPageClient: React.FC = () => {
                             </select>
                           </div>
 
-                          <div className="flex items-end gap-1.5">
+                          {/* ✅ Notes 1 + Notes 2 */}
+                          <div className="flex items-end gap-1.5 flex-wrap">
                             <div className="w-[320px]">
-                              <label className="block text-[10.5px] text-slate-600 mb-0.5">Notes (PDF footer)</label>
+                              <label className="block text-[10.5px] text-slate-600 mb-0.5">
+                                Notes 1 (PDF footer)
+                              </label>
                               <input
                                 value={metaNotes}
                                 onChange={(e) => setMetaNotes(e.target.value)}
                                 className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                placeholder="Notes..."
+                                placeholder="Notes 1..."
+                              />
+                            </div>
+
+                            <div className="w-[320px]">
+                              <label className="block text-[10.5px] text-slate-600 mb-0.5">
+                                Notes 2 (PDF footer)
+                              </label>
+                              <input
+                                value={metaNotes2}
+                                onChange={(e) => setMetaNotes2(e.target.value)}
+                                className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                placeholder="Notes 2..."
                               />
                             </div>
 
@@ -1555,7 +1953,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                   })()}
                 </div>
 
-                {/* ✅ View table: less book width + more qty space */}
+                {/* ✅ Items */}
                 <div className="p-2 overflow-auto text-[11px] flex-1 bg-white">
                   {(() => {
                     const items = getOrderItems(viewOrder);
@@ -1570,9 +1968,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <table className="w-full text-[11px] border-collapse">
                               <thead className="bg-slate-100">
                                 <tr>
-                                  <th className="border-b border-slate-200 px-2 py-1.5 text-left w-[60%]">
-                                    Book
-                                  </th>
+                                  <th className="border-b border-slate-200 px-2 py-1.5 text-left w-[60%]">Book</th>
                                   <th className="border-b border-slate-200 px-2 py-1.5 text-right w-[13%]">O</th>
                                   <th className="border-b border-slate-200 px-2 py-1.5 text-right w-[13%]">R</th>
                                   <th className="border-b border-slate-200 px-2 py-1.5 text-right w-[14%]">P</th>
@@ -1625,7 +2021,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
       )}
 
-      {/* ✅ Copy Reorder Modal (Manual Qty, SAFE) */}
+      {/* ✅ Copy Reorder Modal */}
       {copyOpen && copyOrder && (
         <div className="fixed inset-0 z-[55] bg-black/50">
           <div className="h-full w-full overflow-auto p-2 sm:p-3">
@@ -1656,9 +2052,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                         <table className="w-full text-[11px]">
                           <thead className="bg-slate-100">
                             <tr>
-                              {/* ✅ less space to book name */}
                               <th className="px-2 py-1.5 text-left border-b w-[55%]">Book</th>
-                              {/* ✅ more space to qty */}
                               <th className="px-2 py-1.5 text-right border-b w-[15%]">Pending</th>
                               <th className="px-2 py-1.5 text-right border-b w-[20%]">New Qty</th>
                               <th className="px-2 py-1.5 text-center border-b w-[10%]">Del</th>
@@ -1681,7 +2075,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       <div className="font-medium text-slate-900 truncate max-w-[420px]">
                                         {it.book?.title || `Book #${it.book_id}`}
                                       </div>
-                                      {/* ✅ removed subject line as requested */}
                                     </td>
 
                                     <td className="px-2 py-1.5 text-right whitespace-nowrap font-semibold">
@@ -1705,9 +2098,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                     <td className="px-2 py-1.5 text-center">
                                       <button
                                         type="button"
-                                        onClick={() =>
-                                          setCopyDeletedIds((prev) => ({ ...prev, [it.id]: true }))
-                                        }
+                                        onClick={() => setCopyDeletedIds((prev) => ({ ...prev, [it.id]: true }))}
                                         className="inline-flex items-center justify-center p-1.5 rounded-md
                                                    border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
                                         title="Remove from copy"
@@ -1756,7 +2147,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
       )}
 
-      {/* ✅ Email Modal (NON-TECH: more space to Send History) */}
+      {/* ✅ Email Modal + Preview Popup */}
       {emailOpen && (
         <div className="fixed inset-0 z-[60] bg-black/50">
           <div className="h-full w-full overflow-auto p-2 sm:p-3">
@@ -1825,7 +2216,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => emailOrder && handleViewPdf(emailOrder)}
+                          onClick={() => emailOrder && openPdfDirect(emailOrder.id)}
                           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                         >
                           <FileText className="w-3.5 h-3.5" /> Preview PDF
@@ -1858,7 +2249,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* ✅ Layout change: Message smaller (4), Send History bigger (8) */}
                     <div className="flex-1 overflow-auto p-2 grid grid-cols-1 lg:grid-cols-12 gap-2">
                       <div className="lg:col-span-4">
                         <div className="text-[11px] font-semibold text-slate-800 mb-1">Message</div>
@@ -1989,7 +2379,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                     {emailOrder ? (
                       <button
                         type="button"
-                        onClick={() => handleViewPdf(emailOrder)}
+                        onClick={() => openPdfDirect(emailOrder.id)}
                         className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px]"
                       >
                         <FileText className="w-3.5 h-3.5" /> Open PDF
@@ -2039,6 +2429,165 @@ const SchoolOrdersPageClient: React.FC = () => {
         </div>
       )}
     </div>
+  );
+};
+
+/* --------------------------------------------
+ * ✅ Bulk target selector block (inside same file)
+ * -------------------------------------------- */
+
+const BulkTargetBlock: React.FC<{
+  visibleOrders: SchoolOrder[];
+  schoolGroups: { schoolId: number; school: School | undefined; rows: any[] }[];
+  transports: TransportLite[];
+
+  bulkTransportId: string;
+  setBulkTransportId: (v: string) => void;
+
+  bulkNotes1: string;
+  setBulkNotes1: (v: string) => void;
+
+  bulkNotes2: string;
+  setBulkNotes2: (v: string) => void;
+
+  bulkSaving: boolean;
+  closeBulkModal: () => void;
+
+  onApply: (orders: SchoolOrder[]) => void;
+
+  initialMode?: BulkTargetMode;
+  initialSchoolId?: string;
+}> = ({
+  visibleOrders,
+  schoolGroups,
+  transports,
+  bulkTransportId,
+  setBulkTransportId,
+  bulkNotes1,
+  setBulkNotes1,
+  bulkNotes2,
+  setBulkNotes2,
+  bulkSaving,
+  closeBulkModal,
+  onApply,
+  initialMode,
+  initialSchoolId,
+}) => {
+  const [mode, setMode] = useState<BulkTargetMode>(initialMode || "visible");
+  const [schoolId, setSchoolId] = useState<string>(initialSchoolId || "");
+
+  const schoolOptions = useMemo(() => {
+    return schoolGroups
+      .map((g) => ({ id: g.schoolId, name: g.school?.name || `School #${g.schoolId}` }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [schoolGroups]);
+
+  const targetOrders = useMemo(() => {
+    if (mode === "school" && schoolId) {
+      const sid = Number(schoolId);
+      return visibleOrders.filter((o) => Number(o.school_id) === sid);
+    }
+    return visibleOrders;
+  }, [mode, schoolId, visibleOrders]);
+
+  return (
+    <>
+      <div className="p-3 overflow-auto">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-[11px]">
+          <div className="md:col-span-4">
+            <label className="block text-[10.5px] text-slate-600 mb-0.5">Target</label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as BulkTargetMode)}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="visible">All Visible Orders</option>
+              <option value="school">Only One School</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-8">
+            <label className="block text-[10.5px] text-slate-600 mb-0.5">School (if target = Only One)</label>
+            <select
+              value={schoolId}
+              onChange={(e) => setSchoolId(e.target.value)}
+              disabled={mode !== "school"}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-60"
+            >
+              <option value="">-- Select School --</option>
+              {schoolOptions.map((s) => (
+                <option key={s.id} value={String(s.id)}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-4">
+            <label className="block text-[10.5px] text-slate-600 mb-0.5">Transport 1</label>
+            <select
+              value={bulkTransportId}
+              onChange={(e) => setBulkTransportId(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            >
+              <option value="">--</option>
+              {transports.map((t) => (
+                <option key={t.id} value={String(t.id)}>
+                  {t.name}
+                  {t.city ? ` (${t.city})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-4">
+            <label className="block text-[10.5px] text-slate-600 mb-0.5">Notes 1</label>
+            <input
+              value={bulkNotes1}
+              onChange={(e) => setBulkNotes1(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              placeholder="Notes 1..."
+            />
+          </div>
+
+          <div className="md:col-span-4">
+            <label className="block text-[10.5px] text-slate-600 mb-0.5">Notes 2</label>
+            <input
+              value={bulkNotes2}
+              onChange={(e) => setBulkNotes2(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              placeholder="Notes 2..."
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 text-[10.5px] text-slate-500">
+          Target Orders: <span className="font-semibold">{targetOrders.length}</span>
+        </div>
+      </div>
+
+      <div className="px-3 py-2 border-t bg-slate-50 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={closeBulkModal}
+          className="text-[11px] px-3 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+          disabled={bulkSaving}
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onApply(targetOrders)}
+          disabled={bulkSaving || !targetOrders.length}
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold text-white
+                     bg-gradient-to-r from-indigo-600 to-blue-600 hover:brightness-110 disabled:opacity-60"
+        >
+          <Package className="w-3.5 h-3.5" />
+          {bulkSaving ? "Updating..." : "Apply Bulk Update"}
+        </button>
+      </div>
+    </>
   );
 };
 

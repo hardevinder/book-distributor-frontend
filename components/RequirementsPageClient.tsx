@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -16,15 +16,8 @@ import {
 
 /* ---------- Types ---------- */
 
-type Publisher = {
-  id: number;
-  name: string;
-};
-
-type Supplier = {
-  id: number;
-  name: string;
-};
+type Publisher = { id: number; name: string };
+type Supplier = { id: number; name: string };
 
 type ClassItem = {
   id: number;
@@ -33,10 +26,7 @@ type ClassItem = {
   is_active: boolean;
 };
 
-type School = {
-  id: number;
-  name: string;
-};
+type School = { id: number; name: string };
 
 type Book = {
   id: number;
@@ -67,7 +57,7 @@ type Requirement = {
 
 type RequirementRowFormState = {
   school_name: string;
-  supplier_name: string; // ✅ supplier (auto by publisher, can change)
+  supplier_name: string;
   publisher_name: string;
   book_title: string;
   class_name: string;
@@ -81,10 +71,10 @@ type PendingItem = RequirementRowFormState & { tempId: number };
 
 /* ---------- Session Defaults ---------- */
 
-const DEFAULT_SESSION = "2026-27"; // ✅ default session wanted
+const DEFAULT_SESSION = "2026-27";
 
 const SESSION_OPTIONS: string[] = (() => {
-  const base = 2026; // ✅ was 2025
+  const base = 2026;
   const arr: string[] = [];
   for (let i = 0; i <= 5; i++) {
     const y1 = base + i;
@@ -116,45 +106,45 @@ const normalizeSchools = (payload: SchoolsListResponse): School[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-
 const normalizeBooks = (payload: BooksListResponse): Book[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-
 const normalizeClasses = (payload: ClassesListResponse): ClassItem[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-
 const normalizeSuppliers = (payload: SuppliersListResponse): Supplier[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-
 const normalizeRequirements = (payload: RequirementsListResponse): Requirement[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
 
+const normalizeCreatedEntity = <T extends { id: number; name?: string }>(payload: any): T => {
+  // supports: {id,...} OR {data:{id,...}} OR {data:[{id,...}]}
+  if (!payload) return payload as T;
+  if (payload?.id != null) return payload as T;
+  if (payload?.data?.id != null) return payload.data as T;
+  if (Array.isArray(payload?.data) && payload.data[0]?.id != null) return payload.data[0] as T;
+  return payload as T;
+};
+
 const formatNumber = (value: number | string | null | undefined): string => {
   if (value === null || value === undefined || value === "") return "-";
-  const num =
+  const n =
     typeof value === "number"
       ? value
       : typeof value === "string"
       ? Number(value)
       : NaN;
-  if (Number.isNaN(num)) return String(value);
-  return String(num);
+  if (Number.isNaN(n)) return String(value);
+  return String(n);
 };
 
-type ToastState =
-  | {
-      message: string;
-      type: "success" | "error";
-    }
-  | null;
+type ToastState = { message: string; type: "success" | "error" } | null;
 
 /* ---------- Component ---------- */
 
@@ -191,8 +181,81 @@ const RequirementsPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  // ✅ NEW: track if supplier manually changed (to stop auto overriding)
+  // track if supplier manually changed
   const [supplierTouched, setSupplierTouched] = useState(false);
+
+  // ✅ NEW: custom supplier dropdown (not datalist)
+  const [supplierOpen, setSupplierOpen] = useState(false);
+  const [supplierQuery, setSupplierQuery] = useState("");
+  const supplierWrapRef = useRef<HTMLDivElement | null>(null);
+
+  /* ------------ SAFE UNIQUE LISTS (fixes key warning + duplicates) ------------ */
+
+  const uniquePublishers = useMemo(() => {
+    const seen = new Set<string>();
+    return publishers.filter((p) => {
+      const key = `${p.id ?? "new"}|${String(p.name ?? "").trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [publishers]);
+
+  const uniqueSuppliers = useMemo(() => {
+    const seen = new Set<string>();
+    return suppliers.filter((s) => {
+      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [suppliers]);
+
+  const supplierOptionsAll = useMemo(() => {
+    const list = uniqueSuppliers;
+    const q = supplierQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((s) => (s.name || "").toLowerCase().includes(q));
+  }, [supplierQuery, uniqueSuppliers]);
+
+  // close supplier dropdown when clicking outside
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const el = supplierWrapRef.current;
+      if (!el) return;
+      if (!el.contains(e.target as Node)) setSupplierOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  /* ------------ tiny helpers ------------ */
+
+  const ciEq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+  const upsertSupplierLocal = (name: string) => {
+    const nm = String(name ?? "").trim();
+    if (!nm) return;
+
+    setSuppliers((prev) => {
+      const exists = prev.some((s) => ciEq(s.name, nm));
+      if (exists) return prev;
+      const temp: Supplier = { id: -Math.floor(Date.now() / 1000), name: nm };
+      return [temp, ...prev];
+    });
+  };
+
+  const upsertPublisherLocal = (name: string) => {
+    const nm = String(name ?? "").trim();
+    if (!nm) return;
+
+    setPublishers((prev) => {
+      const exists = prev.some((p) => ciEq(p.name, nm));
+      if (exists) return prev;
+      const temp: Publisher = { id: -Math.floor(Date.now() / 1000), name: nm };
+      return [temp, ...prev];
+    });
+  };
 
   /* ------------ FETCH HELPERS ------------ */
 
@@ -231,8 +294,10 @@ const RequirementsPageClient: React.FC = () => {
 
   const fetchPublishers = async () => {
     try {
-      const res = await api.get<Publisher[]>("/api/publishers");
-      setPublishers(res.data || []);
+      const res = await api.get<Publisher[] | { data: Publisher[] }>("/api/publishers");
+      const payload: any = res.data;
+      const list: Publisher[] = Array.isArray(payload) ? payload : payload?.data ?? [];
+      setPublishers(list || []);
     } catch (err) {
       console.error(err);
     }
@@ -257,9 +322,7 @@ const RequirementsPageClient: React.FC = () => {
       if (schoolId && schoolId !== "all") params.schoolId = schoolId;
       if (session && session.trim()) params.academic_session = session.trim();
 
-      const res = await api.get<RequirementsListResponse>("/api/requirements", {
-        params,
-      });
+      const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
       setRequirements(normalizeRequirements(res.data));
     } catch (err: any) {
       console.error(err);
@@ -316,27 +379,28 @@ const RequirementsPageClient: React.FC = () => {
       setPendingItems([]);
     }
 
-    // ✅ reset supplier auto-fill behaviour when school changes
     setSupplierTouched(false);
+    setSupplierOpen(false);
+    setSupplierQuery("");
   }, [filterSchoolId, schools, editingId]);
 
   const isSchoolLockedToFilter = !!filterSchoolId;
 
   /**
    * ✅ Auto-fill Supplier from Publisher by default
-   * - If user hasn't manually edited supplier, supplier_name = publisher_name
-   * - If user edits supplier once, don't override
+   * - Supplier auto fills, but dropdown still shows ALL suppliers (custom dropdown)
+   * - If supplierTouched = true, don't override.
    */
   useEffect(() => {
     const pub = form.publisher_name.trim();
     if (!pub) return;
     if (supplierTouched) return;
 
-    setForm((prev) => ({
-      ...prev,
-      supplier_name: pub,
-    }));
-  }, [form.publisher_name, supplierTouched]);
+    const sup = form.supplier_name.trim();
+    if (!sup || sup.toLowerCase() === pub.toLowerCase()) {
+      setForm((prev) => ({ ...prev, supplier_name: pub }));
+    }
+  }, [form.publisher_name, form.supplier_name, supplierTouched]);
 
   /* ------------ COMMON PREP HELPER ------------ */
 
@@ -358,7 +422,6 @@ const RequirementsPageClient: React.FC = () => {
     const bookTitle = row.book_title.trim();
     const className = row.class_name.trim();
 
-    // ✅ Supplier default: if supplier empty, use publisher
     const supplierName = (row.supplier_name || row.publisher_name).trim();
 
     if (!schoolName) throw new Error("School is required.");
@@ -366,56 +429,56 @@ const RequirementsPageClient: React.FC = () => {
 
     /* 1️⃣ School: find or create */
     let schoolId: number;
-    const existingSchool = schools.find(
-      (s) => s.name.toLowerCase() === schoolName.toLowerCase()
-    );
+    const existingSchool = schools.find((s) => ciEq(s.name, schoolName));
     if (existingSchool) {
       schoolId = existingSchool.id;
     } else {
       const res = await api.post("/api/schools", { name: schoolName });
-      const newSchool: School = res.data;
+      const newSchool: School = normalizeCreatedEntity<School>(res.data);
       schoolId = newSchool.id;
       setSchools((prev) => [...prev, newSchool]);
     }
 
-    /* 2️⃣ Supplier: optional but auto-defaulted from publisher */
+    /* 2️⃣ Supplier */
     let supplierId: number | null = null;
     if (supplierName) {
-      const existingSupplier = suppliers.find(
-        (s) => s.name.toLowerCase() === supplierName.toLowerCase()
-      );
-      if (existingSupplier) {
+      const existingSupplier = suppliers.find((s) => ciEq(s.name, supplierName));
+      if (existingSupplier && existingSupplier.id > 0) {
         supplierId = existingSupplier.id;
       } else {
         const resSup = await api.post("/api/suppliers", { name: supplierName });
-        const newSupplier: Supplier = resSup.data;
-        supplierId = newSupplier.id;
-        setSuppliers((prev) => [...prev, newSupplier]);
+        const created: Supplier = normalizeCreatedEntity<Supplier>(resSup.data);
+        supplierId = created.id;
+
+        setSuppliers((prev) => {
+          const filtered = prev.filter((s) => !ciEq(s.name, supplierName));
+          return [created, ...filtered];
+        });
       }
     }
 
-    /* 3️⃣ Publisher: optional but needed for new book */
+    /* 3️⃣ Publisher */
     let publisherId: number | null = null;
     if (publisherName) {
-      const existingPublisher = publishers.find(
-        (p) => p.name.toLowerCase() === publisherName.toLowerCase()
-      );
-      if (existingPublisher) {
+      const existingPublisher = publishers.find((p) => ciEq(p.name, publisherName));
+      if (existingPublisher && existingPublisher.id > 0) {
         publisherId = existingPublisher.id;
       } else {
         const resPub = await api.post("/api/publishers", { name: publisherName });
-        const newPublisher: Publisher = resPub.data;
-        publisherId = newPublisher.id;
-        setPublishers((prev) => [...prev, newPublisher]);
+        const created: Publisher = normalizeCreatedEntity<Publisher>(resPub.data);
+        publisherId = created.id;
+
+        setPublishers((prev) => {
+          const filtered = prev.filter((p) => !ciEq(p.name, publisherName));
+          return [created, ...filtered];
+        });
       }
     }
 
-    /* 4️⃣ Class: optional, create if new */
+    /* 4️⃣ Class */
     let classId: number | null = null;
     if (className) {
-      const existingClass = classes.find(
-        (c) => c.class_name.toLowerCase() === className.toLowerCase()
-      );
+      const existingClass = classes.find((c) => ciEq(c.class_name, className));
       if (existingClass) {
         classId = existingClass.id;
       } else {
@@ -435,7 +498,7 @@ const RequirementsPageClient: React.FC = () => {
       }
     }
 
-    /* 5️⃣ Book: find or create */
+    /* 5️⃣ Book */
     let bookId: number;
     let existingBook: Book | undefined;
 
@@ -468,12 +531,11 @@ const RequirementsPageClient: React.FC = () => {
         selling_price: null,
         is_active: true,
       });
-      const newBook: Book = resBook.data;
+      const newBook: Book = normalizeCreatedEntity<Book>(resBook.data);
       bookId = newBook.id;
       setBooks((prev) => [...prev, newBook]);
     }
 
-    /* 6️⃣ Build requirement payload */
     return {
       school_id: schoolId,
       book_id: bookId,
@@ -494,10 +556,24 @@ const RequirementsPageClient: React.FC = () => {
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
 
-    // ✅ supplier manual override tracking
+    // Supplier: custom dropdown (always full options)
     if (name === "supplier_name") {
-      if (value.trim()) setSupplierTouched(true);
-      else setSupplierTouched(false); // if cleared, allow auto-fill again
+      const v = String(value ?? "");
+      setSupplierQuery(v);
+      setSupplierOpen(true);
+
+      if (v.trim()) {
+        setSupplierTouched(true);
+        upsertSupplierLocal(v); // so it appears immediately in options if new
+      } else {
+        setSupplierTouched(false);
+      }
+    }
+
+    if (name === "publisher_name") {
+      const v = String(value ?? "");
+      if (v.trim()) upsertPublisherLocal(v);
+      // NOTE: do NOT touch supplierQuery here (supplier should not get "limited")
     }
 
     if (type === "checkbox") {
@@ -509,6 +585,9 @@ const RequirementsPageClient: React.FC = () => {
 
   const resetForm = () => {
     setSupplierTouched(false);
+    setSupplierOpen(false);
+    setSupplierQuery("");
+
     setForm((prev) => ({
       ...emptyRequirementForm,
       school_name: prev.school_name,
@@ -578,10 +657,15 @@ const RequirementsPageClient: React.FC = () => {
       return;
     }
 
-    // ✅ ensure supplier default applies in pending too
+    const supplierFinal = form.supplier_name?.trim()
+      ? form.supplier_name.trim()
+      : form.publisher_name.trim();
+
+    if (supplierFinal) upsertSupplierLocal(supplierFinal);
+
     const itemToAdd: RequirementRowFormState = {
       ...form,
-      supplier_name: form.supplier_name?.trim() ? form.supplier_name : form.publisher_name,
+      supplier_name: supplierFinal,
       status: form.status || "confirmed",
     };
 
@@ -597,12 +681,16 @@ const RequirementsPageClient: React.FC = () => {
       type: "success",
     });
 
-    // ✅ after adding, allow auto-fill again for next row
+    // after adding, allow auto-fill again for next row
     setSupplierTouched(false);
+    setSupplierOpen(false);
+    setSupplierQuery("");
 
+    // ✅ As you asked: after add, publisher should disappear, supplier stays
     setForm((prev) => ({
       ...prev,
       book_title: "",
+      publisher_name: "",
       status: "confirmed",
     }));
   };
@@ -625,7 +713,9 @@ const RequirementsPageClient: React.FC = () => {
       for (const item of pendingItems) {
         const payload = await prepareRequirementPayload({
           ...item,
-          supplier_name: item.supplier_name?.trim() ? item.supplier_name : item.publisher_name,
+          supplier_name: item.supplier_name?.trim()
+            ? item.supplier_name
+            : item.publisher_name,
           status: item.status || "confirmed",
         });
         await api.post("/api/requirements", payload);
@@ -635,10 +725,13 @@ const RequirementsPageClient: React.FC = () => {
       setPendingItems([]);
 
       setSupplierTouched(false);
+      setSupplierOpen(false);
+      setSupplierQuery("");
 
       setForm((prev) => ({
         ...prev,
         book_title: "",
+        publisher_name: "",
         status: "confirmed",
       }));
 
@@ -648,6 +741,9 @@ const RequirementsPageClient: React.FC = () => {
         message: `Saved ${count} requirement(s) successfully.`,
         type: "success",
       });
+
+      // refresh suppliers so created supplier IDs come from backend
+      await fetchSuppliers();
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -664,8 +760,9 @@ const RequirementsPageClient: React.FC = () => {
     setEditingId(r.id);
     setPendingItems([]);
 
-    // ✅ editing implies supplier is intentionally set
     setSupplierTouched(true);
+    setSupplierOpen(false);
+    setSupplierQuery("");
 
     setForm({
       school_name: r.school?.name || "",
@@ -770,6 +867,7 @@ const RequirementsPageClient: React.FC = () => {
 
       await fetchRequirements(search, filterSchoolId, filterSession);
       await fetchSuppliers();
+      await fetchPublishers();
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -1035,19 +1133,53 @@ const RequirementsPageClient: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Supplier */}
-                <div className="space-y-1">
+                {/* Supplier (custom dropdown - always full options) */}
+                <div className="space-y-1" ref={supplierWrapRef}>
                   <label className="block font-medium text-slate-700">Supplier</label>
-                  <input
-                    list="supplierOptions"
-                    name="supplier_name"
-                    value={form.supplier_name}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Auto from Publisher (you can change)"
-                  />
+
+                  <div className="relative">
+                    <input
+                      name="supplier_name"
+                      value={form.supplier_name}
+                      onChange={handleChange}
+                      onFocus={() => {
+                        setSupplierOpen(true);
+                        setSupplierQuery(""); // ✅ show FULL list on focus
+                      }}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      placeholder="Auto from Publisher (you can change)"
+                      autoComplete="off"
+                    />
+
+                    {supplierOpen && (
+                      <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                        {supplierOptionsAll.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-slate-500">
+                            No supplier found. Type to create (auto).
+                          </div>
+                        ) : (
+                          supplierOptionsAll.map((s) => (
+                            <button
+                              key={`supopt-${s.id ?? "new"}-${s.name}`}
+                              type="button"
+                              onClick={() => {
+                                setForm((prev) => ({ ...prev, supplier_name: s.name }));
+                                setSupplierTouched(true);
+                                setSupplierOpen(false);
+                                setSupplierQuery("");
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50"
+                            >
+                              {s.name}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <p className="text-[10px] text-slate-500">
-                    Default = Publisher. If books come from another supplier, change it here.
+                    Default = Publisher. Dropdown always shows ALL suppliers.
                   </p>
                 </div>
 
@@ -1207,7 +1339,7 @@ const RequirementsPageClient: React.FC = () => {
                             <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
                               Pub
                             </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">
                               Sup
                             </th>
                             <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
@@ -1244,7 +1376,7 @@ const RequirementsPageClient: React.FC = () => {
                                 </span>
                               </td>
                               <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="truncate inline-block max-w-[100px] text-slate-700">
+                                <span className="truncate inline-block max-w-[140px] text-slate-700">
                                   {item.supplier_name || "-"}
                                 </span>
                               </td>
@@ -1295,34 +1427,28 @@ const RequirementsPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* datalists */}
+            {/* datalists (Supplier removed because we use custom dropdown) */}
             <datalist id="schoolOptions">
               {schools.map((s) => (
-                <option key={s.id} value={s.name} />
+                <option key={`school-${s.id}`} value={s.name} />
               ))}
             </datalist>
 
             <datalist id="publisherOptions">
-              {publishers.map((p) => (
-                <option key={p.id} value={p.name} />
-              ))}
-            </datalist>
-
-            <datalist id="supplierOptions">
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.name} />
+              {uniquePublishers.map((p, idx) => (
+                <option key={`pub-${p.id ?? "new"}-${p.name}-${idx}`} value={p.name} />
               ))}
             </datalist>
 
             <datalist id="bookOptions">
               {getVisibleBooks().map((b) => (
-                <option key={b.id} value={b.title} />
+                <option key={`book-${b.id}`} value={b.title} />
               ))}
             </datalist>
 
             <datalist id="classOptions">
               {classes.map((c) => (
-                <option key={c.id} value={c.class_name} />
+                <option key={`class-${c.id}`} value={c.class_name} />
               ))}
             </datalist>
           </div>
@@ -1358,7 +1484,7 @@ const RequirementsPageClient: React.FC = () => {
                 >
                   <option value="">All schools / Select school</option>
                   {schools.map((s) => (
-                    <option key={s.id} value={s.id.toString()}>
+                    <option key={`fsch-${s.id}`} value={s.id.toString()}>
                       {s.name}
                     </option>
                   ))}
@@ -1574,9 +1700,7 @@ const RequirementsPageClient: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success"
-              ? "bg-emerald-600 text-white"
-              : "bg-rose-600 text-white"
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}
