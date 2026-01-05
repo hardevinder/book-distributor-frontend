@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
+import Swal from "sweetalert2";
 import {
   Pencil,
   Trash2,
@@ -17,7 +18,7 @@ import {
 /* ---------- Types ---------- */
 
 type Publisher = { id: number; name: string };
-type Supplier = { id: number; name: string };
+type Supplier = { id: number; name: string; phone?: string | null; email?: string | null };
 
 type ClassItem = {
   id: number;
@@ -123,12 +124,31 @@ const normalizeRequirements = (payload: RequirementsListResponse): Requirement[]
   return payload?.data ?? [];
 };
 
-const normalizeCreatedEntity = <T extends { id: number; name?: string }>(payload: any): T => {
-  // supports: {id,...} OR {data:{id,...}} OR {data:[{id,...}]}
+// ✅ stronger: handles {data:{supplier:{}}} etc.
+const normalizeCreatedEntity = <T extends { id: number; name?: string }>(
+  payload: any
+): T => {
   if (!payload) return payload as T;
+
   if (payload?.id != null) return payload as T;
   if (payload?.data?.id != null) return payload.data as T;
-  if (Array.isArray(payload?.data) && payload.data[0]?.id != null) return payload.data[0] as T;
+  if (Array.isArray(payload?.data) && payload.data[0]?.id != null)
+    return payload.data[0] as T;
+
+  const nested =
+    payload?.supplier ||
+    payload?.publisher ||
+    payload?.school ||
+    payload?.book ||
+    payload?.data?.supplier ||
+    payload?.data?.publisher ||
+    payload?.data?.school ||
+    payload?.data?.book ||
+    payload?.data?.item ||
+    payload?.item;
+
+  if (nested?.id != null) return nested as T;
+
   return payload as T;
 };
 
@@ -184,12 +204,68 @@ const RequirementsPageClient: React.FC = () => {
   // track if supplier manually changed
   const [supplierTouched, setSupplierTouched] = useState(false);
 
-  // ✅ NEW: custom supplier dropdown (not datalist)
-  const [supplierOpen, setSupplierOpen] = useState(false);
-  const [supplierQuery, setSupplierQuery] = useState("");
-  const supplierWrapRef = useRef<HTMLDivElement | null>(null);
+  /* ------------ tiny helpers ------------ */
 
-  /* ------------ SAFE UNIQUE LISTS (fixes key warning + duplicates) ------------ */
+  // ✅ safe compare (prevents trim on undefined)
+  const ciEq = (a?: string | null, b?: string | null) =>
+    String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
+
+  const promptAddName = async (title: string, placeholder: string) => {
+    const res = await Swal.fire({
+      title,
+      input: "text",
+      inputPlaceholder: placeholder,
+      showCancelButton: true,
+      confirmButtonText: "Add",
+      cancelButtonText: "Cancel",
+      inputValidator: (value) => {
+        const v = String(value ?? "").trim();
+        if (!v) return "Please enter a name";
+        return null;
+      },
+    });
+    if (!res.isConfirmed) return null;
+    return String(res.value ?? "").trim();
+  };
+
+  // ✅ Supplier popup with Phone + Email
+  const promptAddSupplier = async (): Promise<
+    { name: string; phone?: string; email?: string } | null
+  > => {
+    const res = await Swal.fire({
+      title: "Add Supplier",
+      html: `
+        <input id="swal-sup-name" class="swal2-input" placeholder="Supplier name">
+        <input id="swal-sup-phone" class="swal2-input" placeholder="Phone (optional)">
+        <input id="swal-sup-email" class="swal2-input" placeholder="Email (optional)">
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Add",
+      cancelButtonText: "Cancel",
+      preConfirm: () => {
+        const name = (document.getElementById("swal-sup-name") as HTMLInputElement)?.value?.trim();
+        const phone = (document.getElementById("swal-sup-phone") as HTMLInputElement)?.value?.trim();
+        const email = (document.getElementById("swal-sup-email") as HTMLInputElement)?.value?.trim();
+
+        if (!name) {
+          Swal.showValidationMessage("Please enter supplier name");
+          return null;
+        }
+
+        return {
+          name,
+          phone: phone || undefined,
+          email: email || undefined,
+        };
+      },
+    });
+
+    if (!res.isConfirmed) return null;
+    return (res.value ?? null) as any;
+  };
+
+  /* ------------ SAFE UNIQUE LISTS ------------ */
 
   const uniquePublishers = useMemo(() => {
     const seen = new Set<string>();
@@ -211,50 +287,126 @@ const RequirementsPageClient: React.FC = () => {
     });
   }, [suppliers]);
 
-  const supplierOptionsAll = useMemo(() => {
-    const list = uniqueSuppliers;
-    const q = supplierQuery.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((s) => (s.name || "").toLowerCase().includes(q));
-  }, [supplierQuery, uniqueSuppliers]);
+  const uniqueSchools = useMemo(() => {
+    const seen = new Set<string>();
+    return schools.filter((s) => {
+      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [schools]);
 
-  // close supplier dropdown when clicking outside
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      const el = supplierWrapRef.current;
-      if (!el) return;
-      if (!el.contains(e.target as Node)) setSupplierOpen(false);
+  // show books filtered by publisher selected
+  const visibleBooks = useMemo(() => {
+    const pubName = String(form.publisher_name ?? "").trim().toLowerCase();
+    if (!pubName) return books;
+    return books.filter(
+      (b) => b.publisher?.name && b.publisher.name.toLowerCase().includes(pubName)
+    );
+  }, [books, form.publisher_name]);
+
+  /* ------------ CREATE HELPERS ------------ */
+
+  const createSupplierNow = async (
+    input: string | { name: string; phone?: string; email?: string }
+  ): Promise<Supplier> => {
+    const obj =
+      typeof input === "string"
+        ? { name: String(input ?? "").trim(), phone: undefined, email: undefined }
+        : {
+            name: String(input?.name ?? "").trim(),
+            phone: input?.phone ? String(input.phone).trim() : undefined,
+            email: input?.email ? String(input.email).trim() : undefined,
+          };
+
+    if (!obj.name) throw new Error("Supplier name is required.");
+
+    const resSup = await api.post("/api/suppliers", {
+      name: obj.name,
+      phone: obj.phone || null,
+      email: obj.email || null,
+    });
+
+    let created: Supplier = normalizeCreatedEntity<Supplier>(resSup.data);
+    created = {
+      ...created,
+      name: String(created?.name ?? obj.name).trim(),
+      phone: (created as any)?.phone ?? obj.phone ?? null,
+      email: (created as any)?.email ?? obj.email ?? null,
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-
-  /* ------------ tiny helpers ------------ */
-
-  const ciEq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-
-  const upsertSupplierLocal = (name: string) => {
-    const nm = String(name ?? "").trim();
-    if (!nm) return;
 
     setSuppliers((prev) => {
-      const exists = prev.some((s) => ciEq(s.name, nm));
-      if (exists) return prev;
-      const temp: Supplier = { id: -Math.floor(Date.now() / 1000), name: nm };
-      return [temp, ...prev];
+      const filtered = prev.filter((s) => !ciEq(s.name, created.name));
+      return [created, ...filtered];
     });
+
+    return created;
   };
 
-  const upsertPublisherLocal = (name: string) => {
+  const createPublisherNow = async (name: string): Promise<Publisher> => {
     const nm = String(name ?? "").trim();
-    if (!nm) return;
+    if (!nm) throw new Error("Publisher name is required.");
+
+    const resPub = await api.post("/api/publishers", { name: nm });
+
+    let created: Publisher = normalizeCreatedEntity<Publisher>(resPub.data);
+    created = { ...created, name: String(created?.name ?? nm).trim() };
 
     setPublishers((prev) => {
-      const exists = prev.some((p) => ciEq(p.name, nm));
-      if (exists) return prev;
-      const temp: Publisher = { id: -Math.floor(Date.now() / 1000), name: nm };
-      return [temp, ...prev];
+      const filtered = prev.filter((p) => !ciEq(p.name, created.name));
+      return [created, ...filtered];
     });
+
+    return created;
+  };
+
+  const createSchoolNow = async (name: string): Promise<School> => {
+    const nm = String(name ?? "").trim();
+    if (!nm) throw new Error("School name is required.");
+
+    const res = await api.post("/api/schools", { name: nm });
+    let created: School = normalizeCreatedEntity<School>(res.data);
+    created = { ...created, name: String((created as any)?.name ?? nm).trim() };
+
+    setSchools((prev) => {
+      const filtered = prev.filter((s) => !ciEq(s.name, created.name));
+      return [created, ...filtered];
+    });
+
+    return created;
+  };
+
+  const createBookNow = async (title: string): Promise<Book> => {
+    const bookTitle = String(title ?? "").trim();
+    if (!bookTitle) throw new Error("Book title is required.");
+
+    const pubName = String(form.publisher_name ?? "").trim();
+    if (!pubName) throw new Error("Please select Publisher first (required for new book).");
+
+    const pub = publishers.find((p) => ciEq(p.name, pubName));
+    if (!pub?.id) throw new Error("Publisher not found. Please select valid publisher.");
+
+    const resBook = await api.post("/api/books", {
+      title: bookTitle,
+      publisher_id: pub.id,
+      class_name: String(form.class_name ?? "").trim() || null,
+      subject: null,
+      medium: null,
+      mrp: 0,
+      selling_price: null,
+      is_active: true,
+    });
+
+    const created: Book = normalizeCreatedEntity<Book>(resBook.data);
+
+    setBooks((prev) => {
+      const exists = prev.some((b) => String(b?.id) === String(created?.id));
+      if (exists) return prev;
+      return [created, ...prev];
+    });
+
+    return created;
   };
 
   /* ------------ FETCH HELPERS ------------ */
@@ -348,15 +500,6 @@ const RequirementsPageClient: React.FC = () => {
     return () => clearTimeout(id);
   }, [toast]);
 
-  // Books visible in book combo (filter by publisher typed)
-  const getVisibleBooks = (): Book[] => {
-    const pubName = form.publisher_name.trim().toLowerCase();
-    if (!pubName) return books;
-    return books.filter(
-      (b) => b.publisher?.name && b.publisher.name.toLowerCase().includes(pubName)
-    );
-  };
-
   // When school filter changes and we are NOT editing, auto-fill school in form and clear pending list
   useEffect(() => {
     if (editingId) return;
@@ -380,24 +523,21 @@ const RequirementsPageClient: React.FC = () => {
     }
 
     setSupplierTouched(false);
-    setSupplierOpen(false);
-    setSupplierQuery("");
   }, [filterSchoolId, schools, editingId]);
 
   const isSchoolLockedToFilter = !!filterSchoolId;
 
   /**
    * ✅ Auto-fill Supplier from Publisher by default
-   * - Supplier auto fills, but dropdown still shows ALL suppliers (custom dropdown)
    * - If supplierTouched = true, don't override.
    */
   useEffect(() => {
-    const pub = form.publisher_name.trim();
+    const pub = String(form.publisher_name ?? "").trim();
     if (!pub) return;
     if (supplierTouched) return;
 
-    const sup = form.supplier_name.trim();
-    if (!sup || sup.toLowerCase() === pub.toLowerCase()) {
+    const sup = String(form.supplier_name ?? "").trim();
+    if (!sup) {
       setForm((prev) => ({ ...prev, supplier_name: pub }));
     }
   }, [form.publisher_name, form.supplier_name, supplierTouched]);
@@ -417,26 +557,24 @@ const RequirementsPageClient: React.FC = () => {
     remarks: null;
     is_locked: boolean;
   }> => {
-    const schoolName = row.school_name.trim();
-    const publisherName = row.publisher_name.trim();
-    const bookTitle = row.book_title.trim();
-    const className = row.class_name.trim();
+    const schoolName = String(row.school_name ?? "").trim();
+    const publisherName = String(row.publisher_name ?? "").trim();
+    const bookTitle = String(row.book_title ?? "").trim();
+    const className = String(row.class_name ?? "").trim();
 
-    const supplierName = (row.supplier_name || row.publisher_name).trim();
+    const supplierName = String((row.supplier_name || row.publisher_name) ?? "").trim();
 
     if (!schoolName) throw new Error("School is required.");
     if (!bookTitle) throw new Error("Book title is required.");
 
-    /* 1️⃣ School: find or create */
+    /* 1️⃣ School */
     let schoolId: number;
     const existingSchool = schools.find((s) => ciEq(s.name, schoolName));
     if (existingSchool) {
       schoolId = existingSchool.id;
     } else {
-      const res = await api.post("/api/schools", { name: schoolName });
-      const newSchool: School = normalizeCreatedEntity<School>(res.data);
-      schoolId = newSchool.id;
-      setSchools((prev) => [...prev, newSchool]);
+      const created = await createSchoolNow(schoolName);
+      schoolId = created.id;
     }
 
     /* 2️⃣ Supplier */
@@ -446,14 +584,8 @@ const RequirementsPageClient: React.FC = () => {
       if (existingSupplier && existingSupplier.id > 0) {
         supplierId = existingSupplier.id;
       } else {
-        const resSup = await api.post("/api/suppliers", { name: supplierName });
-        const created: Supplier = normalizeCreatedEntity<Supplier>(resSup.data);
+        const created = await createSupplierNow(supplierName);
         supplierId = created.id;
-
-        setSuppliers((prev) => {
-          const filtered = prev.filter((s) => !ciEq(s.name, supplierName));
-          return [created, ...filtered];
-        });
       }
     }
 
@@ -464,14 +596,8 @@ const RequirementsPageClient: React.FC = () => {
       if (existingPublisher && existingPublisher.id > 0) {
         publisherId = existingPublisher.id;
       } else {
-        const resPub = await api.post("/api/publishers", { name: publisherName });
-        const created: Publisher = normalizeCreatedEntity<Publisher>(resPub.data);
+        const created = await createPublisherNow(publisherName);
         publisherId = created.id;
-
-        setPublishers((prev) => {
-          const filtered = prev.filter((p) => !ciEq(p.name, publisherName));
-          return [created, ...filtered];
-        });
       }
     }
 
@@ -517,7 +643,7 @@ const RequirementsPageClient: React.FC = () => {
     } else {
       if (!publisherId) {
         throw new Error(
-          "Publisher is required when creating a new book. Please type/select publisher."
+          "Publisher is required when creating a new book. Please select publisher."
         );
       }
 
@@ -541,7 +667,7 @@ const RequirementsPageClient: React.FC = () => {
       book_id: bookId,
       supplier_id: supplierId,
       class_id: classId,
-      academic_session: row.academic_session.trim() || null,
+      academic_session: String(row.academic_session ?? "").trim() || null,
       required_copies: row.required_copies ? Number(row.required_copies) : 0,
       status: row.status || "confirmed",
       remarks: null,
@@ -556,37 +682,16 @@ const RequirementsPageClient: React.FC = () => {
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
 
-    // Supplier: custom dropdown (always full options)
-    if (name === "supplier_name") {
-      const v = String(value ?? "");
-      setSupplierQuery(v);
-      setSupplierOpen(true);
-
-      if (v.trim()) {
-        setSupplierTouched(true);
-        upsertSupplierLocal(v); // so it appears immediately in options if new
-      } else {
-        setSupplierTouched(false);
-      }
-    }
-
-    if (name === "publisher_name") {
-      const v = String(value ?? "");
-      if (v.trim()) upsertPublisherLocal(v);
-      // NOTE: do NOT touch supplierQuery here (supplier should not get "limited")
-    }
-
     if (type === "checkbox") {
       setForm((prev) => ({ ...prev, [name]: checked }));
-    } else {
-      setForm((prev) => ({ ...prev, [name]: value }));
+      return;
     }
+
+    setForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const resetForm = () => {
     setSupplierTouched(false);
-    setSupplierOpen(false);
-    setSupplierQuery("");
 
     setForm((prev) => ({
       ...emptyRequirementForm,
@@ -632,36 +737,34 @@ const RequirementsPageClient: React.FC = () => {
   const handleAddPending = () => {
     setError(null);
 
-    if (!form.school_name.trim()) {
+    if (!String(form.school_name ?? "").trim()) {
       const msg = "Please select a school at top before adding books.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
-    if (!form.class_name.trim()) {
+    if (!String(form.class_name ?? "").trim()) {
       const msg = "Class is required.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
-    if (!form.book_title.trim()) {
+    if (!String(form.book_title ?? "").trim()) {
       const msg = "Book title is required.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
-    if (!form.required_copies.trim()) {
+    if (!String(form.required_copies ?? "").trim()) {
       const msg = "Please enter required copies.";
       setError(msg);
       setToast({ message: msg, type: "error" });
       return;
     }
 
-    const supplierFinal = form.supplier_name?.trim()
-      ? form.supplier_name.trim()
-      : form.publisher_name.trim();
-
-    if (supplierFinal) upsertSupplierLocal(supplierFinal);
+    const supplierFinal = String(form.supplier_name ?? "").trim()
+      ? String(form.supplier_name ?? "").trim()
+      : String(form.publisher_name ?? "").trim();
 
     const itemToAdd: RequirementRowFormState = {
       ...form,
@@ -683,10 +786,8 @@ const RequirementsPageClient: React.FC = () => {
 
     // after adding, allow auto-fill again for next row
     setSupplierTouched(false);
-    setSupplierOpen(false);
-    setSupplierQuery("");
 
-    // ✅ As you asked: after add, publisher should disappear, supplier stays
+    // ✅ after add, publisher should disappear, supplier stays
     setForm((prev) => ({
       ...prev,
       book_title: "",
@@ -713,7 +814,7 @@ const RequirementsPageClient: React.FC = () => {
       for (const item of pendingItems) {
         const payload = await prepareRequirementPayload({
           ...item,
-          supplier_name: item.supplier_name?.trim()
+          supplier_name: String(item.supplier_name ?? "").trim()
             ? item.supplier_name
             : item.publisher_name,
           status: item.status || "confirmed",
@@ -725,8 +826,6 @@ const RequirementsPageClient: React.FC = () => {
       setPendingItems([]);
 
       setSupplierTouched(false);
-      setSupplierOpen(false);
-      setSupplierQuery("");
 
       setForm((prev) => ({
         ...prev,
@@ -742,8 +841,11 @@ const RequirementsPageClient: React.FC = () => {
         type: "success",
       });
 
-      // refresh suppliers so created supplier IDs come from backend
+      // refresh suppliers/publishers so created IDs come from backend
       await fetchSuppliers();
+      await fetchPublishers();
+      await fetchSchools();
+      await fetchBooks();
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -761,8 +863,6 @@ const RequirementsPageClient: React.FC = () => {
     setPendingItems([]);
 
     setSupplierTouched(true);
-    setSupplierOpen(false);
-    setSupplierQuery("");
 
     setForm({
       school_name: r.school?.name || "",
@@ -868,6 +968,8 @@ const RequirementsPageClient: React.FC = () => {
       await fetchRequirements(search, filterSchoolId, filterSession);
       await fetchSuppliers();
       await fetchPublishers();
+      await fetchSchools();
+      await fetchBooks();
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -957,6 +1059,8 @@ const RequirementsPageClient: React.FC = () => {
 
   const showPendingPanel = !editingId && pendingItems.length > 0;
 
+  const currentSupplierValue = String((form.supplier_name || form.publisher_name) ?? "").trim();
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
       {/* Animated Background Elements */}
@@ -1018,7 +1122,7 @@ const RequirementsPageClient: React.FC = () => {
             <span className="text-slate-900 font-medium">
               {currentSchoolName
                 ? currentSchoolName
-                : "Not locked. You can still type/select school in form below."}
+                : "Not locked. You can still select school in form below."}
             </span>
           </div>
           {currentSchoolName && (
@@ -1050,10 +1154,10 @@ const RequirementsPageClient: React.FC = () => {
                   {editingId ? "Edit Requirement" : "Add Requirements (buffer)"}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Select school above, then enter Class, Book, Publisher, Supplier & Copies.{" "}
+                  Select School, Class, Book, Publisher, Supplier & Copies.{" "}
                   {!editingId
                     ? "Use Add to List to add multiple books. Use Save All button on the right panel to commit them."
-                    : "Save will update this particular row immediately."}
+                    : "Save will update this row immediately."}
                 </p>
               </div>
               {editingId && (
@@ -1069,29 +1173,61 @@ const RequirementsPageClient: React.FC = () => {
 
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="w-full lg:w-5/12 space-y-3 text-[11px] sm:text-xs">
-                {/* School */}
+                {/* School (dropdown + add) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">School</label>
-                  <input
-                    list="schoolOptions"
-                    name="school_name"
-                    value={form.school_name}
-                    onChange={handleChange}
-                    disabled={isSchoolLockedToFilter && !editingId}
-                    className={`w-full border rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
-                      isSchoolLockedToFilter && !editingId
-                        ? "bg-slate-100 text-slate-500"
-                        : "border-slate-300"
-                    }`}
-                    placeholder={
-                      isSchoolLockedToFilter && !editingId
-                        ? "Using selected school"
-                        : "Type or select school"
-                    }
-                  />
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="school_name"
+                      value={form.school_name}
+                      onChange={handleChange}
+                      disabled={isSchoolLockedToFilter && !editingId}
+                      className={`w-full border rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
+                        isSchoolLockedToFilter && !editingId
+                          ? "bg-slate-100 text-slate-500"
+                          : "border-slate-300"
+                      }`}
+                    >
+                      <option value="">
+                        {isSchoolLockedToFilter && !editingId
+                          ? "Using selected school"
+                          : "Select school"}
+                      </option>
+                      {uniqueSchools.map((s) => (
+                        <option key={`sch-${s.id}`} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled={isSchoolLockedToFilter && !editingId}
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold disabled:opacity-50"
+                      title="Add new school"
+                      onClick={async () => {
+                        const nm = await promptAddName("Add School", "Enter school name");
+                        if (!nm) return;
+                        try {
+                          const created = await createSchoolNow(nm);
+                          setForm((prev) => ({ ...prev, school_name: created.name }));
+                          setToast({ message: `School added: ${created.name}`, type: "success" });
+                          await fetchSchools();
+                        } catch (e: any) {
+                          const msg =
+                            e?.response?.data?.error ||
+                            e?.message ||
+                            "Failed to add school.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
                 </div>
 
-                {/* Class */}
+                {/* Class (keep as input + datalist) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Class</label>
                   <input
@@ -1104,82 +1240,199 @@ const RequirementsPageClient: React.FC = () => {
                   />
                 </div>
 
-                {/* Book */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Book</label>
-                  <input
-                    list="bookOptions"
-                    name="book_title"
-                    value={form.book_title}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select book title"
-                  />
-                </div>
-
-                {/* Publisher */}
+                {/* Publisher (dropdown + add) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Publisher</label>
-                  <input
-                    list="publisherOptions"
-                    name="publisher_name"
-                    value={form.publisher_name}
-                    onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select publisher"
-                  />
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="publisher_name"
+                      value={form.publisher_name}
+                      onChange={(e) => {
+                        const v = String(e.target.value ?? "");
+                        setForm((prev) => ({ ...prev, publisher_name: v }));
+                        if (!supplierTouched && v.trim()) {
+                          setForm((prev) => ({
+                            ...prev,
+                            publisher_name: v,
+                            supplier_name: v,
+                          }));
+                        }
+                      }}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="">Select publisher</option>
+                      {uniquePublishers
+                        .filter((p) => String(p?.name ?? "").trim())
+                        .map((p) => (
+                          <option key={`pub-${p.id}`} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new publisher"
+                      onClick={async () => {
+                        const nm = await promptAddName("Add Publisher", "Enter publisher name");
+                        if (!nm) return;
+                        try {
+                          const created = await createPublisherNow(nm);
+                          setForm((prev) => ({ ...prev, publisher_name: created.name }));
+                          setSupplierTouched(false);
+                          setToast({
+                            message: `Publisher added: ${created.name}`,
+                            type: "success",
+                          });
+                          await fetchPublishers();
+                        } catch (e: any) {
+                          const msg =
+                            e?.response?.data?.error ||
+                            e?.message ||
+                            "Failed to add publisher.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Book (dropdown + add) */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Book</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="book_title"
+                      value={form.book_title}
+                      onChange={handleChange}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      {(() => {
+                        const current = String(form.book_title ?? "").trim();
+                        if (!current) return null;
+                        const exists = visibleBooks.some(
+                          (b) =>
+                            String(b?.title ?? "")
+                              .trim()
+                              .toLowerCase() === current.toLowerCase()
+                        );
+                        if (exists) return null;
+                        return <option value={current}>{current} (current)</option>;
+                      })()}
+
+                      <option value="">Select book</option>
+                      {visibleBooks
+                        .filter((b) => String(b?.title ?? "").trim())
+                        .map((b) => (
+                          <option key={`book-${b.id}`} value={b.title}>
+                            {b.title}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new book"
+                      onClick={async () => {
+                        const nm = await promptAddName("Add Book", "Enter book title");
+                        if (!nm) return;
+                        try {
+                          const created = await createBookNow(nm);
+                          setForm((prev) => ({ ...prev, book_title: created.title }));
+                          setToast({ message: `Book added: ${created.title}`, type: "success" });
+                          await fetchBooks();
+                        } catch (e: any) {
+                          const msg =
+                            e?.response?.data?.error ||
+                            e?.message ||
+                            "Failed to add book.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
                   <p className="text-[10px] text-slate-500">
-                    If book is new, publisher will be created automatically.
+                    For new book, Publisher must be selected.
                   </p>
                 </div>
 
-                {/* Supplier (custom dropdown - always full options) */}
-                <div className="space-y-1" ref={supplierWrapRef}>
+                {/* Supplier (dropdown + add) */}
+                <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Supplier</label>
 
-                  <div className="relative">
-                    <input
+                  <div className="flex items-center gap-2">
+                    <select
                       name="supplier_name"
-                      value={form.supplier_name}
-                      onChange={handleChange}
-                      onFocus={() => {
-                        setSupplierOpen(true);
-                        setSupplierQuery(""); // ✅ show FULL list on focus
+                      value={currentSupplierValue || ""}
+                      onChange={(e) => {
+                        const v = String(e.target.value ?? "");
+                        setForm((prev) => ({ ...prev, supplier_name: v }));
+                        setSupplierTouched(!!v.trim());
                       }}
                       className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      placeholder="Auto from Publisher (you can change)"
-                      autoComplete="off"
-                    />
+                    >
+                      {(() => {
+                        const current = String(
+                          (form.supplier_name || form.publisher_name) ?? ""
+                        ).trim();
+                        if (!current) return null;
+                        const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+                        if (exists) return null;
+                        return <option value={current}>{current} (current)</option>;
+                      })()}
 
-                    {supplierOpen && (
-                      <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
-                        {supplierOptionsAll.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-slate-500">
-                            No supplier found. Type to create (auto).
-                          </div>
-                        ) : (
-                          supplierOptionsAll.map((s) => (
-                            <button
-                              key={`supopt-${s.id ?? "new"}-${s.name}`}
-                              type="button"
-                              onClick={() => {
-                                setForm((prev) => ({ ...prev, supplier_name: s.name }));
-                                setSupplierTouched(true);
-                                setSupplierOpen(false);
-                                setSupplierQuery("");
-                              }}
-                              className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50"
-                            >
-                              {s.name}
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
+                      <option value="">(Default = Publisher)</option>
+
+                      {uniqueSuppliers
+                        .filter((s) => String(s?.name ?? "").trim())
+                        .map((s) => (
+                          <option key={`sup-${s.id}`} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new supplier"
+                      onClick={async () => {
+                        const sup = await promptAddSupplier();
+                        if (!sup) return;
+
+                        try {
+                          const created = await createSupplierNow(sup);
+
+                          setForm((prev) => ({ ...prev, supplier_name: created.name }));
+                          setSupplierTouched(true);
+
+                          await fetchSuppliers();
+
+                          setToast({
+                            message: `Supplier added: ${created.name}`,
+                            type: "success",
+                          });
+                        } catch (e: any) {
+                          const msg =
+                            e?.response?.data?.error ||
+                            e?.message ||
+                            "Failed to add supplier.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
                   </div>
 
                   <p className="text-[10px] text-slate-500">
-                    Default = Publisher. Dropdown always shows ALL suppliers.
+                    Default supplier = publisher. If missing, click ➕ to add.
                   </p>
                 </div>
 
@@ -1427,25 +1680,7 @@ const RequirementsPageClient: React.FC = () => {
               )}
             </div>
 
-            {/* datalists (Supplier removed because we use custom dropdown) */}
-            <datalist id="schoolOptions">
-              {schools.map((s) => (
-                <option key={`school-${s.id}`} value={s.name} />
-              ))}
-            </datalist>
-
-            <datalist id="publisherOptions">
-              {uniquePublishers.map((p, idx) => (
-                <option key={`pub-${p.id ?? "new"}-${p.name}-${idx}`} value={p.name} />
-              ))}
-            </datalist>
-
-            <datalist id="bookOptions">
-              {getVisibleBooks().map((b) => (
-                <option key={`book-${b.id}`} value={b.title} />
-              ))}
-            </datalist>
-
+            {/* class datalist only */}
             <datalist id="classOptions">
               {classes.map((c) => (
                 <option key={`class-${c.id}`} value={c.class_name} />
@@ -1567,7 +1802,8 @@ const RequirementsPageClient: React.FC = () => {
               </div>
             ) : requirements.length === 0 ? (
               <div className="text-xs sm:text-sm text-slate-500 py-3 mb-2">
-                No requirements yet. Select a school & use the form above to add your first record.
+                No requirements yet. Select a school & use the form above to add your first
+                record.
               </div>
             ) : null}
 
@@ -1700,7 +1936,9 @@ const RequirementsPageClient: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}
