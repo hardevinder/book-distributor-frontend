@@ -2505,7 +2505,6 @@ const SchoolOrdersPageClient: React.FC = () => {
  * ✅ Bulk target selector block (inside same file)
  * -------------------------------------------- */
 
-type BulkTargetMode = "visible" | "school";
 
 const BulkTargetBlock: React.FC<{
   visibleOrders: SchoolOrder[];
