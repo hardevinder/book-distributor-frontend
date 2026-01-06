@@ -17,8 +17,23 @@ import {
 
 /* ---------- Types ---------- */
 
-type Publisher = { id: number; name: string };
-type Supplier = { id: number; name: string; phone?: string | null; email?: string | null };
+type Publisher = {
+  id: number;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  // ✅ backend has address (not city)
+  address?: string | null;
+};
+
+type Supplier = {
+  id: number;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  // ✅ backend has address (not city)
+  address?: string | null;
+};
 
 type ClassItem = {
   id: number;
@@ -119,7 +134,9 @@ const normalizeSuppliers = (payload: SuppliersListResponse): Supplier[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-const normalizeRequirements = (payload: RequirementsListResponse): Requirement[] => {
+const normalizeRequirements = (
+  payload: RequirementsListResponse
+): Requirement[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
@@ -178,7 +195,9 @@ const RequirementsPageClient: React.FC = () => {
   const [publishers, setPublishers] = useState<Publisher[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  const [form, setForm] = useState<RequirementRowFormState>(emptyRequirementForm);
+  const [form, setForm] = useState<RequirementRowFormState>(
+    emptyRequirementForm
+  );
   const [editingId, setEditingId] = useState<number | null>(null);
 
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
@@ -208,7 +227,8 @@ const RequirementsPageClient: React.FC = () => {
 
   // ✅ safe compare (prevents trim on undefined)
   const ciEq = (a?: string | null, b?: string | null) =>
-    String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
+    String(a ?? "").trim().toLowerCase() ===
+    String(b ?? "").trim().toLowerCase();
 
   const promptAddName = async (title: string, placeholder: string) => {
     const res = await Swal.fire({
@@ -228,9 +248,9 @@ const RequirementsPageClient: React.FC = () => {
     return String(res.value ?? "").trim();
   };
 
-  // ✅ Supplier popup with Phone + Email
+  // ✅ Supplier popup with Phone + Email + Address
   const promptAddSupplier = async (): Promise<
-    { name: string; phone?: string; email?: string } | null
+    { name: string; phone?: string; email?: string; address?: string } | null
   > => {
     const res = await Swal.fire({
       title: "Add Supplier",
@@ -238,15 +258,25 @@ const RequirementsPageClient: React.FC = () => {
         <input id="swal-sup-name" class="swal2-input" placeholder="Supplier name">
         <input id="swal-sup-phone" class="swal2-input" placeholder="Phone (optional)">
         <input id="swal-sup-email" class="swal2-input" placeholder="Email (optional)">
+        <input id="swal-sup-address" class="swal2-input" placeholder="Address (optional)">
       `,
       focusConfirm: false,
       showCancelButton: true,
       confirmButtonText: "Add",
       cancelButtonText: "Cancel",
       preConfirm: () => {
-        const name = (document.getElementById("swal-sup-name") as HTMLInputElement)?.value?.trim();
-        const phone = (document.getElementById("swal-sup-phone") as HTMLInputElement)?.value?.trim();
-        const email = (document.getElementById("swal-sup-email") as HTMLInputElement)?.value?.trim();
+        const name = (
+          document.getElementById("swal-sup-name") as HTMLInputElement
+        )?.value?.trim();
+        const phone = (
+          document.getElementById("swal-sup-phone") as HTMLInputElement
+        )?.value?.trim();
+        const email = (
+          document.getElementById("swal-sup-email") as HTMLInputElement
+        )?.value?.trim();
+        const address = (
+          document.getElementById("swal-sup-address") as HTMLInputElement
+        )?.value?.trim();
 
         if (!name) {
           Swal.showValidationMessage("Please enter supplier name");
@@ -257,6 +287,55 @@ const RequirementsPageClient: React.FC = () => {
           name,
           phone: phone || undefined,
           email: email || undefined,
+          address: address || undefined,
+        };
+      },
+    });
+
+    if (!res.isConfirmed) return null;
+    return (res.value ?? null) as any;
+  };
+
+  // ✅ Publisher popup with Phone + Email + Address
+  const promptAddPublisher = async (): Promise<
+    { name: string; phone?: string; email?: string; address?: string } | null
+  > => {
+    const res = await Swal.fire({
+      title: "Add Publisher",
+      html: `
+        <input id="swal-pub-name" class="swal2-input" placeholder="Publisher name">
+        <input id="swal-pub-phone" class="swal2-input" placeholder="Phone (optional)">
+        <input id="swal-pub-email" class="swal2-input" placeholder="Email (optional)">
+        <input id="swal-pub-address" class="swal2-input" placeholder="Address (optional)">
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Add",
+      cancelButtonText: "Cancel",
+      preConfirm: () => {
+        const name = (
+          document.getElementById("swal-pub-name") as HTMLInputElement
+        )?.value?.trim();
+        const phone = (
+          document.getElementById("swal-pub-phone") as HTMLInputElement
+        )?.value?.trim();
+        const email = (
+          document.getElementById("swal-pub-email") as HTMLInputElement
+        )?.value?.trim();
+        const address = (
+          document.getElementById("swal-pub-address") as HTMLInputElement
+        )?.value?.trim();
+
+        if (!name) {
+          Swal.showValidationMessage("Please enter publisher name");
+          return null;
+        }
+
+        return {
+          name,
+          phone: phone || undefined,
+          email: email || undefined,
+          address: address || undefined,
         };
       },
     });
@@ -270,7 +349,9 @@ const RequirementsPageClient: React.FC = () => {
   const uniquePublishers = useMemo(() => {
     const seen = new Set<string>();
     return publishers.filter((p) => {
-      const key = `${p.id ?? "new"}|${String(p.name ?? "").trim().toLowerCase()}`;
+      const key = `${p.id ?? "new"}|${String(p.name ?? "")
+        .trim()
+        .toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -280,7 +361,9 @@ const RequirementsPageClient: React.FC = () => {
   const uniqueSuppliers = useMemo(() => {
     const seen = new Set<string>();
     return suppliers.filter((s) => {
-      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
+      const key = `${s.id ?? "new"}|${String(s.name ?? "")
+        .trim()
+        .toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -290,7 +373,9 @@ const RequirementsPageClient: React.FC = () => {
   const uniqueSchools = useMemo(() => {
     const seen = new Set<string>();
     return schools.filter((s) => {
-      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
+      const key = `${s.id ?? "new"}|${String(s.name ?? "")
+        .trim()
+        .toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -302,22 +387,32 @@ const RequirementsPageClient: React.FC = () => {
     const pubName = String(form.publisher_name ?? "").trim().toLowerCase();
     if (!pubName) return books;
     return books.filter(
-      (b) => b.publisher?.name && b.publisher.name.toLowerCase().includes(pubName)
+      (b) =>
+        b.publisher?.name &&
+        b.publisher.name.toLowerCase().includes(pubName)
     );
   }, [books, form.publisher_name]);
 
   /* ------------ CREATE HELPERS ------------ */
 
   const createSupplierNow = async (
-    input: string | { name: string; phone?: string; email?: string }
+    input:
+      | string
+      | { name: string; phone?: string; email?: string; address?: string }
   ): Promise<Supplier> => {
     const obj =
       typeof input === "string"
-        ? { name: String(input ?? "").trim(), phone: undefined, email: undefined }
+        ? {
+            name: String(input ?? "").trim(),
+            phone: undefined,
+            email: undefined,
+            address: undefined,
+          }
         : {
             name: String(input?.name ?? "").trim(),
             phone: input?.phone ? String(input.phone).trim() : undefined,
             email: input?.email ? String(input.email).trim() : undefined,
+            address: input?.address ? String(input.address).trim() : undefined,
           };
 
     if (!obj.name) throw new Error("Supplier name is required.");
@@ -326,6 +421,7 @@ const RequirementsPageClient: React.FC = () => {
       name: obj.name,
       phone: obj.phone || null,
       email: obj.email || null,
+      address: obj.address || null,
     });
 
     let created: Supplier = normalizeCreatedEntity<Supplier>(resSup.data);
@@ -334,6 +430,7 @@ const RequirementsPageClient: React.FC = () => {
       name: String(created?.name ?? obj.name).trim(),
       phone: (created as any)?.phone ?? obj.phone ?? null,
       email: (created as any)?.email ?? obj.email ?? null,
+      address: (created as any)?.address ?? obj.address ?? null,
     };
 
     setSuppliers((prev) => {
@@ -344,14 +441,43 @@ const RequirementsPageClient: React.FC = () => {
     return created;
   };
 
-  const createPublisherNow = async (name: string): Promise<Publisher> => {
-    const nm = String(name ?? "").trim();
-    if (!nm) throw new Error("Publisher name is required.");
+  const createPublisherNow = async (
+    input:
+      | string
+      | { name: string; phone?: string; email?: string; address?: string }
+  ): Promise<Publisher> => {
+    const obj =
+      typeof input === "string"
+        ? {
+            name: String(input ?? "").trim(),
+            phone: undefined,
+            email: undefined,
+            address: undefined,
+          }
+        : {
+            name: String(input?.name ?? "").trim(),
+            phone: input?.phone ? String(input.phone).trim() : undefined,
+            email: input?.email ? String(input.email).trim() : undefined,
+            address: input?.address ? String(input.address).trim() : undefined,
+          };
 
-    const resPub = await api.post("/api/publishers", { name: nm });
+    if (!obj.name) throw new Error("Publisher name is required.");
+
+    const resPub = await api.post("/api/publishers", {
+      name: obj.name,
+      phone: obj.phone || null,
+      email: obj.email || null,
+      address: obj.address || null,
+    });
 
     let created: Publisher = normalizeCreatedEntity<Publisher>(resPub.data);
-    created = { ...created, name: String(created?.name ?? nm).trim() };
+    created = {
+      ...created,
+      name: String(created?.name ?? obj.name).trim(),
+      phone: (created as any)?.phone ?? obj.phone ?? null,
+      email: (created as any)?.email ?? obj.email ?? null,
+      address: (created as any)?.address ?? obj.address ?? null,
+    };
 
     setPublishers((prev) => {
       const filtered = prev.filter((p) => !ciEq(p.name, created.name));
@@ -382,10 +508,12 @@ const RequirementsPageClient: React.FC = () => {
     if (!bookTitle) throw new Error("Book title is required.");
 
     const pubName = String(form.publisher_name ?? "").trim();
-    if (!pubName) throw new Error("Please select Publisher first (required for new book).");
+    if (!pubName)
+      throw new Error("Please select Publisher first (required for new book).");
 
     const pub = publishers.find((p) => ciEq(p.name, pubName));
-    if (!pub?.id) throw new Error("Publisher not found. Please select valid publisher.");
+    if (!pub?.id)
+      throw new Error("Publisher not found. Please select valid publisher.");
 
     const resBook = await api.post("/api/books", {
       title: bookTitle,
@@ -446,9 +574,13 @@ const RequirementsPageClient: React.FC = () => {
 
   const fetchPublishers = async () => {
     try {
-      const res = await api.get<Publisher[] | { data: Publisher[] }>("/api/publishers");
+      const res = await api.get<Publisher[] | { data: Publisher[] }>(
+        "/api/publishers"
+      );
       const payload: any = res.data;
-      const list: Publisher[] = Array.isArray(payload) ? payload : payload?.data ?? [];
+      const list: Publisher[] = Array.isArray(payload)
+        ? payload
+        : payload?.data ?? [];
       setPublishers(list || []);
     } catch (err) {
       console.error(err);
@@ -466,15 +598,22 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const fetchRequirements = async (query?: string, schoolId?: string, session?: string) => {
+  const fetchRequirements = async (
+    query?: string,
+    schoolId?: string,
+    session?: string
+  ) => {
     setListLoading(true);
     try {
       const params: any = {};
       if (query && query.trim()) params.q = query.trim();
       if (schoolId && schoolId !== "all") params.schoolId = schoolId;
-      if (session && session.trim()) params.academic_session = session.trim();
+      if (session && session.trim())
+        params.academic_session = session.trim();
 
-      const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
+      const res = await api.get<RequirementsListResponse>("/api/requirements", {
+        params,
+      });
       setRequirements(normalizeRequirements(res.data));
     } catch (err: any) {
       console.error(err);
@@ -562,7 +701,9 @@ const RequirementsPageClient: React.FC = () => {
     const bookTitle = String(row.book_title ?? "").trim();
     const className = String(row.class_name ?? "").trim();
 
-    const supplierName = String((row.supplier_name || row.publisher_name) ?? "").trim();
+    const supplierName = String(
+      (row.supplier_name || row.publisher_name) ?? ""
+    ).trim();
 
     if (!schoolName) throw new Error("School is required.");
     if (!bookTitle) throw new Error("Book title is required.");
@@ -635,7 +776,9 @@ const RequirementsPageClient: React.FC = () => {
           (b.publisher_id === publisherId || b.publisher?.id === publisherId)
       );
     } else {
-      existingBook = books.find((b) => b.title.toLowerCase() === bookTitle.toLowerCase());
+      existingBook = books.find(
+        (b) => b.title.toLowerCase() === bookTitle.toLowerCase()
+      );
     }
 
     if (existingBook) {
@@ -678,7 +821,9 @@ const RequirementsPageClient: React.FC = () => {
   /* ------------ FORM HANDLERS ------------ */
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
 
@@ -712,7 +857,10 @@ const RequirementsPageClient: React.FC = () => {
 
       if (editingId) {
         await api.put(`/api/requirements/${editingId}`, payload);
-        setToast({ message: "Requirement updated successfully.", type: "success" });
+        setToast({
+          message: "Requirement updated successfully.",
+          type: "success",
+        });
       } else {
         await api.post("/api/requirements", payload);
         setToast({ message: "Requirement added successfully.", type: "success" });
@@ -726,7 +874,9 @@ const RequirementsPageClient: React.FC = () => {
         err?.message ||
         err?.response?.data?.error ||
         err?.response?.data?.message ||
-        (editingId ? "Failed to update requirement." : "Failed to create requirement.");
+        (editingId
+          ? "Failed to update requirement."
+          : "Failed to create requirement.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -849,7 +999,9 @@ const RequirementsPageClient: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       const msg =
-        err?.message || err?.response?.data?.error || "Failed to save all requirements.";
+        err?.message ||
+        err?.response?.data?.error ||
+        "Failed to save all requirements.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -881,7 +1033,9 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    const confirmDelete = window.confirm("Are you sure you want to delete this requirement?");
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete this requirement?"
+    );
     if (!confirmDelete) return;
 
     setError(null);
@@ -942,7 +1096,9 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1057,9 +1213,9 @@ const RequirementsPageClient: React.FC = () => {
       ? schools.find((s) => String(s.id) === filterSchoolId)?.name || ""
       : "";
 
-  const showPendingPanel = !editingId && pendingItems.length > 0;
-
-  const currentSupplierValue = String((form.supplier_name || form.publisher_name) ?? "").trim();
+  const currentSupplierValue = String(
+    (form.supplier_name || form.publisher_name) ?? ""
+  ).trim();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
@@ -1127,8 +1283,8 @@ const RequirementsPageClient: React.FC = () => {
           </div>
           {currentSchoolName && (
             <span className="text-slate-500 hidden sm:block">
-              Keep changing Book / Copies and click Add to List. Finally, use Save All
-              on the right side.
+              Keep changing Book / Copies and click Add to List. Finally, use Save
+              All on the right side.
             </span>
           )}
         </section>
@@ -1211,7 +1367,10 @@ const RequirementsPageClient: React.FC = () => {
                         try {
                           const created = await createSchoolNow(nm);
                           setForm((prev) => ({ ...prev, school_name: created.name }));
-                          setToast({ message: `School added: ${created.name}`, type: "success" });
+                          setToast({
+                            message: `School added: ${created.name}`,
+                            type: "success",
+                          });
                           await fetchSchools();
                         } catch (e: any) {
                           const msg =
@@ -1273,19 +1432,41 @@ const RequirementsPageClient: React.FC = () => {
                     <button
                       type="button"
                       className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new publisher"
+                      title="Add new publisher (with phone/email/address + auto supplier)"
                       onClick={async () => {
-                        const nm = await promptAddName("Add Publisher", "Enter publisher name");
-                        if (!nm) return;
+                        const pub = await promptAddPublisher();
+                        if (!pub) return;
+
                         try {
-                          const created = await createPublisherNow(nm);
-                          setForm((prev) => ({ ...prev, publisher_name: created.name }));
-                          setSupplierTouched(false);
+                          // 1) Create Publisher with details
+                          const createdPub = await createPublisherNow(pub);
+
+                          // 2) Ensure same-name Supplier exists (create if missing) with SAME details
+                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
+                          const createdSup = existingSup
+                            ? existingSup
+                            : await createSupplierNow({
+                                name: createdPub.name,
+                                phone: createdPub.phone || undefined,
+                                email: createdPub.email || undefined,
+                                address: createdPub.address || undefined,
+                              });
+
+                          // 3) Select both in form
+                          setForm((prev) => ({
+                            ...prev,
+                            publisher_name: createdPub.name,
+                            supplier_name: createdSup.name,
+                          }));
+                          setSupplierTouched(true);
+
                           setToast({
-                            message: `Publisher added: ${created.name}`,
+                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
                             type: "success",
                           });
+
                           await fetchPublishers();
+                          await fetchSuppliers();
                         } catch (e: any) {
                           const msg =
                             e?.response?.data?.error ||
@@ -1315,9 +1496,8 @@ const RequirementsPageClient: React.FC = () => {
                         if (!current) return null;
                         const exists = visibleBooks.some(
                           (b) =>
-                            String(b?.title ?? "")
-                              .trim()
-                              .toLowerCase() === current.toLowerCase()
+                            String(b?.title ?? "").trim().toLowerCase() ===
+                            current.toLowerCase()
                         );
                         if (exists) return null;
                         return <option value={current}>{current} (current)</option>;
@@ -1537,7 +1717,9 @@ const RequirementsPageClient: React.FC = () => {
                       {pendingItems.length > 0 && (
                         <span className="text-[11px] text-slate-500">
                           {pendingItems.length} book(s) in list. Use{" "}
-                          <span className="font-semibold text-emerald-600">Save All</span>{" "}
+                          <span className="font-semibold text-emerald-600">
+                            Save All
+                          </span>{" "}
                           on the Selected Books panel.
                         </span>
                       )}
@@ -1547,7 +1729,7 @@ const RequirementsPageClient: React.FC = () => {
               </div>
 
               {/* Pending panel */}
-              {showPendingPanel && (
+              {!editingId && pendingItems.length > 0 && (
                 <div className="w-full lg:w-7/12">
                   <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
                     <div className="flex items-center justify-between mb-2">
@@ -1802,8 +1984,7 @@ const RequirementsPageClient: React.FC = () => {
               </div>
             ) : requirements.length === 0 ? (
               <div className="text-xs sm:text-sm text-slate-500 py-3 mb-2">
-                No requirements yet. Select a school & use the form above to add your first
-                record.
+                No requirements yet. Select a school & use the form above to add your first record.
               </div>
             ) : null}
 
@@ -1936,9 +2117,7 @@ const RequirementsPageClient: React.FC = () => {
       {toast && (
         <div
           className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success"
-              ? "bg-emerald-600 text-white"
-              : "bg-rose-600 text-white"
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}
