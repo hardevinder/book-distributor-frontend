@@ -410,6 +410,9 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [filterSchoolId, setFilterSchoolId] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
 
+  // ✅ for yellow highlight of latest generated
+  const [lastGeneratedAt, setLastGeneratedAt] = useState<number | null>(null);
+
   const [viewOrder, setViewOrder] = useState<SchoolOrder | null>(null);
 
   // Modal meta editing (order-only)
@@ -436,7 +439,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyOrder, setCopyOrder] = useState<SchoolOrder | null>(null);
   const [copySaving, setCopySaving] = useState(false);
-  const [copyQtyDrafts, setCopyQtyDrafts] = useState<Record<number, number>>({}); // item_id -> qty
+  const [copyQtyDrafts, setCopyQtyDrafts] = useState<Record<number, number>>({});
   const [copyDeletedIds, setCopyDeletedIds] = useState<Record<number, boolean>>({});
 
   // ✅ Email modal state
@@ -526,7 +529,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
-  // ✅ NOTE: listSchoolOrders already; if your backend supports filters, you can pass params here.
   const fetchOrders = async () => {
     setLoading(true);
     setError(null);
@@ -563,10 +565,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     fetchOrders();
   }, []);
 
-  /* ---------- ✅ AUTH PDF FIX ----------
-   * window.open("/api/.../pdf") will NOT send Authorization header => 401
-   * So we fetch with axios (apiClient includes JWT header) then open blob url.
-   * ----------------------------------- */
+  /* ---------- ✅ AUTH PDF FIX ---------- */
 
   const fetchPdfBlobUrl = async (orderId: number) => {
     const res = await api.get(`/api/school-orders/${orderId}/pdf`, { responseType: "blob" });
@@ -588,7 +587,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     else window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  // ✅ Single PDF open
   const openPdfDirect = (orderId: number) => {
     if (!orderId) return;
 
@@ -607,8 +605,8 @@ const SchoolOrdersPageClient: React.FC = () => {
     });
   };
 
-  // ✅ NEW: Print ALL visible in ONE PDF (uses new backend route /pdf/all)
-  const openAllPdf = async () => {
+  // ✅ Print ALL visible in ONE PDF
+  const openAllPdf = async (visibleOrders: SchoolOrder[], filterSession: string, filterSchoolId: string, filterStatus: string) => {
     if (!visibleOrders.length) return;
 
     const ok = await sweetConfirm({
@@ -625,7 +623,6 @@ const SchoolOrdersPageClient: React.FC = () => {
     });
     if (!ok) return;
 
-    // Build query params from current filters (best-effort)
     const params: Record<string, string> = {};
     if (filterSession) params.academic_session = filterSession;
     if (filterSchoolId) params.school_id = filterSchoolId;
@@ -654,6 +651,36 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
+  // ✅ NEW: Supplier + Order Index PDF (2 columns only)
+  const openSupplierOrderIndexPdf = async () => {
+    const params: Record<string, string> = {};
+    if (filterSession) params.academic_session = filterSession;
+    if (filterSchoolId) params.school_id = filterSchoolId;
+    if (filterStatus && filterStatus !== "not_received") params.status = filterStatus;
+
+    const qs = new URLSearchParams(params).toString();
+    const url = `/api/school-orders/pdf/supplier-order-index${qs ? `?${qs}` : ""}`;
+
+    try {
+      const res = await api.get(url, { responseType: "blob" });
+
+      const contentType = (res.headers as any)?.["content-type"] || "";
+      if (!String(contentType).includes("application/pdf")) {
+        const blob = res.data as Blob;
+        const text = await blob.text().catch(() => "");
+        throw new Error(text || "Not a PDF.");
+      }
+
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const blobUrl = window.URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      console.error("supplier-index error:", err);
+      setError(err?.response?.data?.message || err?.message || "Supplier index PDF failed.");
+      await sweetToast({ icon: "error", title: "Index PDF failed" });
+    }
+  };
+
   /* ---------- Actions ---------- */
 
   const handleGenerate = async (e: React.FormEvent) => {
@@ -671,6 +698,9 @@ const SchoolOrdersPageClient: React.FC = () => {
       const res = await api.post("/api/school-orders/generate", {
         academic_session: academicSession.trim(),
       });
+
+      setLastGeneratedAt(Date.now()); // ✅ highlight marker
+
       setInfo(res?.data?.message || "Generated.");
       await fetchOrders();
       await sweetToast({ icon: "success", title: "Generated" });
@@ -1183,19 +1213,37 @@ const SchoolOrdersPageClient: React.FC = () => {
     return ok;
   });
 
+  // ✅ sort: latest generated (highest createdAt / order_date) on top
+  const visibleOrdersSorted = useMemo(() => {
+    const toTime = (o: SchoolOrder) => {
+      const s = o.order_date || o.createdAt || "";
+      const t = s ? new Date(s).getTime() : 0;
+      return Number.isFinite(t) ? t : 0;
+    };
+    return [...visibleOrders].sort((a, b) => toTime(b) - toTime(a));
+  }, [visibleOrders]);
+
+  // ✅ highlight threshold: 3 minutes after generate
+  const isRecentlyGenerated = (o: SchoolOrder) => {
+    if (!lastGeneratedAt) return false;
+    const t = new Date(o.order_date || o.createdAt || "").getTime();
+    if (!Number.isFinite(t) || !t) return false;
+    return t >= lastGeneratedAt - 60_000 && t <= lastGeneratedAt + 3 * 60_000;
+  };
+
   useEffect(() => {
-    visibleOrders.slice(0, 40).forEach((o) => {
+    visibleOrdersSorted.slice(0, 50).forEach((o) => {
       if (o?.id) fetchEmailCountForOrder(o.id);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleOrders]);
+  }, [visibleOrdersSorted]);
 
   const aggregate = useMemo(() => {
     let orderedTotal = 0;
     let receivedTotal = 0;
     let pendingTotalLocal = 0;
 
-    visibleOrders.forEach((o) => {
+    visibleOrdersSorted.forEach((o) => {
       const items = getOrderItems(o);
       const ord = totalQtyFromItems(items);
       const rec = totalReceivedFromItems(items);
@@ -1207,7 +1255,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     });
 
     return { orderedTotal, receivedTotal, pendingTotal: Math.max(pendingTotalLocal, 0) };
-  }, [visibleOrders]);
+  }, [visibleOrdersSorted]);
 
   const { orderedTotal, receivedTotal, pendingTotal } = aggregate;
 
@@ -1221,12 +1269,20 @@ const SchoolOrdersPageClient: React.FC = () => {
     receivedTotal: number;
     reorderedTotal: number;
     pendingTotal: number;
+    time: number;
   };
 
+  // ✅ group rows (sorted: latest first per school)
   const schoolGroups: { schoolId: number; school: School | undefined; rows: SupplierRow[] }[] = useMemo(() => {
     const map = new Map<number, { school: School | undefined; rows: SupplierRow[] }>();
 
-    visibleOrders.forEach((order) => {
+    const toTime = (o: SchoolOrder) => {
+      const s = o.order_date || o.createdAt || "";
+      const t = s ? new Date(s).getTime() : 0;
+      return Number.isFinite(t) ? t : 0;
+    };
+
+    visibleOrdersSorted.forEach((order) => {
       const school = getOrderSchool(order);
       const schoolId = order.school_id;
       const items = getOrderItems(order);
@@ -1250,6 +1306,7 @@ const SchoolOrdersPageClient: React.FC = () => {
         receivedTotal: recTotal,
         reorderedTotal: reTotal,
         pendingTotal: pending,
+        time: toTime(order),
       };
 
       const existing = map.get(schoolId);
@@ -1257,12 +1314,19 @@ const SchoolOrdersPageClient: React.FC = () => {
       else existing.rows.push(row);
     });
 
-    return Array.from(map.entries()).map(([schoolId, value]) => ({
-      schoolId,
-      school: value.school,
-      rows: value.rows.sort((a, b) => a.supplierName.localeCompare(b.supplierName)),
-    }));
-  }, [visibleOrders]);
+    return Array.from(map.entries())
+      .map(([schoolId, value]) => ({
+        schoolId,
+        school: value.school,
+        rows: value.rows
+          .sort((a, b) => b.time - a.time), // ✅ latest first
+      }))
+      .sort((a, b) => {
+        const ta = a.rows[0]?.time || 0;
+        const tb = b.rows[0]?.time || 0;
+        return tb - ta;
+      });
+  }, [visibleOrdersSorted]);
 
   /* ---------- UI ---------- */
 
@@ -1406,7 +1470,7 @@ const SchoolOrdersPageClient: React.FC = () => {
             <button
               type="button"
               onClick={() => openBulkModal({ mode: "visible" })}
-              disabled={!visibleOrders.length}
+              disabled={!visibleOrdersSorted.length}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
                          text-slate-800 border border-slate-200
                          bg-gradient-to-r from-slate-50 to-indigo-50
@@ -1420,11 +1484,11 @@ const SchoolOrdersPageClient: React.FC = () => {
               Bulk Meta
             </button>
 
-            {/* ✅ NEW: Print ALL visible in ONE PDF */}
+            {/* ✅ Print ALL visible in ONE PDF */}
             <button
               type="button"
-              onClick={openAllPdf}
-              disabled={!visibleOrders.length}
+              onClick={() => openAllPdf(visibleOrdersSorted, filterSession, filterSchoolId, filterStatus)}
+              disabled={!visibleOrdersSorted.length}
               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
                          text-blue-800 border border-blue-200
                          bg-gradient-to-r from-blue-50 to-sky-50
@@ -1438,8 +1502,24 @@ const SchoolOrdersPageClient: React.FC = () => {
               Print All (1 PDF)
             </button>
 
+            {/* ✅ NEW BUTTON: Supplier-Order Index PDF */}
+            <button
+              type="button"
+              onClick={openSupplierOrderIndexPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
+                         text-slate-900 border border-slate-200
+                         bg-gradient-to-r from-amber-50 to-yellow-50
+                         hover:from-amber-100 hover:to-yellow-100
+                         shadow-sm hover:shadow
+                         focus:outline-none focus:ring-2 focus:ring-amber-200 focus:ring-offset-2"
+              title="Supplier + Order No Index PDF (2 columns)"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Supplier Index PDF
+            </button>
+
             <div className="ml-auto flex items-center gap-2 text-[11px] text-slate-600">
-              <span title="Orders">{visibleOrders.length}</span>
+              <span title="Orders">{visibleOrdersSorted.length}</span>
               <span title="Ordered">O:{orderedTotal}</span>
               <span title="Received">R:{receivedTotal}</span>
               <span title="Pending">P:{pendingTotal}</span>
@@ -1506,7 +1586,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                   </div>
 
                   <div className="overflow-x-auto overflow-y-hidden">
-                    <div className="min-w-[1050px]">
+                    <div className="min-w-[1080px]">
                       <table className="w-full text-[11px] border-collapse">
                         <thead className="bg-slate-100">
                           <tr>
@@ -1531,9 +1611,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                             <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
                               Status
                             </th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold text-slate-700 whitespace-nowrap">
-                              E
-                            </th>
+                            {/* ✅ removed column E */}
                             <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold text-slate-700 whitespace-nowrap">
                               Actions
                             </th>
@@ -1551,8 +1629,14 @@ const SchoolOrdersPageClient: React.FC = () => {
                             const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
                             const savingThis = savingOrderNoId === order.id;
 
+                            const highlight = isRecentlyGenerated(order);
+
                             return (
-                              <tr key={row.key} className="hover:bg-slate-50">
+                              <tr
+                                key={row.key}
+                                className={`hover:bg-slate-50 ${highlight ? "bg-yellow-100" : ""}`}
+                                title={highlight ? "Latest generated" : ""}
+                              >
                                 <td className="border-b border-slate-200 px-2 py-1.5 font-medium whitespace-nowrap">
                                   {row.supplierName}
                                 </td>
@@ -1593,28 +1677,11 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 </td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 whitespace-nowrap">
-                                  <span className={`px-2 py-0.5 rounded-full text-[10.5px] ${statusClass}`}>
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${statusClass}`}
+                                  >
                                     {statusLabel(order.status)}
                                   </span>
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right whitespace-nowrap">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEmailCounts((prev) => {
-                                        const next = { ...prev };
-                                        delete next[order.id];
-                                        return next;
-                                      });
-                                      fetchEmailCountForOrder(order.id);
-                                    }}
-                                    className="inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 rounded-full
-                                               border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[10.5px] text-slate-700"
-                                    title="Email sent count (click to refresh)"
-                                  >
-                                    {emailCounts[order.id] ?? 0}
-                                  </button>
                                 </td>
 
                                 <td className="border-b border-slate-200 px-2 py-1.5">
@@ -1649,6 +1716,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       Copy
                                     </button>
 
+                                    {/* ✅ Email button includes counter, so removed E column */}
                                     <button
                                       type="button"
                                       onClick={() => openEmailModal(order)}
@@ -1667,7 +1735,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       </span>
                                     </button>
 
-                                    {/* ✅ PDF (AUTH SAFE) */}
                                     <button
                                       type="button"
                                       onClick={() => openPdfDirect(order.id)}
@@ -1719,7 +1786,7 @@ const SchoolOrdersPageClient: React.FC = () => {
 
                 <BulkTargetBlock
                   key={bulkKey}
-                  visibleOrders={visibleOrders}
+                  visibleOrders={visibleOrdersSorted}
                   schoolGroups={schoolGroups}
                   onApply={(targetOrders) => handleBulkMetaSave(targetOrders)}
                   transports={transports}
@@ -1798,7 +1865,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 </span>
                                 <span className="text-slate-400">•</span>
                                 <span
-                                  className={`px-2 py-0.5 rounded-full text-[10.5px] ${statusChipClass(
+                                  className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${statusChipClass(
                                     viewOrder.status
                                   )}`}
                                 >
@@ -1829,7 +1896,6 @@ const SchoolOrdersPageClient: React.FC = () => {
                               <Package className="w-3.5 h-3.5" /> Copy
                             </button>
 
-                            {/* ✅ PDF AUTH SAFE */}
                             <button
                               onClick={() => openPdfDirect(viewOrder.id)}
                               className="text-[11px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 flex items-center gap-1.5"
@@ -1842,7 +1908,10 @@ const SchoolOrdersPageClient: React.FC = () => {
                               disabled={sendingOrderId === viewOrder.id}
                               className="text-[11px] px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5 disabled:opacity-60"
                             >
-                              <Send className="w-3.5 h-3.5" /> Email
+                              <Send className="w-3.5 h-3.5" /> Email{" "}
+                              <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded-full bg-white border border-emerald-200 text-[10px] text-emerald-800">
+                                {emailCounts[viewOrder.id] ?? 0}
+                              </span>
                             </button>
 
                             <button
@@ -2435,6 +2504,8 @@ const SchoolOrdersPageClient: React.FC = () => {
 /* --------------------------------------------
  * ✅ Bulk target selector block (inside same file)
  * -------------------------------------------- */
+
+type BulkTargetMode = "visible" | "school";
 
 const BulkTargetBlock: React.FC<{
   visibleOrders: SchoolOrder[];

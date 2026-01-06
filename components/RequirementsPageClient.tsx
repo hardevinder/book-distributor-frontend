@@ -13,6 +13,7 @@ import {
   Download,
   ChevronLeft,
   Sparkles,
+  X,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -22,7 +23,6 @@ type Publisher = {
   name: string;
   phone?: string | null;
   email?: string | null;
-  // ✅ backend has address (not city)
   address?: string | null;
 };
 
@@ -31,7 +31,6 @@ type Supplier = {
   name: string;
   phone?: string | null;
   email?: string | null;
-  // ✅ backend has address (not city)
   address?: string | null;
 };
 
@@ -134,23 +133,18 @@ const normalizeSuppliers = (payload: SuppliersListResponse): Supplier[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
-const normalizeRequirements = (
-  payload: RequirementsListResponse
-): Requirement[] => {
+const normalizeRequirements = (payload: RequirementsListResponse): Requirement[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.data ?? [];
 };
 
 // ✅ stronger: handles {data:{supplier:{}}} etc.
-const normalizeCreatedEntity = <T extends { id: number; name?: string }>(
-  payload: any
-): T => {
+const normalizeCreatedEntity = <T extends { id: number; name?: string }>(payload: any): T => {
   if (!payload) return payload as T;
 
   if (payload?.id != null) return payload as T;
   if (payload?.data?.id != null) return payload.data as T;
-  if (Array.isArray(payload?.data) && payload.data[0]?.id != null)
-    return payload.data[0] as T;
+  if (Array.isArray(payload?.data) && payload.data[0]?.id != null) return payload.data[0] as T;
 
   const nested =
     payload?.supplier ||
@@ -195,12 +189,14 @@ const RequirementsPageClient: React.FC = () => {
   const [publishers, setPublishers] = useState<Publisher[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
-  const [form, setForm] = useState<RequirementRowFormState>(
-    emptyRequirementForm
-  );
-  const [editingId, setEditingId] = useState<number | null>(null);
-
+  // MAIN buffer form
+  const [form, setForm] = useState<RequirementRowFormState>(emptyRequirementForm);
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([]);
+
+  // EDIT MODAL
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState<RequirementRowFormState>(emptyRequirementForm);
 
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
@@ -220,15 +216,15 @@ const RequirementsPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  // track if supplier manually changed
+  // track if supplier manually changed (MAIN form)
   const [supplierTouched, setSupplierTouched] = useState(false);
+  // track if supplier manually changed (EDIT modal)
+  const [editSupplierTouched, setEditSupplierTouched] = useState(false);
 
   /* ------------ tiny helpers ------------ */
 
-  // ✅ safe compare (prevents trim on undefined)
   const ciEq = (a?: string | null, b?: string | null) =>
-    String(a ?? "").trim().toLowerCase() ===
-    String(b ?? "").trim().toLowerCase();
+    String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
 
   const promptAddName = async (title: string, placeholder: string) => {
     const res = await Swal.fire({
@@ -248,7 +244,6 @@ const RequirementsPageClient: React.FC = () => {
     return String(res.value ?? "").trim();
   };
 
-  // ✅ Supplier popup with Phone + Email + Address
   const promptAddSupplier = async (): Promise<
     { name: string; phone?: string; email?: string; address?: string } | null
   > => {
@@ -265,18 +260,10 @@ const RequirementsPageClient: React.FC = () => {
       confirmButtonText: "Add",
       cancelButtonText: "Cancel",
       preConfirm: () => {
-        const name = (
-          document.getElementById("swal-sup-name") as HTMLInputElement
-        )?.value?.trim();
-        const phone = (
-          document.getElementById("swal-sup-phone") as HTMLInputElement
-        )?.value?.trim();
-        const email = (
-          document.getElementById("swal-sup-email") as HTMLInputElement
-        )?.value?.trim();
-        const address = (
-          document.getElementById("swal-sup-address") as HTMLInputElement
-        )?.value?.trim();
+        const name = (document.getElementById("swal-sup-name") as HTMLInputElement)?.value?.trim();
+        const phone = (document.getElementById("swal-sup-phone") as HTMLInputElement)?.value?.trim();
+        const email = (document.getElementById("swal-sup-email") as HTMLInputElement)?.value?.trim();
+        const address = (document.getElementById("swal-sup-address") as HTMLInputElement)?.value?.trim();
 
         if (!name) {
           Swal.showValidationMessage("Please enter supplier name");
@@ -296,7 +283,6 @@ const RequirementsPageClient: React.FC = () => {
     return (res.value ?? null) as any;
   };
 
-  // ✅ Publisher popup with Phone + Email + Address
   const promptAddPublisher = async (): Promise<
     { name: string; phone?: string; email?: string; address?: string } | null
   > => {
@@ -313,18 +299,10 @@ const RequirementsPageClient: React.FC = () => {
       confirmButtonText: "Add",
       cancelButtonText: "Cancel",
       preConfirm: () => {
-        const name = (
-          document.getElementById("swal-pub-name") as HTMLInputElement
-        )?.value?.trim();
-        const phone = (
-          document.getElementById("swal-pub-phone") as HTMLInputElement
-        )?.value?.trim();
-        const email = (
-          document.getElementById("swal-pub-email") as HTMLInputElement
-        )?.value?.trim();
-        const address = (
-          document.getElementById("swal-pub-address") as HTMLInputElement
-        )?.value?.trim();
+        const name = (document.getElementById("swal-pub-name") as HTMLInputElement)?.value?.trim();
+        const phone = (document.getElementById("swal-pub-phone") as HTMLInputElement)?.value?.trim();
+        const email = (document.getElementById("swal-pub-email") as HTMLInputElement)?.value?.trim();
+        const address = (document.getElementById("swal-pub-address") as HTMLInputElement)?.value?.trim();
 
         if (!name) {
           Swal.showValidationMessage("Please enter publisher name");
@@ -349,9 +327,7 @@ const RequirementsPageClient: React.FC = () => {
   const uniquePublishers = useMemo(() => {
     const seen = new Set<string>();
     return publishers.filter((p) => {
-      const key = `${p.id ?? "new"}|${String(p.name ?? "")
-        .trim()
-        .toLowerCase()}`;
+      const key = `${p.id ?? "new"}|${String(p.name ?? "").trim().toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -361,9 +337,7 @@ const RequirementsPageClient: React.FC = () => {
   const uniqueSuppliers = useMemo(() => {
     const seen = new Set<string>();
     return suppliers.filter((s) => {
-      const key = `${s.id ?? "new"}|${String(s.name ?? "")
-        .trim()
-        .toLowerCase()}`;
+      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -373,41 +347,30 @@ const RequirementsPageClient: React.FC = () => {
   const uniqueSchools = useMemo(() => {
     const seen = new Set<string>();
     return schools.filter((s) => {
-      const key = `${s.id ?? "new"}|${String(s.name ?? "")
-        .trim()
-        .toLowerCase()}`;
+      const key = `${s.id ?? "new"}|${String(s.name ?? "").trim().toLowerCase()}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
   }, [schools]);
 
-  // show books filtered by publisher selected
-  const visibleBooks = useMemo(() => {
-    const pubName = String(form.publisher_name ?? "").trim().toLowerCase();
+  const getVisibleBooks = (publisherName: string) => {
+    const pubName = String(publisherName ?? "").trim().toLowerCase();
     if (!pubName) return books;
-    return books.filter(
-      (b) =>
-        b.publisher?.name &&
-        b.publisher.name.toLowerCase().includes(pubName)
-    );
-  }, [books, form.publisher_name]);
+    return books.filter((b) => b.publisher?.name && b.publisher.name.toLowerCase().includes(pubName));
+  };
+
+  const visibleBooksMain = useMemo(() => getVisibleBooks(form.publisher_name), [books, form.publisher_name]);
+  const visibleBooksEdit = useMemo(() => getVisibleBooks(editForm.publisher_name), [books, editForm.publisher_name]);
 
   /* ------------ CREATE HELPERS ------------ */
 
   const createSupplierNow = async (
-    input:
-      | string
-      | { name: string; phone?: string; email?: string; address?: string }
+    input: string | { name: string; phone?: string; email?: string; address?: string }
   ): Promise<Supplier> => {
     const obj =
       typeof input === "string"
-        ? {
-            name: String(input ?? "").trim(),
-            phone: undefined,
-            email: undefined,
-            address: undefined,
-          }
+        ? { name: String(input ?? "").trim(), phone: undefined, email: undefined, address: undefined }
         : {
             name: String(input?.name ?? "").trim(),
             phone: input?.phone ? String(input.phone).trim() : undefined,
@@ -442,18 +405,11 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   const createPublisherNow = async (
-    input:
-      | string
-      | { name: string; phone?: string; email?: string; address?: string }
+    input: string | { name: string; phone?: string; email?: string; address?: string }
   ): Promise<Publisher> => {
     const obj =
       typeof input === "string"
-        ? {
-            name: String(input ?? "").trim(),
-            phone: undefined,
-            email: undefined,
-            address: undefined,
-          }
+        ? { name: String(input ?? "").trim(), phone: undefined, email: undefined, address: undefined }
         : {
             name: String(input?.name ?? "").trim(),
             phone: input?.phone ? String(input.phone).trim() : undefined,
@@ -503,22 +459,21 @@ const RequirementsPageClient: React.FC = () => {
     return created;
   };
 
-  const createBookNow = async (title: string): Promise<Book> => {
+  // ✅ now takes context (publisher_name, class_name) — no dependency on main form
+  const createBookNow = async (title: string, ctx: { publisher_name: string; class_name: string }): Promise<Book> => {
     const bookTitle = String(title ?? "").trim();
     if (!bookTitle) throw new Error("Book title is required.");
 
-    const pubName = String(form.publisher_name ?? "").trim();
-    if (!pubName)
-      throw new Error("Please select Publisher first (required for new book).");
+    const pubName = String(ctx.publisher_name ?? "").trim();
+    if (!pubName) throw new Error("Please select Publisher first (required for new book).");
 
     const pub = publishers.find((p) => ciEq(p.name, pubName));
-    if (!pub?.id)
-      throw new Error("Publisher not found. Please select valid publisher.");
+    if (!pub?.id) throw new Error("Publisher not found. Please select valid publisher.");
 
     const resBook = await api.post("/api/books", {
       title: bookTitle,
       publisher_id: pub.id,
-      class_name: String(form.class_name ?? "").trim() || null,
+      class_name: String(ctx.class_name ?? "").trim() || null,
       subject: null,
       medium: null,
       mrp: 0,
@@ -574,13 +529,9 @@ const RequirementsPageClient: React.FC = () => {
 
   const fetchPublishers = async () => {
     try {
-      const res = await api.get<Publisher[] | { data: Publisher[] }>(
-        "/api/publishers"
-      );
+      const res = await api.get<Publisher[] | { data: Publisher[] }>("/api/publishers");
       const payload: any = res.data;
-      const list: Publisher[] = Array.isArray(payload)
-        ? payload
-        : payload?.data ?? [];
+      const list: Publisher[] = Array.isArray(payload) ? payload : payload?.data ?? [];
       setPublishers(list || []);
     } catch (err) {
       console.error(err);
@@ -598,22 +549,16 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const fetchRequirements = async (
-    query?: string,
-    schoolId?: string,
-    session?: string
-  ) => {
+  const fetchRequirements = async (query?: string, schoolId?: string, session?: string) => {
     setListLoading(true);
+    setError(null);
     try {
       const params: any = {};
       if (query && query.trim()) params.q = query.trim();
       if (schoolId && schoolId !== "all") params.schoolId = schoolId;
-      if (session && session.trim())
-        params.academic_session = session.trim();
+      if (session && session.trim()) params.academic_session = session.trim();
 
-      const res = await api.get<RequirementsListResponse>("/api/requirements", {
-        params,
-      });
+      const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
       setRequirements(normalizeRequirements(res.data));
     } catch (err: any) {
       console.error(err);
@@ -630,6 +575,11 @@ const RequirementsPageClient: React.FC = () => {
     fetchPublishers();
     fetchSuppliers();
     fetchRequirements();
+
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Toast auto-hide
@@ -639,9 +589,9 @@ const RequirementsPageClient: React.FC = () => {
     return () => clearTimeout(id);
   }, [toast]);
 
-  // When school filter changes and we are NOT editing, auto-fill school in form and clear pending list
+  // When school filter changes and we are NOT editing, auto-fill school in MAIN form and clear pending list
   useEffect(() => {
-    if (editingId) return;
+    if (editOpen) return;
     if (!schools || !schools.length) return;
 
     if (filterSchoolId) {
@@ -662,12 +612,12 @@ const RequirementsPageClient: React.FC = () => {
     }
 
     setSupplierTouched(false);
-  }, [filterSchoolId, schools, editingId]);
+  }, [filterSchoolId, schools, editOpen]);
 
   const isSchoolLockedToFilter = !!filterSchoolId;
 
   /**
-   * ✅ Auto-fill Supplier from Publisher by default
+   * ✅ Auto-fill Supplier from Publisher by default (MAIN)
    * - If supplierTouched = true, don't override.
    */
   useEffect(() => {
@@ -680,6 +630,22 @@ const RequirementsPageClient: React.FC = () => {
       setForm((prev) => ({ ...prev, supplier_name: pub }));
     }
   }, [form.publisher_name, form.supplier_name, supplierTouched]);
+
+  /**
+   * ✅ Auto-fill Supplier from Publisher by default (EDIT MODAL)
+   * - If editSupplierTouched = true, don't override.
+   */
+  useEffect(() => {
+    if (!editOpen) return;
+    const pub = String(editForm.publisher_name ?? "").trim();
+    if (!pub) return;
+    if (editSupplierTouched) return;
+
+    const sup = String(editForm.supplier_name ?? "").trim();
+    if (!sup) {
+      setEditForm((prev) => ({ ...prev, supplier_name: pub }));
+    }
+  }, [editOpen, editForm.publisher_name, editForm.supplier_name, editSupplierTouched]);
 
   /* ------------ COMMON PREP HELPER ------------ */
 
@@ -701,9 +667,7 @@ const RequirementsPageClient: React.FC = () => {
     const bookTitle = String(row.book_title ?? "").trim();
     const className = String(row.class_name ?? "").trim();
 
-    const supplierName = String(
-      (row.supplier_name || row.publisher_name) ?? ""
-    ).trim();
+    const supplierName = String((row.supplier_name || row.publisher_name) ?? "").trim();
 
     if (!schoolName) throw new Error("School is required.");
     if (!bookTitle) throw new Error("Book title is required.");
@@ -772,22 +736,18 @@ const RequirementsPageClient: React.FC = () => {
     if (publisherId) {
       existingBook = books.find(
         (b) =>
-          b.title.toLowerCase() === bookTitle.toLowerCase() &&
+          String(b.title ?? "").toLowerCase() === bookTitle.toLowerCase() &&
           (b.publisher_id === publisherId || b.publisher?.id === publisherId)
       );
     } else {
-      existingBook = books.find(
-        (b) => b.title.toLowerCase() === bookTitle.toLowerCase()
-      );
+      existingBook = books.find((b) => String(b.title ?? "").toLowerCase() === bookTitle.toLowerCase());
     }
 
     if (existingBook) {
       bookId = existingBook.id;
     } else {
       if (!publisherId) {
-        throw new Error(
-          "Publisher is required when creating a new book. Please select publisher."
-        );
+        throw new Error("Publisher is required when creating a new book. Please select publisher.");
       }
 
       const resBook = await api.post("/api/books", {
@@ -800,6 +760,7 @@ const RequirementsPageClient: React.FC = () => {
         selling_price: null,
         is_active: true,
       });
+
       const newBook: Book = normalizeCreatedEntity<Book>(resBook.data);
       bookId = newBook.id;
       setBooks((prev) => [...prev, newBook]);
@@ -818,12 +779,10 @@ const RequirementsPageClient: React.FC = () => {
     };
   };
 
-  /* ------------ FORM HANDLERS ------------ */
+  /* ------------ FORM HANDLERS (MAIN) ------------ */
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const { name, value, type, checked } = e.target as HTMLInputElement;
 
@@ -835,9 +794,23 @@ const RequirementsPageClient: React.FC = () => {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const resetForm = () => {
-    setSupplierTouched(false);
+  /* ------------ FORM HANDLERS (EDIT MODAL) ------------ */
 
+  const handleEditChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    const { name, value, type, checked } = e.target as HTMLInputElement;
+
+    if (type === "checkbox") {
+      setEditForm((prev) => ({ ...prev, [name]: checked }));
+      return;
+    }
+
+    setEditForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const resetMainForm = () => {
+    setSupplierTouched(false);
     setForm((prev) => ({
       ...emptyRequirementForm,
       school_name: prev.school_name,
@@ -845,28 +818,33 @@ const RequirementsPageClient: React.FC = () => {
       academic_session: prev.academic_session || DEFAULT_SESSION,
       status: "confirmed",
     }));
-    setEditingId(null);
   };
 
-  const saveRequirement = async () => {
+  const closeEditModal = () => {
+    setEditOpen(false);
+    setEditingId(null);
+    setEditSupplierTouched(false);
+    setEditForm(emptyRequirementForm);
+  };
+
+  /* ------------ SAVE (EDIT MODAL) ------------ */
+
+  const saveEditRequirement = async () => {
+    if (!editingId) return;
+
     setError(null);
     setLoading(true);
 
     try {
-      const payload = await prepareRequirementPayload(form);
+      const payload = await prepareRequirementPayload({
+        ...editForm,
+        supplier_name: String((editForm.supplier_name || editForm.publisher_name) ?? "").trim(),
+      });
 
-      if (editingId) {
-        await api.put(`/api/requirements/${editingId}`, payload);
-        setToast({
-          message: "Requirement updated successfully.",
-          type: "success",
-        });
-      } else {
-        await api.post("/api/requirements", payload);
-        setToast({ message: "Requirement added successfully.", type: "success" });
-      }
+      await api.put(`/api/requirements/${editingId}`, payload);
 
-      resetForm();
+      setToast({ message: "Requirement updated successfully.", type: "success" });
+      closeEditModal();
       await fetchRequirements(search, filterSchoolId, filterSession);
     } catch (err: any) {
       console.error(err);
@@ -874,15 +852,15 @@ const RequirementsPageClient: React.FC = () => {
         err?.message ||
         err?.response?.data?.error ||
         err?.response?.data?.message ||
-        (editingId
-          ? "Failed to update requirement."
-          : "Failed to create requirement.");
+        "Failed to update requirement.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
       setLoading(false);
     }
   };
+
+  /* ------------ MAIN BUFFER LOGIC ------------ */
 
   const handleAddPending = () => {
     setError(null);
@@ -934,10 +912,9 @@ const RequirementsPageClient: React.FC = () => {
       type: "success",
     });
 
-    // after adding, allow auto-fill again for next row
     setSupplierTouched(false);
 
-    // ✅ after add, publisher should disappear, supplier stays
+    // ✅ after add, publisher disappears, supplier stays
     setForm((prev) => ({
       ...prev,
       book_title: "",
@@ -964,9 +941,7 @@ const RequirementsPageClient: React.FC = () => {
       for (const item of pendingItems) {
         const payload = await prepareRequirementPayload({
           ...item,
-          supplier_name: String(item.supplier_name ?? "").trim()
-            ? item.supplier_name
-            : item.publisher_name,
+          supplier_name: String(item.supplier_name ?? "").trim() ? item.supplier_name : item.publisher_name,
           status: item.status || "confirmed",
         });
         await api.post("/api/requirements", payload);
@@ -986,22 +961,15 @@ const RequirementsPageClient: React.FC = () => {
 
       await fetchRequirements(search, filterSchoolId, filterSession);
 
-      setToast({
-        message: `Saved ${count} requirement(s) successfully.`,
-        type: "success",
-      });
+      setToast({ message: `Saved ${count} requirement(s) successfully.`, type: "success" });
 
-      // refresh suppliers/publishers so created IDs come from backend
       await fetchSuppliers();
       await fetchPublishers();
       await fetchSchools();
       await fetchBooks();
     } catch (err: any) {
       console.error(err);
-      const msg =
-        err?.message ||
-        err?.response?.data?.error ||
-        "Failed to save all requirements.";
+      const msg = err?.message || err?.response?.data?.error || "Failed to save all requirements.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -1009,14 +977,17 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
+  /* ------------ EDIT (OPEN MODAL) ------------ */
+
   const handleEdit = (r: Requirement) => {
     setError(null);
+    setPendingItems([]); // keep as your behaviour
+
     setEditingId(r.id);
-    setPendingItems([]);
+    setEditOpen(true);
+    setEditSupplierTouched(true); // because existing row has supplier already
 
-    setSupplierTouched(true);
-
-    setForm({
+    setEditForm({
       school_name: r.school?.name || "",
       supplier_name: r.supplier?.name || "",
       publisher_name: r.book?.publisher?.name || "",
@@ -1024,28 +995,21 @@ const RequirementsPageClient: React.FC = () => {
       class_name: r.class?.class_name || "",
       academic_session: r.academic_session || DEFAULT_SESSION,
       required_copies:
-        r.required_copies !== null && r.required_copies !== undefined
-          ? String(r.required_copies)
-          : "",
+        r.required_copies !== null && r.required_copies !== undefined ? String(r.required_copies) : "",
       status: (r.status as any) || "confirmed",
       is_locked: r.is_locked,
     });
   };
 
   const handleDelete = async (id: number) => {
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this requirement?"
-    );
+    const confirmDelete = window.confirm("Are you sure you want to delete this requirement?");
     if (!confirmDelete) return;
 
     setError(null);
     setDeletingId(id);
     try {
       await api.delete(`/api/requirements/${id}`);
-      if (editingId === id) {
-        setEditingId(null);
-        resetForm();
-      }
+      if (editingId === id) closeEditModal();
       await fetchRequirements(search, filterSchoolId, filterSession);
       setToast({ message: "Requirement deleted successfully.", type: "success" });
     } catch (err: any) {
@@ -1096,9 +1060,7 @@ const RequirementsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -1128,9 +1090,7 @@ const RequirementsPageClient: React.FC = () => {
       await fetchBooks();
     } catch (err: any) {
       console.error(err);
-      const msg =
-        err?.response?.data?.error ||
-        "Failed to import requirements. Please check the file format.";
+      const msg = err?.response?.data?.error || "Failed to import requirements. Please check the file format.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -1209,13 +1169,42 @@ const RequirementsPageClient: React.FC = () => {
   /* ------------ UI ------------ */
 
   const currentSchoolName =
-    filterSchoolId && schools.length
-      ? schools.find((s) => String(s.id) === filterSchoolId)?.name || ""
-      : "";
+    filterSchoolId && schools.length ? schools.find((s) => String(s.id) === filterSchoolId)?.name || "" : "";
 
-  const currentSupplierValue = String(
-    (form.supplier_name || form.publisher_name) ?? ""
-  ).trim();
+  const currentSupplierValueMain = String((form.supplier_name || form.publisher_name) ?? "").trim();
+  const currentSupplierValueEdit = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+
+  /**
+   * ✅ group listing by School name (heading row per school)
+   */
+  const groupedRequirements = useMemo(() => {
+    const safe = Array.isArray(requirements) ? requirements : [];
+
+    const sorted = [...safe].sort((a, b) => {
+      const aSch = String(a.school?.name ?? "").toLowerCase();
+      const bSch = String(b.school?.name ?? "").toLowerCase();
+      if (aSch !== bSch) return aSch.localeCompare(bSch);
+
+      const aCls = String(a.class?.class_name ?? "").toLowerCase();
+      const bCls = String(b.class?.class_name ?? "").toLowerCase();
+      if (aCls !== bCls) return aCls.localeCompare(bCls);
+
+      const aBook = String(a.book?.title ?? "").toLowerCase();
+      const bBook = String(b.book?.title ?? "").toLowerCase();
+      if (aBook !== bBook) return aBook.localeCompare(bBook);
+
+      return Number(a.id) - Number(b.id);
+    });
+
+    const map = new Map<string, Requirement[]>();
+    for (const r of sorted) {
+      const key = String(r.school?.name ?? "—").trim() || "—";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+
+    return Array.from(map.entries()).map(([schoolName, items]) => ({ schoolName, items }));
+  }, [requirements]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
@@ -1242,19 +1231,13 @@ const RequirementsPageClient: React.FC = () => {
             <BookOpen className="w-4 h-4" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm sm:text-base tracking-tight">
-              School Book Requirements
-            </span>
-            <span className="text-[11px] text-slate-500 font-medium">
-              School-wise & class-wise requirement entry
-            </span>
+            <span className="text-sm sm:text-base tracking-tight">School Book Requirements</span>
+            <span className="text-[11px] text-slate-500 font-medium">School-wise & class-wise requirement entry</span>
           </div>
         </div>
         <div className="flex items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800 text-xs sm:text-sm">
-              {user?.name || "User"}
-            </span>
+            <span className="font-semibold text-slate-800 text-xs sm:text-sm">{user?.name || "User"}</span>
             {user?.role && (
               <span className="text-[10px] rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2 py-0.5 border border-indigo-200 text-indigo-700 font-medium">
                 {user.role}
@@ -1276,15 +1259,12 @@ const RequirementsPageClient: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700">Current school:</span>
             <span className="text-slate-900 font-medium">
-              {currentSchoolName
-                ? currentSchoolName
-                : "Not locked. You can still select school in form below."}
+              {currentSchoolName ? currentSchoolName : "Not locked. You can still select school in form below."}
             </span>
           </div>
           {currentSchoolName && (
             <span className="text-slate-500 hidden sm:block">
-              Keep changing Book / Copies and click Add to List. Finally, use Save
-              All on the right side.
+              Keep changing Book / Copies and click Add to List. Finally, use Save All on the right side.
             </span>
           )}
         </section>
@@ -1293,38 +1273,22 @@ const RequirementsPageClient: React.FC = () => {
         {error && (
           <section>
             <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs sm:text-sm text-red-700 flex items-center gap-2">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
-                !
-              </div>
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">!</div>
               <span>{error}</span>
             </div>
           </section>
         )}
 
-        {/* MAIN: FIRST FORM */}
+        {/* MAIN: BUFFER FORM */}
         <section className="space-y-4">
           <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
             <div className="flex items-center justify-between mb-3">
               <div className="flex flex-col gap-0.5">
-                <h3 className="text-sm sm:text-base font-semibold text-slate-800">
-                  {editingId ? "Edit Requirement" : "Add Requirements (buffer)"}
-                </h3>
+                <h3 className="text-sm sm:text-base font-semibold text-slate-800">Add Requirements (buffer)</h3>
                 <p className="text-[11px] text-slate-500">
-                  Select School, Class, Book, Publisher, Supplier & Copies.{" "}
-                  {!editingId
-                    ? "Use Add to List to add multiple books. Use Save All button on the right panel to commit them."
-                    : "Save will update this row immediately."}
+                  Select School, Class, Book, Publisher, Supplier & Copies. Use Add to List to add multiple books.
                 </p>
               </div>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="text-[10px] px-2.5 py-1 rounded-full border border-slate-200 text-slate-600 bg-slate-50 hover:bg-slate-100"
-                >
-                  Cancel
-                </button>
-              )}
             </div>
 
             <div className="flex flex-col lg:flex-row gap-4">
@@ -1337,17 +1301,13 @@ const RequirementsPageClient: React.FC = () => {
                       name="school_name"
                       value={form.school_name}
                       onChange={handleChange}
-                      disabled={isSchoolLockedToFilter && !editingId}
+                      disabled={isSchoolLockedToFilter}
                       className={`w-full border rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
-                        isSchoolLockedToFilter && !editingId
-                          ? "bg-slate-100 text-slate-500"
-                          : "border-slate-300"
+                        isSchoolLockedToFilter ? "bg-slate-100 text-slate-500" : "border-slate-300"
                       }`}
                     >
                       <option value="">
-                        {isSchoolLockedToFilter && !editingId
-                          ? "Using selected school"
-                          : "Select school"}
+                        {isSchoolLockedToFilter ? "Using selected school" : "Select school"}
                       </option>
                       {uniqueSchools.map((s) => (
                         <option key={`sch-${s.id}`} value={s.name}>
@@ -1358,7 +1318,7 @@ const RequirementsPageClient: React.FC = () => {
 
                     <button
                       type="button"
-                      disabled={isSchoolLockedToFilter && !editingId}
+                      disabled={isSchoolLockedToFilter}
                       className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold disabled:opacity-50"
                       title="Add new school"
                       onClick={async () => {
@@ -1367,16 +1327,10 @@ const RequirementsPageClient: React.FC = () => {
                         try {
                           const created = await createSchoolNow(nm);
                           setForm((prev) => ({ ...prev, school_name: created.name }));
-                          setToast({
-                            message: `School added: ${created.name}`,
-                            type: "success",
-                          });
+                          setToast({ message: `School added: ${created.name}`, type: "success" });
                           await fetchSchools();
                         } catch (e: any) {
-                          const msg =
-                            e?.response?.data?.error ||
-                            e?.message ||
-                            "Failed to add school.";
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
                           setToast({ message: msg, type: "error" });
                         }
                       }}
@@ -1386,7 +1340,7 @@ const RequirementsPageClient: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Class (keep as input + datalist) */}
+                {/* Class */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Class</label>
                   <input
@@ -1408,13 +1362,10 @@ const RequirementsPageClient: React.FC = () => {
                       value={form.publisher_name}
                       onChange={(e) => {
                         const v = String(e.target.value ?? "");
-                        setForm((prev) => ({ ...prev, publisher_name: v }));
                         if (!supplierTouched && v.trim()) {
-                          setForm((prev) => ({
-                            ...prev,
-                            publisher_name: v,
-                            supplier_name: v,
-                          }));
+                          setForm((prev) => ({ ...prev, publisher_name: v, supplier_name: v }));
+                        } else {
+                          setForm((prev) => ({ ...prev, publisher_name: v }));
                         }
                       }}
                       className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
@@ -1438,10 +1389,8 @@ const RequirementsPageClient: React.FC = () => {
                         if (!pub) return;
 
                         try {
-                          // 1) Create Publisher with details
                           const createdPub = await createPublisherNow(pub);
 
-                          // 2) Ensure same-name Supplier exists (create if missing) with SAME details
                           const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
                           const createdSup = existingSup
                             ? existingSup
@@ -1452,7 +1401,6 @@ const RequirementsPageClient: React.FC = () => {
                                 address: createdPub.address || undefined,
                               });
 
-                          // 3) Select both in form
                           setForm((prev) => ({
                             ...prev,
                             publisher_name: createdPub.name,
@@ -1468,10 +1416,7 @@ const RequirementsPageClient: React.FC = () => {
                           await fetchPublishers();
                           await fetchSuppliers();
                         } catch (e: any) {
-                          const msg =
-                            e?.response?.data?.error ||
-                            e?.message ||
-                            "Failed to add publisher.";
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
                           setToast({ message: msg, type: "error" });
                         }
                       }}
@@ -1494,17 +1439,15 @@ const RequirementsPageClient: React.FC = () => {
                       {(() => {
                         const current = String(form.book_title ?? "").trim();
                         if (!current) return null;
-                        const exists = visibleBooks.some(
-                          (b) =>
-                            String(b?.title ?? "").trim().toLowerCase() ===
-                            current.toLowerCase()
+                        const exists = visibleBooksMain.some(
+                          (b) => String(b?.title ?? "").trim().toLowerCase() === current.toLowerCase()
                         );
                         if (exists) return null;
                         return <option value={current}>{current} (current)</option>;
                       })()}
 
                       <option value="">Select book</option>
-                      {visibleBooks
+                      {visibleBooksMain
                         .filter((b) => String(b?.title ?? "").trim())
                         .map((b) => (
                           <option key={`book-${b.id}`} value={b.title}>
@@ -1521,15 +1464,15 @@ const RequirementsPageClient: React.FC = () => {
                         const nm = await promptAddName("Add Book", "Enter book title");
                         if (!nm) return;
                         try {
-                          const created = await createBookNow(nm);
+                          const created = await createBookNow(nm, {
+                            publisher_name: form.publisher_name,
+                            class_name: form.class_name,
+                          });
                           setForm((prev) => ({ ...prev, book_title: created.title }));
                           setToast({ message: `Book added: ${created.title}`, type: "success" });
                           await fetchBooks();
                         } catch (e: any) {
-                          const msg =
-                            e?.response?.data?.error ||
-                            e?.message ||
-                            "Failed to add book.";
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
                           setToast({ message: msg, type: "error" });
                         }
                       }}
@@ -1537,9 +1480,7 @@ const RequirementsPageClient: React.FC = () => {
                       ➕
                     </button>
                   </div>
-                  <p className="text-[10px] text-slate-500">
-                    For new book, Publisher must be selected.
-                  </p>
+                  <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
                 </div>
 
                 {/* Supplier (dropdown + add) */}
@@ -1549,7 +1490,7 @@ const RequirementsPageClient: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <select
                       name="supplier_name"
-                      value={currentSupplierValue || ""}
+                      value={currentSupplierValueMain || ""}
                       onChange={(e) => {
                         const v = String(e.target.value ?? "");
                         setForm((prev) => ({ ...prev, supplier_name: v }));
@@ -1558,9 +1499,7 @@ const RequirementsPageClient: React.FC = () => {
                       className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     >
                       {(() => {
-                        const current = String(
-                          (form.supplier_name || form.publisher_name) ?? ""
-                        ).trim();
+                        const current = String((form.supplier_name || form.publisher_name) ?? "").trim();
                         if (!current) return null;
                         const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
                         if (exists) return null;
@@ -1594,15 +1533,9 @@ const RequirementsPageClient: React.FC = () => {
 
                           await fetchSuppliers();
 
-                          setToast({
-                            message: `Supplier added: ${created.name}`,
-                            type: "success",
-                          });
+                          setToast({ message: `Supplier added: ${created.name}`, type: "success" });
                         } catch (e: any) {
-                          const msg =
-                            e?.response?.data?.error ||
-                            e?.message ||
-                            "Failed to add supplier.";
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
                           setToast({ message: msg, type: "error" });
                         }
                       }}
@@ -1611,9 +1544,7 @@ const RequirementsPageClient: React.FC = () => {
                     </button>
                   </div>
 
-                  <p className="text-[10px] text-slate-500">
-                    Default supplier = publisher. If missing, click ➕ to add.
-                  </p>
+                  <p className="text-[10px] text-slate-500">Default supplier = publisher. If missing, click ➕ to add.</p>
                 </div>
 
                 {/* Session + Copies */}
@@ -1671,72 +1602,45 @@ const RequirementsPageClient: React.FC = () => {
                       onChange={handleChange}
                       className="h-4 w-4"
                     />
-                    <span className="text-[11px] text-slate-700">
-                      Lock this row (freeze for order)
-                    </span>
+                    <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
                   </div>
                 </div>
 
                 {/* Buttons */}
                 <div className="flex flex-wrap items-center gap-2 pt-2">
-                  {editingId ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={saveRequirement}
-                        className="inline-flex items-center justify-center flex-1 h-9 px-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
-                      >
-                        {loading ? "Saving..." : "Save Requirement"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={resetForm}
-                        className="inline-flex items-center justify-center h-9 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={handleAddPending}
-                        className="inline-flex items-center justify-center flex-1 h-9 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
-                      >
-                        Add to List
-                      </button>
-                      <button
-                        type="button"
-                        onClick={resetForm}
-                        className="inline-flex items-center justify-center h-9 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
-                      >
-                        Clear
-                      </button>
-                      {pendingItems.length > 0 && (
-                        <span className="text-[11px] text-slate-500">
-                          {pendingItems.length} book(s) in list. Use{" "}
-                          <span className="font-semibold text-emerald-600">
-                            Save All
-                          </span>{" "}
-                          on the Selected Books panel.
-                        </span>
-                      )}
-                    </>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleAddPending}
+                    className="inline-flex items-center justify-center flex-1 h-9 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                  >
+                    Add to List
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={resetMainForm}
+                    className="inline-flex items-center justify-center h-9 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    Clear
+                  </button>
+
+                  {pendingItems.length > 0 && (
+                    <span className="text-[11px] text-slate-500">
+                      {pendingItems.length} book(s) in list. Use{" "}
+                      <span className="font-semibold text-emerald-600">Save All</span> on the Selected Books panel.
+                    </span>
                   )}
                 </div>
               </div>
 
               {/* Pending panel */}
-              {!editingId && pendingItems.length > 0 && (
+              {pendingItems.length > 0 && (
                 <div className="w-full lg:w-7/12">
                   <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">
-                          Selected Books (Pending)
-                        </h4>
+                        <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">Selected Books (Pending)</h4>
                         <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
                           {pendingItems.length} item{pendingItems.length > 1 ? "s" : ""}
                         </span>
@@ -1765,41 +1669,21 @@ const RequirementsPageClient: React.FC = () => {
                       <table className="w-full text-[10px] sm:text-[11px] border-collapse">
                         <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[60px]">
-                              Class
-                            </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">
-                              Book
-                            </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">
-                              Pub
-                            </th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">
-                              Sup
-                            </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
-                              Sess
-                            </th>
-                            <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[50px]">
-                              Copies
-                            </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">
-                              Status
-                            </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">
-                              Lock
-                            </th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">
-                              Del
-                            </th>
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[60px]">Class</th>
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Book</th>
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">Pub</th>
+                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Sup</th>
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Sess</th>
+                            <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[50px]">Copies</th>
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Status</th>
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">Lock</th>
+                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">Del</th>
                           </tr>
                         </thead>
                         <tbody>
                           {pendingItems.map((item) => (
                             <tr key={item.tempId} className="bg-white">
-                              <td className="px-1 py-1 border-b border-slate-200 truncate">
-                                {item.class_name || "-"}
-                              </td>
+                              <td className="px-1 py-1 border-b border-slate-200 truncate">{item.class_name || "-"}</td>
                               <td className="px-1 py-1 border-b border-slate-200">
                                 <span className="font-semibold truncate inline-block max-w-[140px]">
                                   {item.book_title}
@@ -1955,11 +1839,7 @@ const RequirementsPageClient: React.FC = () => {
                   onClick={handlePrintPdf}
                   disabled={printLoading || !filterSchoolId}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-                  title={
-                    filterSchoolId
-                      ? "Open printable PDF in new tab"
-                      : "Select a school first to print PDF"
-                  }
+                  title={filterSchoolId ? "Open printable PDF in new tab" : "Select a school first to print PDF"}
                 >
                   <Download className="w-3.5 h-3.5 rotate-90" />
                   <span>{printLoading ? "Generating..." : "Print PDF"}</span>
@@ -1975,6 +1855,7 @@ const RequirementsPageClient: React.FC = () => {
                 <BookOpen className="w-4 h-4 text-indigo-500" />
                 Requirements ({requirements.length})
               </h2>
+              <span className="text-[11px] text-slate-500 hidden sm:block">Tip: click any row to edit.</span>
             </div>
 
             {listLoading ? (
@@ -2024,87 +1905,117 @@ const RequirementsPageClient: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody>
-                  {requirements.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="border-b border-slate-200 px-3 py-2 align-top">
-                        <div className="font-semibold truncate max-w-[220px] text-slate-800">
-                          {r.school?.name || "-"}
-                        </div>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 align-top text-slate-700">
-                        {r.class?.class_name || "-"}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 align-top">
-                        <div className="font-semibold truncate max-w-[260px] text-slate-800">
-                          {r.book?.title || "-"}
-                        </div>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 align-top">
-                        <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
-                          {r.book?.publisher?.name || "-"}
-                        </div>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 align-top">
-                        <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
-                          {r.supplier?.name || "-"}
-                        </div>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">
-                        {r.academic_session || "-"}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">
-                        {formatNumber(r.required_copies)}
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
-                            r.status === "confirmed"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : "bg-amber-50 text-amber-700 border border-amber-200"
-                          }`}
-                        >
-                          {r.status === "confirmed" ? "Confirmed" : "Draft"}
-                        </span>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
-                            r.is_locked
-                              ? "bg-slate-900 text-white"
-                              : "bg-slate-50 text-slate-600 border border-slate-200"
-                          }`}
-                        >
-                          {r.is_locked ? "Locked" : "Open"}
-                        </span>
-                      </td>
-                      <td className="border-b border-slate-200 px-3 py-2 align-top">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleEdit(r)}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
-                            aria-label="Edit requirement"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(r.id)}
-                            disabled={deletingId === r.id}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
-                            aria-label="Delete requirement"
-                          >
-                            {deletingId === r.id ? (
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                <tbody>
+                  {groupedRequirements.map((group) => (
+                    <React.Fragment key={`grp-${group.schoolName}`}>
+                      <tr className="bg-slate-50">
+                        <td colSpan={10} className="border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-indigo-500" />
+                            {group.schoolName}
+                            <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">
+                              ({group.items.length} item{group.items.length > 1 ? "s" : ""})
+                            </span>
+                          </span>
+                        </td>
+                      </tr>
+
+                      {group.items.map((r) => (
+                        <tr
+                          key={r.id}
+                          onClick={() => handleEdit(r)}
+                          className="hover:bg-slate-50 transition-colors cursor-pointer"
+                          title="Click to edit"
+                          role="button"
+                        >
+                          <td className="border-b border-slate-200 px-3 py-2 align-top">
+                            <div className="font-semibold truncate max-w-[220px] text-slate-400">—</div>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 align-top text-slate-700">
+                            {r.class?.class_name || "-"}
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 align-top">
+                            <div className="font-semibold truncate max-w-[260px] text-slate-800">{r.book?.title || "-"}</div>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 align-top">
+                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
+                              {r.book?.publisher?.name || "-"}
+                            </div>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 align-top">
+                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">{r.supplier?.name || "-"}</div>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">{r.academic_session || "-"}</td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">{formatNumber(r.required_copies)}</td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
+                                r.status === "confirmed"
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-amber-50 text-amber-700 border border-amber-200"
+                              }`}
+                            >
+                              {r.status === "confirmed" ? "Confirmed" : "Draft"}
+                            </span>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
+                                r.is_locked
+                                  ? "bg-slate-900 text-white"
+                                  : "bg-slate-50 text-slate-600 border border-slate-200"
+                              }`}
+                            >
+                              {r.is_locked ? "Locked" : "Open"}
+                            </span>
+                          </td>
+
+                          <td className="border-b border-slate-200 px-3 py-2 align-top">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEdit(r);
+                                }}
+                                className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
+                                aria-label="Edit requirement"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDelete(r.id);
+                                }}
+                                disabled={deletingId === r.id}
+                                className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
+                                aria-label="Delete requirement"
+                                title="Delete"
+                              >
+                                {deletingId === r.id ? (
+                                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -2112,6 +2023,358 @@ const RequirementsPageClient: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {/* ✅ EDIT MODAL (same dropdown + add functionality) */}
+      {editOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={closeEditModal}
+            aria-hidden="true"
+          />
+          <div className="relative w-[95vw] max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-2xl border border-slate-200">
+            {/* header */}
+            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-slate-800">Edit Requirement</span>
+                <span className="text-[11px] text-slate-500">Same controls as main form (dropdown + ➕ add).</span>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* body */}
+            <div className="p-4 space-y-3 text-[11px] sm:text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* School */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">School</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="school_name"
+                      value={editForm.school_name}
+                      onChange={handleEditChange}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="">Select school</option>
+                      {uniqueSchools.map((s) => (
+                        <option key={`ed-sch-${s.id}`} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new school"
+                      onClick={async () => {
+                        const nm = await promptAddName("Add School", "Enter school name");
+                        if (!nm) return;
+                        try {
+                          const created = await createSchoolNow(nm);
+                          setEditForm((prev) => ({ ...prev, school_name: created.name }));
+                          setToast({ message: `School added: ${created.name}`, type: "success" });
+                          await fetchSchools();
+                        } catch (e: any) {
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Class */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Class</label>
+                  <input
+                    list="classOptions"
+                    name="class_name"
+                    value={editForm.class_name}
+                    onChange={handleEditChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="Type or select class"
+                  />
+                </div>
+
+                {/* Publisher */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Publisher</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="publisher_name"
+                      value={editForm.publisher_name}
+                      onChange={(e) => {
+                        const v = String(e.target.value ?? "");
+                        if (!editSupplierTouched && v.trim()) {
+                          setEditForm((prev) => ({ ...prev, publisher_name: v, supplier_name: v }));
+                        } else {
+                          setEditForm((prev) => ({ ...prev, publisher_name: v }));
+                        }
+                      }}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      <option value="">Select publisher</option>
+                      {uniquePublishers
+                        .filter((p) => String(p?.name ?? "").trim())
+                        .map((p) => (
+                          <option key={`ed-pub-${p.id}`} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new publisher (with phone/email/address + auto supplier)"
+                      onClick={async () => {
+                        const pub = await promptAddPublisher();
+                        if (!pub) return;
+
+                        try {
+                          const createdPub = await createPublisherNow(pub);
+
+                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
+                          const createdSup = existingSup
+                            ? existingSup
+                            : await createSupplierNow({
+                                name: createdPub.name,
+                                phone: createdPub.phone || undefined,
+                                email: createdPub.email || undefined,
+                                address: createdPub.address || undefined,
+                              });
+
+                          setEditForm((prev) => ({
+                            ...prev,
+                            publisher_name: createdPub.name,
+                            supplier_name: createdSup.name,
+                          }));
+                          setEditSupplierTouched(true);
+
+                          setToast({
+                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
+                            type: "success",
+                          });
+
+                          await fetchPublishers();
+                          await fetchSuppliers();
+                        } catch (e: any) {
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Book */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Book</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="book_title"
+                      value={editForm.book_title}
+                      onChange={handleEditChange}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      {(() => {
+                        const current = String(editForm.book_title ?? "").trim();
+                        if (!current) return null;
+                        const exists = visibleBooksEdit.some(
+                          (b) => String(b?.title ?? "").trim().toLowerCase() === current.toLowerCase()
+                        );
+                        if (exists) return null;
+                        return <option value={current}>{current} (current)</option>;
+                      })()}
+
+                      <option value="">Select book</option>
+                      {visibleBooksEdit
+                        .filter((b) => String(b?.title ?? "").trim())
+                        .map((b) => (
+                          <option key={`ed-book-${b.id}`} value={b.title}>
+                            {b.title}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new book"
+                      onClick={async () => {
+                        const nm = await promptAddName("Add Book", "Enter book title");
+                        if (!nm) return;
+                        try {
+                          const created = await createBookNow(nm, {
+                            publisher_name: editForm.publisher_name,
+                            class_name: editForm.class_name,
+                          });
+                          setEditForm((prev) => ({ ...prev, book_title: created.title }));
+                          setToast({ message: `Book added: ${created.title}`, type: "success" });
+                          await fetchBooks();
+                        } catch (e: any) {
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
+                </div>
+
+                {/* Supplier */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Supplier</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      name="supplier_name"
+                      value={currentSupplierValueEdit || ""}
+                      onChange={(e) => {
+                        const v = String(e.target.value ?? "");
+                        setEditForm((prev) => ({ ...prev, supplier_name: v }));
+                        setEditSupplierTouched(!!v.trim());
+                      }}
+                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    >
+                      {(() => {
+                        const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+                        if (!current) return null;
+                        const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+                        if (exists) return null;
+                        return <option value={current}>{current} (current)</option>;
+                      })()}
+
+                      <option value="">(Default = Publisher)</option>
+
+                      {uniqueSuppliers
+                        .filter((s) => String(s?.name ?? "").trim())
+                        .map((s) => (
+                          <option key={`ed-sup-${s.id}`} value={s.name}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new supplier"
+                      onClick={async () => {
+                        const sup = await promptAddSupplier();
+                        if (!sup) return;
+
+                        try {
+                          const created = await createSupplierNow(sup);
+                          setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
+                          setEditSupplierTouched(true);
+                          await fetchSuppliers();
+                          setToast({ message: `Supplier added: ${created.name}`, type: "success" });
+                        } catch (e: any) {
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">Default supplier = publisher. If missing, click ➕ to add.</p>
+                </div>
+
+                {/* Session */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Session</label>
+                  <select
+                    name="academic_session"
+                    value={editForm.academic_session}
+                    onChange={handleEditChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="">Select session</option>
+                    {SESSION_OPTIONS.map((session) => (
+                      <option key={`ed-sess-${session}`} value={session}>
+                        {session}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Copies */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Required copies</label>
+                  <input
+                    name="required_copies"
+                    type="number"
+                    min={0}
+                    value={editForm.required_copies}
+                    onChange={handleEditChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="0"
+                  />
+                </div>
+
+                {/* Status */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Status</label>
+                  <select
+                    name="status"
+                    value={editForm.status}
+                    onChange={handleEditChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="draft">Draft</option>
+                    <option value="confirmed">Confirmed</option>
+                  </select>
+                </div>
+
+                {/* Lock */}
+                <div className="flex items-center gap-2 mt-6">
+                  <input
+                    type="checkbox"
+                    name="is_locked"
+                    checked={editForm.is_locked}
+                    onChange={handleEditChange}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
+                </div>
+              </div>
+
+              {/* footer buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={closeEditModal}
+                  className="h-9 px-4 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={saveEditRequirement}
+                  className="h-9 px-5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                >
+                  {loading ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && (
