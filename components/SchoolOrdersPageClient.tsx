@@ -456,7 +456,7 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [emailGreeting, setEmailGreeting] = useState("Dear Sir/Madam,");
   const [emailLine1, setEmailLine1] = useState("Please find the attached Purchase Order PDF.");
   const [emailExtraLines, setEmailExtraLines] = useState("Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}");
-  const [emailSignature, setEmailSignature] = useState("Regards,\nEduBridge ERP");
+  const [emailSignature, setEmailSignature] = useState("Regards,\nSumeet Book Store");
 
   // ✅ Preview popup
   const [emailBodyPreviewOpen, setEmailBodyPreviewOpen] = useState(false);
@@ -1084,7 +1084,7 @@ const SchoolOrdersPageClient: React.FC = () => {
       setEmailGreeting(`Dear ${supplierName},`);
       setEmailLine1("Please find the attached Purchase Order PDF.");
       setEmailExtraLines(`Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}`);
-      setEmailSignature("Regards,\nEduBridge ERP");
+      setEmailSignature("Regards,\nSumeet Book Store");
 
       await refreshEmailLogs(order.id);
       setEmailCounts((prev) => ({ ...prev, [order.id]: prev[order.id] ?? 0 }));
@@ -1112,7 +1112,7 @@ const SchoolOrdersPageClient: React.FC = () => {
     setEmailGreeting("Dear Sir/Madam,");
     setEmailLine1("Please find the attached Purchase Order PDF.");
     setEmailExtraLines("Order No: {ORDER_NO}\nOrder Date: {ORDER_DATE}");
-    setEmailSignature("Regards,\nEduBridge ERP");
+    setEmailSignature("Regards,\nSumeet Book Store");
 
     setEmailLogsRaw([]);
   };
@@ -1176,10 +1176,10 @@ const SchoolOrdersPageClient: React.FC = () => {
       await fetchOrders();
       await refreshEmailLogs(emailOrder.id);
 
-      setEmailCounts((prev) => ({
-        ...prev,
-        [emailOrder.id]: Number(prev[emailOrder.id] ?? 0) + 1,
-      }));
+      // setEmailCounts((prev) => ({
+      //   ...prev,
+      //   [emailOrder.id]: Number(prev[emailOrder.id] ?? 0) + 1,
+      // }));
 
       await sweetToast({ icon: "success", title: "Email sent" });
     } catch (err: any) {
@@ -2363,7 +2363,7 @@ const SchoolOrdersPageClient: React.FC = () => {
                               onChange={(e) => setEmailSignature(e.target.value)}
                               className="w-full min-h-[55px] border border-slate-300 rounded-xl px-2 py-2 text-[11px]
                                          focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                              placeholder={"Regards,\nEduBridge ERP"}
+                              placeholder={"Regards,\nSummet Book Store"}
                             />
                           </div>
 
