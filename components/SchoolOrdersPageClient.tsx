@@ -93,7 +93,8 @@ type SchoolOrder = {
   notes?: string | null;
   notes_2?: string | null; // preferred
   notes2?: string | null; // fallback
-
+  // ✅ Internal remarks (Office only)
+  remarks?: string | null;
   email_sent_count?: number;
   last_email_sent_at?: string | null;
   last_email_to?: string | null;
@@ -332,6 +333,7 @@ const clampInt = (v: any, min = 0, max = 999999) => {
 // ✅ Notes helper (works with notes_2 or notes2)
 const getNotes2 = (order: SchoolOrder | null) => (order?.notes_2 ?? order?.notes2 ?? "") || "";
 
+
 /* ---------- SweetAlert helper (dynamic import) ---------- */
 
 type SwalLike = any;
@@ -423,6 +425,9 @@ const SchoolOrdersPageClient: React.FC = () => {
   // ✅ Notes 1 + Notes 2
   const [metaNotes, setMetaNotes] = useState<string>("");
   const [metaNotes2, setMetaNotes2] = useState<string>("");
+    // ✅ Internal Remarks (Office only)
+  const [metaRemarks, setMetaRemarks] = useState<string>("");
+
 
   // Order No edit
   const [baseOrderNoDraft, setBaseOrderNoDraft] = useState<string>("");
@@ -867,6 +872,8 @@ const SchoolOrdersPageClient: React.FC = () => {
 
     setMetaNotes(order.notes || "");
     setMetaNotes2(getNotes2(order));
+    setMetaRemarks(order.remarks || "");
+
 
     setBaseOrderNoDraft(order.order_no || "");
   };
@@ -878,12 +885,16 @@ const SchoolOrdersPageClient: React.FC = () => {
     setMetaSaving(true);
 
     try {
-      const payload: any = {
+    const payload: any = {
         transport_id: metaTransportId ? Number(metaTransportId) : null,
         transport_id_2: metaTransportId2 ? Number(metaTransportId2) : null,
         notes: metaNotes.trim() ? metaNotes.trim() : null,
         notes_2: metaNotes2.trim() ? metaNotes2.trim() : null,
+
+        // ✅ Internal office remarks
+        remarks: metaRemarks.trim() ? metaRemarks.trim() : null,
       };
+
 
       const res = await api.patch(`/api/school-orders/${viewOrder.id}/meta`, payload);
       const updatedOrder: SchoolOrder = res.data.order;
@@ -896,6 +907,8 @@ const SchoolOrdersPageClient: React.FC = () => {
 
       setMetaNotes(updatedOrder.notes || "");
       setMetaNotes2(getNotes2(updatedOrder));
+      setMetaRemarks(updatedOrder.remarks || "");
+
 
       setInfo(res.data?.message || "Meta saved.");
       await sweetToast({ icon: "success", title: "Saved" });
@@ -1641,26 +1654,42 @@ const SchoolOrdersPageClient: React.FC = () => {
                                   {row.supplierName}
                                 </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5">
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      value={draft}
-                                      onChange={(e) =>
-                                        setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))
-                                      }
-                                      className="w-36 border border-slate-300 rounded-md px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                      placeholder={`#${order.id}`}
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSaveOrderNoFromListing(order.id)}
-                                      disabled={savingThis}
-                                      className="text-[11px] px-2.5 py-1 rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-                                    >
-                                      {savingThis ? "..." : "Save"}
-                                    </button>
-                                  </div>
-                                </td>
+                               <td className="border-b border-slate-200 px-2 py-1.5">
+  <div className="flex flex-col gap-0.5">
+    {/* Order No Row */}
+    <div className="flex items-center gap-1.5">
+      <input
+        value={draft}
+        onChange={(e) =>
+          setOrderNoDrafts((prev) => ({ ...prev, [order.id]: e.target.value }))
+        }
+        className="w-36 border border-slate-300 rounded-md px-2 py-1 text-[11px]
+                   focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        placeholder={`#${order.id}`}
+      />
+      <button
+        type="button"
+        onClick={() => handleSaveOrderNoFromListing(order.id)}
+        disabled={savingThis}
+        className="text-[11px] px-2.5 py-1 rounded-md bg-slate-900 text-white
+                   hover:bg-slate-800 disabled:opacity-60"
+      >
+        {savingThis ? "..." : "Save"}
+      </button>
+    </div>
+
+    {/* ✅ Small Remarks Preview */}
+    {order.remarks ? (
+      <div
+        className="text-[10px] text-slate-500 truncate max-w-[200px]"
+        title={order.remarks}
+      >
+        📝 {order.remarks}
+      </div>
+    ) : null}
+  </div>
+</td>
+
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-slate-600 whitespace-nowrap">
                                   {formatDate(order.order_date || order.createdAt)}
@@ -2003,6 +2032,19 @@ const SchoolOrdersPageClient: React.FC = () => {
                                 placeholder="Notes 2..."
                               />
                             </div>
+
+                              <div className="w-[360px]">
+                                <label className="block text-[10.5px] text-slate-600 mb-0.5">
+                                  Internal Remarks (Office Only)
+                                </label>
+                                <input
+                                  value={metaRemarks}
+                                  onChange={(e) => setMetaRemarks(e.target.value)}
+                                  className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                  placeholder="Internal remarks… (not printed / not emailed)"
+                                />
+                              </div>
+
 
                             <button
                               type="button"
