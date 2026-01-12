@@ -166,6 +166,8 @@ type GetResponse = { receipt: SupplierReceipt };
 
 /* ---------------- Helpers ---------------- */
 
+
+
 const num = (v: any) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -1348,6 +1350,44 @@ export default function SupplierReceiptsPageClient() {
     </div>
   );
 
+    // --- helpers for dependent dropdowns (School -> Supplier -> Order) ---
+
+  const supplierById = useMemo(() => {
+    const m = new Map<number, SupplierLite>();
+    (suppliers || []).forEach((s) => m.set(Number(s.id), s));
+    return m;
+  }, [suppliers]);
+
+  const suppliersForSelectedSchool = useMemo(() => {
+    if (!form.school_id) return [];
+    const uniq = new Map<number, SupplierLite>();
+
+    (schoolOrders || []).forEach((o) => {
+      const sid = Number(o.supplier_id || o.supplier?.id || 0);
+      if (!sid) return;
+
+      const sObj =
+        (o.supplier as SupplierLite) ||
+        supplierById.get(sid) ||
+        ({ id: sid, name: `Supplier #${sid}` } as any);
+
+      if (!uniq.has(sid)) uniq.set(sid, sObj);
+    });
+
+    return Array.from(uniq.values()).sort((a, b) =>
+      String(a.name || "").localeCompare(String(b.name || ""))
+    );
+  }, [form.school_id, schoolOrders, supplierById]);
+
+  const filteredOrdersForSchoolAndSupplier = useMemo(() => {
+    let list = schoolOrders || [];
+    if (!form.supplier_id) return list;
+
+    const sid = Number(form.supplier_id);
+    return list.filter((o) => Number(o.supplier_id || o.supplier?.id || 0) === sid);
+  }, [schoolOrders, form.supplier_id]);
+
+
   const selectedSupplierName =
     suppliers.find((s) => String(s.id) === String(form.supplier_id))?.name ||
     (form.supplier_id ? `Supplier #${form.supplier_id}` : "");
@@ -1669,79 +1709,102 @@ export default function SupplierReceiptsPageClient() {
                       }`}
                     >
                       {/* School */}
-                      <div className="col-span-12 md:col-span-2">
-                        <MiniLabel>School *</MiniLabel>
-                        <select
-                          value={form.school_id}
-                          onChange={async (e) => {
-                            const v = e.target.value;
-                            setError(null);
-                            setForm((p) => ({
-                              ...p,
-                              school_id: v,
-                              school_order_id: "",
-                              supplier_id: "",
-                            }));
-                            setItems([]);
-                            setSchoolOrders([]);
-                            if (v) await fetchCompleteOrdersForSchool(Number(v));
-                          }}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          title="School"
-                        >
-                          <option value="">Select</option>
-                          {schools.map((s) => (
-                            <option key={s.id} value={String(s.id)}>
-                              {s.name}
-                              {s.city ? ` • ${s.city}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <div className="col-span-12 md:col-span-2">
+                          <MiniLabel>School *</MiniLabel>
+                          <select
+                            value={form.school_id}
+                            onChange={async (e) => {
+                              const v = e.target.value;
+                              setError(null);
+                              setForm((p) => ({
+                                ...p,
+                                school_id: v,
+                                supplier_id: "",
+                                school_order_id: "",
+                              }));
+                              setItems([]);
+                              setSchoolOrders([]);
+                              if (v) await fetchCompleteOrdersForSchool(Number(v));
+                            }}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
+                            title="School"
+                          >
+                            <option value="">Select</option>
+                            {schools.map((s) => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.name}
+                                {s.city ? ` • ${s.city}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                      {/* Order */}
-                      <div className="col-span-12 md:col-span-4">
-                        <MiniLabel>Order *</MiniLabel>
-                        <select
-                          value={form.school_order_id}
-                          disabled={!form.school_id || ordersLoading}
-                          onChange={async (e) => {
-                            const v = e.target.value;
-                            setForm((p) => ({ ...p, school_order_id: v }));
-                            setItems([]);
-                            if (v) await hydrateFromSelectedOrder(Number(v));
-                          }}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
-                          title="Order"
-                        >
-                          <option value="">
-                            {ordersLoading ? "Loading..." : form.school_id ? "Select order" : "Select school first"}
-                          </option>
-                          {schoolOrders.map((o) => (
-                            <option key={o.id} value={String(o.id)}>
-                              {orderLabel(o)}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        {/* Supplier (depends on selected School) */}
+                        <div className="col-span-12 md:col-span-3">
+                          <MiniLabel>Supplier *</MiniLabel>
+                          <select
+                            value={form.supplier_id}
+                            disabled={!form.school_id || ordersLoading}
+                            onChange={(e) => {
+                              const sid = e.target.value;
 
-                      {/* Supplier */}
-                      <div className="col-span-12 md:col-span-2">
-                        <MiniLabel>Supplier *</MiniLabel>
-                        <select
-                          value={form.supplier_id}
-                          onChange={(e) => setForm((p) => ({ ...p, supplier_id: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          title="Supplier"
-                        >
-                          <option value="">Select</option>
-                          {suppliers.map((s) => (
-                            <option key={s.id} value={String(s.id)}>
-                              {s.name}
+                              // Supplier change => Order + items reset because orders list will change
+                              setForm((p) => ({
+                                ...p,
+                                supplier_id: sid,
+                                school_order_id: "",
+                              }));
+                              setItems([]);
+                            }}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
+                            title="Supplier"
+                          >
+                            <option value="">
+                              {ordersLoading ? "Loading..." : form.school_id ? "Select supplier" : "Select school first"}
                             </option>
-                          ))}
-                        </select>
-                      </div>
+
+                            {(form.school_id ? suppliersForSelectedSchool : suppliers).map((s) => (
+                              <option key={s.id} value={String(s.id)}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Order (depends on selected Supplier too) */}
+                        <div className="col-span-12 md:col-span-4">
+                          <MiniLabel>Order *</MiniLabel>
+                          <select
+                            value={form.school_order_id}
+                            disabled={!form.school_id || !form.supplier_id || ordersLoading}
+                            onChange={async (e) => {
+                              const v = e.target.value;
+                              setForm((p) => ({ ...p, school_order_id: v }));
+                              setItems([]);
+                              if (v) await hydrateFromSelectedOrder(Number(v));
+                            }}
+                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
+                            title="Order"
+                          >
+                            <option value="">
+                              {ordersLoading
+                                ? "Loading..."
+                                : !form.school_id
+                                ? "Select school first"
+                                : !form.supplier_id
+                                ? "Select supplier first"
+                                : "Select order"}
+                            </option>
+
+                            {filteredOrdersForSchoolAndSupplier.map((o) => (
+                              <option key={o.id} value={String(o.id)}>
+                                {orderLabel(o)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+
 
                       {/* Doc Type */}
                       <div className="col-span-6 md:col-span-2">
