@@ -114,7 +114,9 @@ const AvailabilityClient: React.FC = () => {
 
   const [schools, setSchools] = useState<School[]>([]);
   const [schoolId, setSchoolId] = useState<number | "">("");
-  const [session, setSession] = useState<string>("");
+
+  // ✅ Default session selected (first option) by default
+  const [session, setSession] = useState<string>(() => SESSION_OPTIONS[0] || "");
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<AvailabilityResponse | null>(null);
@@ -607,7 +609,12 @@ const AvailabilityClient: React.FC = () => {
                                       <div className="text-xs text-slate-500 mt-0.5 space-y-0.5">
                                         <div>
                                           {b.subject && <span>{b.subject}</span>}
-                                          {b.code && <span>{b.subject ? " • " : ""}{b.code}</span>}
+                                          {b.code && (
+                                            <span>
+                                              {b.subject ? " • " : ""}
+                                              {b.code}
+                                            </span>
+                                          )}
                                         </div>
 
                                         {(pubName || supName) && (
