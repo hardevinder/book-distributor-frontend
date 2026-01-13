@@ -9,12 +9,12 @@
  * - School optional
  *
  * ⚠️ Endpoints (change if your backend uses different routes):
- *   LIST:   GET    /api/direct-receipts
- *   CREATE: POST   /api/direct-receipts
- *   GET:    GET    /api/direct-receipts/:id
- *   PDF:    GET    /api/direct-receipts/:id/pdf
- *   STATUS: PATCH  /api/direct-receipts/:id/status
- *   UPDATE: PATCH  /api/direct-receipts/:id          (used in Convert modal)
+ *   LIST:   GET    /api/supplier-receipts
+ *   CREATE: POST   /api/supplier-receipts
+ *   GET:    GET    /api/supplier-receipts/:id
+ *   PDF:    GET    /api/supplier-receipts/:id/pdf
+ *   STATUS: PATCH  /api/supplier-receipts/:id/status
+ *   UPDATE: PATCH  /api/supplier-receipts/:id          (used in Convert modal)
  *
  * ✅ Added now:
  * - “+ New Book” button in Create modal (next to Add / Reload Books)
@@ -545,7 +545,6 @@ export default function DirectReceiptsPageClient() {
   const bookMeta = (b?: BookLite | null) => {
     if (!b) return "";
     return [
-      b.class_name ? `C:${b.class_name}` : null,
       b.subject ? `S:${b.subject}` : null,
       b.code ? `Code:${b.code}` : null,
       b.isbn ? `ISBN:${b.isbn}` : null,
@@ -554,29 +553,34 @@ export default function DirectReceiptsPageClient() {
       .join(" • ");
   };
 
-  const addBookLine = (bookIdNum: number) => {
-    if (!bookIdNum) return;
-    const b = books.find((x) => Number(x.id) === Number(bookIdNum));
-    const title = b?.title || `Book #${bookIdNum}`;
-    const meta = bookMeta(b);
 
-    setItems((p) => {
-      if (p.some((x) => Number(x.book_id) === Number(bookIdNum))) return p; // avoid duplicate
-      return [
-        ...p,
-        {
-          book_id: bookIdNum,
-          title,
-          meta,
-          qty: "1",
-          unit_price: "",
-          disc_pct: "",
-          disc_amt: "",
-          disc_mode: "NONE",
-        },
-      ];
-    });
-  };
+  const addBookLine = (bookIdNum: number, bookObj?: BookLite | null) => {
+  if (!bookIdNum) return;
+
+  // ✅ Use passed book first (for newly created book), fallback to state list
+  const b = bookObj || books.find((x) => Number(x.id) === Number(bookIdNum)) || null;
+
+  const title = b?.title || `Book #${bookIdNum}`;
+  const meta = bookMeta(b);
+
+  setItems((p) => {
+    if (p.some((x) => Number(x.book_id) === Number(bookIdNum))) return p; // avoid duplicate
+    return [
+      ...p,
+      {
+        book_id: bookIdNum,
+        title,
+        meta,
+        qty: "1",
+        unit_price: "",
+        disc_pct: "",
+        disc_amt: "",
+        disc_mode: "NONE",
+      },
+    ];
+  });
+};
+
 
   /* ------------ ✅ Create Book (NEW) ------------ */
 
@@ -622,17 +626,21 @@ export default function DirectReceiptsPageClient() {
         isbn: created?.isbn ?? payload.isbn ?? null,
       };
 
-      setBooks((prev) => {
+    setBooks((prev) => {
         const exists = prev.some((b) => Number(b.id) === createdId);
         return exists ? prev : [newBook, ...prev];
       });
 
-      // ✅ Auto-add to lines
-      addBookLine(createdId);
+      // ✅ Auto-select in dropdown
+      setQuickBookId(String(createdId));
+
+      // ✅ Auto-add to lines (use newBook immediately, no dependency on state refresh)
+      addBookLine(createdId, newBook);
 
       // ✅ Reset + close
       setBookForm({ title: "", publisher_id: "", mrp: "", class_name: "", subject: "", code: "", isbn: "" });
       setBookCreateOpen(false);
+
     } catch (e: any) {
       console.error(e);
       setBookCreateError(e?.response?.data?.error || e?.response?.data?.message || e?.message || "Create book failed");
