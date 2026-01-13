@@ -219,7 +219,7 @@ const SchoolPublisherBillingPageClient: React.FC = () => {
   const [schoolId, setSchoolId] = useState<number | "">("");
   const [supplierId, setSupplierId] = useState<number | "">("");
 
-  const [session, setSession] = useState<string>("");
+  const [session, setSession] = useState<string>(() => SESSION_OPTIONS[0] || "");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
 
