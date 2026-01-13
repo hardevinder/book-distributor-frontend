@@ -278,7 +278,7 @@ const AvailabilityClient: React.FC = () => {
               </div>
 
               <div className="min-w-0">
-                <div className="text-base font-bold truncate">School Availability</div>
+                <div className="text-base font-bold truncate">School Stock Status</div>
                 <div className="text-xs text-slate-500 truncate">
                   {selectedSchool?.name ? (
                     <>
