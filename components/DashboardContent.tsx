@@ -264,7 +264,7 @@ const DashboardContent: React.FC = () => {
       },
 
       {
-        title: "Availability",
+        title: "Stock Status",
         href: "/school-orders/availability",
         icon: <ClipboardList className="h-5 w-5" />,
         accent: "slate",
