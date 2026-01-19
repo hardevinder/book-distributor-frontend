@@ -152,7 +152,7 @@ const formatDate = (value?: string | null) => {
 const normalize = (v: any) => String(v ?? "").toLowerCase().trim();
 
 const pickInvoiceNo = (x: SupplierInvoiceLite) =>
-  x.invoice_no || x.receipt_no || x.bill_no || x.doc_no || `#${x.id}`;
+  x.invoice_no || x.doc_no || x.bill_no || x.receipt_no || `#${x.id}`;
 
 const pickInvoiceDate = (x: SupplierInvoiceLite) =>
   x.invoice_date || x.doc_date || x.received_date || x.createdAt || null;
@@ -738,17 +738,11 @@ const SuppliersPageClient: React.FC = () => {
           return {
             id: Number(x.id),
 
-            invoice_no:
-              x.invoice_no ??
-              x.invoiceNo ??
-              x.bill_no ??
-              x.billNo ??
-              x.receipt_no ??
-              x.receiptNo ??
-              null,
-            receipt_no: x.receipt_no ?? x.receiptNo ?? null,
-            bill_no: x.bill_no ?? x.billNo ?? null,
-            doc_no: x.doc_no ?? x.docNo ?? null,
+            invoice_no: x.invoice_no ?? x.invoiceNo ?? null, // supplier invoice no
+            doc_no: x.doc_no ?? x.docNo ?? null,             // supplier doc no (invoice/challan)
+            bill_no: x.bill_no ?? x.billNo ?? null,          // supplier bill no (if used)
+            receipt_no: x.receipt_no ?? x.receiptNo ?? null, // your system receipt/GRN
+
 
             invoice_date: x.invoice_date ?? x.invoiceDate ?? null,
             doc_date: x.doc_date ?? x.docDate ?? null,
@@ -892,17 +886,11 @@ const SuppliersPageClient: React.FC = () => {
         const detail: SupplierInvoiceDetail = {
           id: Number(x?.id ?? invoiceId),
 
-          invoice_no:
-            x?.invoice_no ??
-            x?.invoiceNo ??
-            x?.bill_no ??
-            x?.billNo ??
-            x?.receipt_no ??
-            x?.receiptNo ??
-            null,
-          receipt_no: x?.receipt_no ?? x?.receiptNo ?? null,
-          bill_no: x?.bill_no ?? x?.billNo ?? null,
-          doc_no: x?.doc_no ?? x?.docNo ?? null,
+        invoice_no: x?.invoice_no ?? x?.invoiceNo ?? null,
+        doc_no: x?.doc_no ?? x?.docNo ?? null,
+        bill_no: x?.bill_no ?? x?.billNo ?? null,
+        receipt_no: x?.receipt_no ?? x?.receiptNo ?? null,
+
 
           invoice_date: x?.invoice_date ?? x?.invoiceDate ?? null,
           doc_date: x?.doc_date ?? x?.docDate ?? null,

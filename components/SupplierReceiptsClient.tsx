@@ -113,6 +113,10 @@ type SupplierReceiptItem = {
   net_amount?: number | string;
 
   book?: BookLite | null;
+
+  is_specimen?: number | boolean;
+  specimen_reason?: string | null;
+
 };
 
 type ReceiveDocType = "CHALLAN" | "INVOICE";
@@ -160,6 +164,30 @@ type SupplierReceipt = {
   // optional posted flag if backend includes (future)
   posted_at?: string | null;
 };
+type FormState = {
+  school_id: string;
+  school_order_id: string;
+  supplier_id: string;
+
+  receive_doc_type: ReceiveDocType;
+  doc_no: string;
+  doc_date: string;
+  invoice_no: string;
+
+  invoice_date: string;
+  received_date: string;
+  status: "draft" | "received";
+  remarks: string;
+
+  bill_disc_pct: string;
+  bill_disc_amt: string;
+
+  shipping_charge: string;
+  other_charge: string;
+  round_off: string;
+};
+
+
 
 type ListResponse = { receipts: SupplierReceipt[] };
 type GetResponse = { receipt: SupplierReceipt };
@@ -225,7 +253,7 @@ const normalizeItemForView = (it: SupplierReceiptItem) => {
   const net_unit_price =
     it.net_unit_price ?? (num(received_qty) > 0 ? num(line_amount) / num(received_qty) : num(unit_price));
 
-  return {
+    return {
     ...it,
     ordered_qty,
     received_qty,
@@ -234,7 +262,12 @@ const normalizeItemForView = (it: SupplierReceiptItem) => {
     discount_amt,
     net_unit_price,
     line_amount,
+
+    // ✅ specimen fields (safe normalize)
+    is_specimen: Boolean((it as any).is_specimen),
+    specimen_reason: (it as any).specimen_reason ?? null,
   };
+
 };
 
 const pickSchoolNameFromReceipt = (r: SupplierReceipt) => {
@@ -264,6 +297,9 @@ type UiItem = {
   disc_amt: string;
 
   disc_mode: "PERCENT" | "AMOUNT" | "NONE";
+  spec_qty: string;
+  spec_reason: string;
+
 };
 
 const computeRow = (qty: number, unit: number, discAmtPerUnit: number) => {
@@ -370,6 +406,10 @@ export default function SupplierReceiptsPageClient() {
       shipping_charge: "",
       other_charge: "",
       round_off: "",
+
+      spec_qty: "",
+      spec_reason: "",
+
     };
   });
 
@@ -566,7 +606,7 @@ export default function SupplierReceiptsPageClient() {
     const autoSupplierId = row.supplier_id || row.supplier?.id || null;
 
     const orderItems = row.items || [];
-    const mapped: UiItem[] = orderItems
+  const mapped: UiItem[] = (orderItems || [])
       .map((it) => {
         const ordered = Math.max(0, Math.floor(getOrderedQty(it)));
         const already = Math.max(0, Math.floor(num(it.received_qty)));
@@ -604,24 +644,34 @@ export default function SupplierReceiptsPageClient() {
           already_received_qty: already,
           pending_qty: pending,
 
+          // ✅ default receive = pending
           rec_qty: String(pending),
-          unit_price: up ? String(up) : "",
 
-          disc_pct: discPct ? String(Math.round(discPct * 100) / 100) : "",
-          disc_amt: discAmt ? String(Math.round(discAmt * 100) / 100) : "",
+          // ✅ blank allowed for challan
+          unit_price: up > 0 ? String(up) : "",
+
+          // ✅ keep 2 decimals max
+          disc_pct: discPct > 0 ? String(Math.round(discPct * 100) / 100) : "",
+          disc_amt: discAmt > 0 ? String(Math.round(discAmt * 100) / 100) : "",
           disc_mode: discMode,
+
+          // ✅ specimen inputs (separate row will be created in payload)
+          spec_qty: "",
+          spec_reason: "",
         };
       })
+      // ✅ only valid ordered books
       .filter((x) => x.book_id && x.ordered_qty > 0);
 
-    setForm((p) => ({
-      ...p,
-      school_order_id: String(orderId),
-      supplier_id: autoSupplierId ? String(autoSupplierId) : p.supplier_id,
-    }));
 
-    setItems(mapped);
-  };
+        setForm((p) => ({
+          ...p,
+          school_order_id: String(orderId),
+          supplier_id: autoSupplierId ? String(autoSupplierId) : p.supplier_id,
+        }));
+
+        setItems(mapped);
+      };
 
   /* ------------ Create modal ------------ */
 
@@ -633,28 +683,29 @@ export default function SupplierReceiptsPageClient() {
 
     const todayStr = todayISO();
 
-    setForm({
-      school_id: "",
-      school_order_id: "",
-      supplier_id: "",
+  setForm({
+        school_id: "",
+        school_order_id: "",
+        supplier_id: "",
 
-      receive_doc_type: "INVOICE",
-      doc_no: "",
-      doc_date: todayStr,
-      invoice_no: "",
+        receive_doc_type: "INVOICE",
+        doc_no: "",
+        doc_date: todayStr,
+        invoice_no: "",
 
-      invoice_date: "",
-      received_date: todayStr,
-      status: "draft",
-      remarks: "",
+        invoice_date: "",
+        received_date: todayStr,
+        status: "draft",
+        remarks: "",
 
-      bill_disc_pct: "",
-      bill_disc_amt: "",
+        bill_disc_pct: "",
+        bill_disc_amt: "",
 
-      shipping_charge: "",
-      other_charge: "",
-      round_off: "",
-    });
+        shipping_charge: "",
+        other_charge: "",
+        round_off: "",
+      });
+
 
     setSchoolOrders([]);
     setItems([]);
@@ -671,6 +722,12 @@ export default function SupplierReceiptsPageClient() {
 
   const setRowRecQty = (idx: number, v: string) =>
     setItems((p) => p.map((r, i) => (i === idx ? { ...r, rec_qty: v } : r)));
+  const setRowSpecQty = (idx: number, v: string) =>
+    setItems((p) => p.map((r, i) => (i === idx ? { ...r, spec_qty: v } : r)));
+
+  const setRowSpecReason = (idx: number, v: string) =>
+    setItems((p) => p.map((r, i) => (i === idx ? { ...r, spec_reason: v } : r)));
+
 
   const setRowUnit = (idx: number, v: string) => {
     setItems((p) =>
@@ -803,11 +860,14 @@ export default function SupplierReceiptsPageClient() {
   const isInvoice = form.receive_doc_type === "INVOICE";
 
   const anyMissingRateCreate = useMemo(() => {
-    if (!isInvoice) {
+    // INVOICE requires rates for PAID qty
+    if (isInvoice) {
       return items.some((x) => Math.floor(num(x.rec_qty)) > 0 && num(x.unit_price) <= 0);
     }
+    // CHALLAN: allow missing rate (draft logic handled by status)
     return false;
   }, [items, isInvoice]);
+
 
   /* ------------ Submit (Create) ------------ */
 
@@ -815,8 +875,10 @@ export default function SupplierReceiptsPageClient() {
     const supplier_id = Number(form.supplier_id);
 
     const cleanItems = items
-      .map((it) => {
-        const received_qty = Math.max(0, Math.floor(num(it.rec_qty)));
+      .flatMap((it) => {
+        const paidQty = Math.max(0, Math.floor(num(it.rec_qty)));
+        const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+
         const ordered_qty = Math.max(0, Math.floor(num(it.ordered_qty)));
         const unit_price = Math.max(0, num(it.unit_price)); // may be 0 for challan
 
@@ -832,30 +894,44 @@ export default function SupplierReceiptsPageClient() {
         } else if (it.disc_mode === "PERCENT" && discPct > 0) {
           item_discount_type = "PERCENT";
           item_discount_value = discPct;
-        } else {
-          if (discAmt > 0) {
-            item_discount_type = "AMOUNT";
-            item_discount_value = discAmt;
-          } else if (discPct > 0) {
-            item_discount_type = "PERCENT";
-            item_discount_value = discPct;
-          }
         }
 
-        return {
-          book_id: it.book_id,
-          ordered_qty,
-          received_qty,
+        const rows: any[] = [];
 
-          // backend uses qty/rate
-          qty: received_qty,
-          rate: unit_price,
+        // ✅ Paid line
+        if (paidQty > 0) {
+          rows.push({
+            book_id: it.book_id,
+            ordered_qty,
+            received_qty: paidQty,
+            qty: paidQty,
+            rate: unit_price,
+            item_discount_type,
+            item_discount_value,
+            is_specimen: 0,
+            specimen_reason: null,
+          });
+        }
 
-          item_discount_type,
-          item_discount_value,
-        };
+        // ✅ Specimen line (rate 0, no discount)
+        if (specQty > 0) {
+          rows.push({
+            book_id: it.book_id,
+            ordered_qty,
+            received_qty: specQty,
+            qty: specQty,
+            rate: 0,
+            item_discount_type: "NONE",
+            item_discount_value: null,
+            is_specimen: 1,
+            specimen_reason: String(it.spec_reason || "").trim() || null,
+          });
+        }
+
+        return rows;
       })
       .filter((x) => x.book_id && x.received_qty > 0);
+
 
     const billPct = clamp(num(form.bill_disc_pct), 0, 100);
     const billAmt = clamp(num(form.bill_disc_amt), 0, totalsBase.net);
@@ -877,11 +953,12 @@ export default function SupplierReceiptsPageClient() {
     // ✅ NEW policy mapping:
     // - INVOICE => send received
     // - CHALLAN => if any rate missing/0 => draft (backend will also force)
-    const anyZeroRate = cleanItems.some((x) => num(x.rate) <= 0);
+    const anyZeroRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
     const status: "draft" | "received" = docType === "INVOICE" ? "received" : anyZeroRate ? "draft" : "received";
 
     const payload: any = {
       supplier_id,
+      school_id: Number(form.school_id),
       school_order_id: Number(form.school_order_id),
 
       receive_doc_type: docType,
@@ -918,17 +995,22 @@ export default function SupplierReceiptsPageClient() {
 
     if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) return "Invoice No * required.";
 
-    const anyTooMuch = items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty);
-    if (anyTooMuch) return "Fix Rec. qty (cannot exceed pending).";
+   const anyTooMuchPaid = items.some(
+      (x) => Math.floor(num(x.rec_qty)) > x.pending_qty
+    );
+
+    if (anyTooMuchPaid) return "Fix qty (Paid cannot exceed pending).";
+
 
     const { cleanItems } = buildPayload();
     if (!cleanItems.length) return "Enter Rec. qty for at least 1 book.";
 
     // ✅ INVOICE needs rates
-    if (form.receive_doc_type === "INVOICE") {
-      const anyMissingRate = cleanItems.some((x) => num(x.rate) <= 0);
-      if (anyMissingRate) return "Invoice requires rate for all received items.";
+      if (form.receive_doc_type === "INVOICE") {
+      const anyMissingRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
+      if (anyMissingRate) return "Invoice requires rate for all PAID items.";
     }
+
 
     return null;
   };
@@ -1925,6 +2007,8 @@ export default function SupplierReceiptsPageClient() {
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Rec.</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec.</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left w-56">Specimen Reason</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
                               {isInvoice ? "Rate*" : "Rate"}
                             </th>
@@ -1936,129 +2020,166 @@ export default function SupplierReceiptsPageClient() {
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
                           </tr>
                         </thead>
-
                         <tbody>
-                          {items.map((it, idx) => {
+                         {items.map((it, idx) => {
                             const qty = Math.max(0, Math.floor(num(it.rec_qty)));
+
+                            // ✅ Specimen qty: use typed field + clamp limit 500
+                            const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+
                             const up = Math.max(0, num(it.unit_price));
                             const discAmt = Math.max(0, num(it.disc_amt));
+
+                            // totals ONLY for paid qty (rec_qty)
                             const row = computeRow(qty, up, discAmt);
 
-                            const tooMuch = qty > it.pending_qty;
+                          // ✅ validation:
+                          // - paid cannot exceed pending
+                          // - specimen can exceed pending (allowed)
+                          const tooMuchPaid = qty > it.pending_qty;
+
+
+                            // invoice requires rate ONLY if paid qty > 0
                             const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
 
-                            return (
-                              <tr key={it.book_id} className="hover:bg-slate-50">
-                                <td className="border-b border-slate-200 px-2 py-1.5">
-                                  <div className="font-medium text-slate-900">{it.title}</div>
-                                  <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
-                                </td>
+                         return (
+                                <tr key={it.book_id} className="hover:bg-slate-50">
+                                  <td className="border-b border-slate-200 px-2 py-1.5">
+                                    <div className="font-medium text-slate-900">{it.title}</div>
+                                    <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                  {it.pending_qty}
-                                </td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">{it.pending_qty}</td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "rec")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.rec_qty}
-                                    onChange={(e) => setRowRecQty(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "rec")}
-                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      tooMuch ? "border-rose-400 bg-rose-50" : "border-slate-300"
-                                    }`}
-                                    title="Received now"
-                                  />
-                                  {tooMuch ? (
-                                    <div className="text-[10px] text-rose-700 mt-1">Max: {it.pending_qty}</div>
-                                  ) : null}
-                                </td>
+                                  {/* Paid Receive Qty */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <input
+                                      ref={(el) => {
+                                        cellRefs.current[cellKey(idx, "rec")] = el;
+                                      }}
+                                      type="number"
+                                      min={0}
+                                      value={it.rec_qty}
+                                      onChange={(e) => setRowRecQty(idx, e.target.value)}
+                                      onWheel={preventWheelChange}
+                                      onKeyDown={(e) => onCellEnter(e, idx, "rec")}
+                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
+                                        tooMuchPaid ? "border-rose-400 bg-rose-50" : "border-slate-300"
+                                      }`}
+                                      title="Received now (Paid)"
+                                    />
+                                    {tooMuchPaid ? (
+                                      <div className="text-[10px] text-rose-700 mt-1">
+                                        Paid cannot exceed Pending: {it.pending_qty}
+                                      </div>
+                                    ) : null}
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "mrp")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.unit_price}
-                                    onChange={(e) => setRowUnit(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
-                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      missingRateInvoice ? "border-rose-400 bg-rose-50" : "border-slate-300"
-                                    }`}
-                                    title={isInvoice ? "Rate (required)" : "Rate (optional for challan draft)"}
-                                  />
-                                </td>
+                                  {/* Specimen Qty (can exceed pending) */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      value={it.spec_qty || ""}
+                                      onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                                      onWheel={preventWheelChange}
+                                      className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right bg-white"
+                                      title="Specimen qty (Rate will be 0)"
+                                    />
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "pct")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    max={100}
-                                    value={it.disc_pct}
-                                    onChange={(e) => setRowDiscPct(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "pct")}
-                                    className={`w-16 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      it.disc_mode === "PERCENT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                    }`}
-                                    title="% discount (auto sync Disc₹)"
-                                  />
-                                </td>
+                                  {/* Specimen Reason */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5">
+                                    <input
+                                      value={it.spec_reason || ""}
+                                      onChange={(e) => setRowSpecReason(idx, e.target.value)}
+                                      className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                                      placeholder="optional"
+                                      title="Specimen reason"
+                                    />
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "amt")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.disc_amt}
-                                    onChange={(e) => setRowDiscAmt(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "amt")}
-                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      it.disc_mode === "AMOUNT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                    }`}
-                                    title="Fixed discount per unit (auto sync %)"
-                                  />
-                                </td>
+                                  {/* Rate */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <input
+                                      ref={(el) => {
+                                        cellRefs.current[cellKey(idx, "mrp")] = el;
+                                      }}
+                                      type="number"
+                                      min={0}
+                                      value={it.unit_price}
+                                      onChange={(e) => setRowUnit(idx, e.target.value)}
+                                      onWheel={preventWheelChange}
+                                      onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
+                                        missingRateInvoice ? "border-rose-400 bg-rose-50" : "border-slate-300"
+                                      }`}
+                                      title={isInvoice ? "Rate (required for paid qty)" : "Rate (optional for challan draft)"}
+                                    />
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                  ₹{fmtMoney(row.grossLine)}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                  ₹{fmtMoney(row.netLine)}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
-                                  ₹{fmtMoney(row.netLine)}
-                                </td>
+                                  {/* % Disc */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <input
+                                      ref={(el) => {
+                                        cellRefs.current[cellKey(idx, "pct")] = el;
+                                      }}
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      value={it.disc_pct}
+                                      onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                                      onWheel={preventWheelChange}
+                                      onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+                                      className={`w-16 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
+                                        it.disc_mode === "PERCENT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
+                                      }`}
+                                      title="% discount (auto sync Disc₹)"
+                                    />
+                                  </td>
 
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
-                                    className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                    title="Remove line (does not change order)"
-                                  >
-                                    <Trash2 className="w-4 h-4 text-rose-600" />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
+                                  {/* Disc ₹ */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <input
+                                      ref={(el) => {
+                                        cellRefs.current[cellKey(idx, "amt")] = el;
+                                      }}
+                                      type="number"
+                                      min={0}
+                                      value={it.disc_amt}
+                                      onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                                      onWheel={preventWheelChange}
+                                      onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
+                                        it.disc_mode === "AMOUNT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
+                                      }`}
+                                      title="Fixed discount per unit (auto sync %)"
+                                    />
+                                  </td>
+
+                                  {/* Gross / Net / Amount (Paid only) */}
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.grossLine)}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">₹{fmtMoney(row.netLine)}</td>
+
+                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                                      className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                                      title="Remove line (does not change order)"
+                                    >
+                                      <Trash2 className="w-4 h-4 text-rose-600" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+
                           })}
+
                         </tbody>
+
                       </table>
 
                       <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
@@ -2162,7 +2283,7 @@ export default function SupplierReceiptsPageClient() {
 
                       <button
                         onClick={openPreview}
-                        disabled={items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)}
+                        disabled={items.some((x) => Math.floor(num(x.rec_qty)) + Math.floor(num(x.spec_qty)) > x.pending_qty)}
                         className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
                         title="Preview before saving"
                       >
@@ -2172,7 +2293,11 @@ export default function SupplierReceiptsPageClient() {
 
                       <button
                         onClick={submitCreate}
-                        disabled={creating || items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)}
+                        disabled={
+                          creating ||
+                          items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)
+                        }
+
                         className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
                         title="Save"
                       >
@@ -2183,143 +2308,200 @@ export default function SupplierReceiptsPageClient() {
                 </div>
 
                 {/* Preview Modal */}
-                {previewOpen && (
-                  <div className="fixed inset-0 z-[60] bg-black/60">
-                    <div className="h-full w-full p-2 sm:p-3">
-                      <div className="mx-auto w-full max-w-[1180px] h-[96vh]">
-                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-full flex flex-col">
-                          <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between">
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold truncate">
-                                Preview Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
-                              </div>
-                              <div className="mt-1 text-[11px] text-slate-600">
-                                <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(form.receive_doc_type)}`}>
-                                  {form.receive_doc_type}
-                                </span>{" "}
-                                <b className="ml-2">{form.doc_no || "-"}</b> • Doc Date: <b>{form.doc_date || "-"}</b> • GRN:{" "}
-                                <b>{form.received_date || "-"}</b>
-                                {form.remarks?.trim() ? (
-                                  <>
-                                    {" "}
-                                    • Remarks: <b>{form.remarks.trim()}</b>
-                                  </>
-                                ) : null}
-                              </div>
-
-                              {!isInvoice && anyMissingRateCreate ? (
-                                <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                                  This Challan will be saved as <b>DRAFT</b> because some rates are missing/0.
-                                </div>
+               {previewOpen && (
+                <div className="fixed inset-0 z-[60] bg-black/60">
+                  <div className="h-full w-full p-2 sm:p-3">
+                    <div className="mx-auto w-full max-w-[1180px] h-[96vh]">
+                      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-full flex flex-col">
+                        <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold truncate">
+                              Preview Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(form.receive_doc_type)}`}
+                              >
+                                {form.receive_doc_type}
+                              </span>{" "}
+                              <b className="ml-2">{form.doc_no || "-"}</b> • Doc Date: <b>{form.doc_date || "-"}</b> • GRN:{" "}
+                              <b>{form.received_date || "-"}</b>
+                              {form.remarks?.trim() ? (
+                                <>
+                                  {" "}
+                                  • Remarks: <b>{form.remarks.trim()}</b>
+                                </>
                               ) : null}
                             </div>
 
-                            <button
-                              onClick={() => setPreviewOpen(false)}
-                              className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                              title="Close preview"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
+                            {!isInvoice && anyMissingRateCreate ? (
+                              <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                                This Challan will be saved as <b>DRAFT</b> because some rates are missing/0.
+                              </div>
+                            ) : null}
                           </div>
 
-                          <div className="flex-1 min-h-0 p-3">
-                            <div className="h-full border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
-                              <div className="px-3 py-2 bg-slate-100 text-xs font-semibold">Lines</div>
-                              <div className="flex-1 min-h-0 overflow-auto">
-                                <table className="w-full text-xs border-collapse">
-                                  <thead className="bg-white sticky top-0">
-                                    <tr>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Rec</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Rate</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Disc</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Gross</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Net</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {items
-                                      .filter((x) => Math.floor(num(x.rec_qty)) > 0)
-                                      .map((it) => {
-                                        const qty = Math.max(0, Math.floor(num(it.rec_qty)));
-                                        const up = Math.max(0, num(it.unit_price));
-                                        const discAmt = Math.max(0, num(it.disc_amt));
-                                        const row = computeRow(qty, up, discAmt);
-                                        const discText =
-                                          it.disc_mode === "PERCENT"
-                                            ? `${fmtMoney(num(it.disc_pct))}%`
-                                            : it.disc_mode === "AMOUNT"
-                                            ? `₹${fmtMoney(num(it.disc_amt))}`
-                                            : "-";
+                          <button
+                            onClick={() => setPreviewOpen(false)}
+                            className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                            title="Close preview"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
 
-                                        return (
-                                          <tr key={it.book_id} className="hover:bg-slate-50">
-                                            <td className="border-b border-slate-200 px-3 py-2">
-                                              <div className="font-medium">{it.title}</div>
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              {up > 0 ? `₹${fmtMoney(up)}` : "-"}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              ₹{fmtMoney(row.grossLine)}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              ₹{fmtMoney(row.netLine)}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                              ₹{fmtMoney(row.netLine)}
-                                            </td>
-                                          </tr>
-                                        );
-                                      })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
+                        <div className="flex-1 min-h-0 p-3">
+                          <div className="h-full border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+                            <div className="px-3 py-2 bg-slate-100 text-xs font-semibold">Lines</div>
 
-                          <div className="border-t bg-white px-4 py-3">
-                            <div className="flex flex-wrap items-center gap-2 justify-end">
-                              <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                              <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                              <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                              <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                              <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
-                              <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
-                              <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
-                              <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                                <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                                <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                            <div className="flex-1 min-h-0 overflow-auto p-3">
+                              {/* ---------------- Paid Lines ---------------- */}
+                              <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                                <div className="px-3 py-2 bg-white text-xs font-semibold border-b border-slate-200">
+                                  Paid Lines
+                                </div>
+
+                                <div className="max-h-[40vh] overflow-auto">
+                                  <table className="w-full text-xs border-collapse">
+                                    <thead className="bg-white sticky top-0">
+                                      <tr>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Rec</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Rate</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Disc</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Gross</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Net</th>
+                                        <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {items
+                                        .filter((x) => Math.floor(num(x.rec_qty)) > 0)
+                                        .map((it) => {
+                                          const qty = Math.max(0, Math.floor(num(it.rec_qty)));
+                                          const up = Math.max(0, num(it.unit_price));
+                                          const discAmt = Math.max(0, num(it.disc_amt));
+                                          const row = computeRow(qty, up, discAmt);
+
+                                          const discText =
+                                            it.disc_mode === "PERCENT"
+                                              ? `${fmtMoney(num(it.disc_pct))}%`
+                                              : it.disc_mode === "AMOUNT"
+                                              ? `₹${fmtMoney(num(it.disc_amt))}`
+                                              : "-";
+
+                                          return (
+                                            <tr key={`paid-${it.book_id}`} className="hover:bg-slate-50">
+                                              <td className="border-b border-slate-200 px-3 py-2">
+                                                <div className="font-medium">{it.title}</div>
+                                              </td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                                {up > 0 ? `₹${fmtMoney(up)}` : "-"}
+                                              </td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.grossLine)}</td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.netLine)}</td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                                ₹{fmtMoney(row.netLine)}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+
+                                      {items.filter((x) => Math.floor(num(x.rec_qty)) > 0).length === 0 ? (
+                                        <tr>
+                                          <td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-500">
+                                            No paid lines.
+                                          </td>
+                                        </tr>
+                                      ) : null}
+                                    </tbody>
+                                  </table>
+                                </div>
                               </div>
 
-                              <div className="ml-2 flex items-center gap-2">
-                                <button
-                                  onClick={() => setPreviewOpen(false)}
-                                  className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                >
-                                  Back
-                                </button>
-                                <button
-                                  onClick={submitCreate}
-                                  disabled={creating}
-                                  className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                                >
-                                  {creating ? "Saving..." : "Confirm Save"}
-                                </button>
-                              </div>
+                              {/* ---------------- Specimen Lines ---------------- */}
+                              {items.filter((x) => Math.floor(num(x.spec_qty)) > 0).length > 0 ? (
+                                <div className="mt-4 border border-amber-200 rounded-2xl overflow-hidden">
+                                  <div className="px-3 py-2 bg-amber-50 text-xs font-semibold border-b border-amber-200">
+                                    Specimen Lines (Amount = ₹0)
+                                  </div>
+
+                                  <div className="max-h-[28vh] overflow-auto">
+                                    <table className="w-full text-xs border-collapse">
+                                      <thead className="bg-white sticky top-0">
+                                        <tr>
+                                          <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
+                                          <th className="border-b border-slate-200 px-3 py-2 text-right">Spec Qty</th>
+                                          <th className="border-b border-slate-200 px-3 py-2 text-left">Reason</th>
+                                          <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
+                                        </tr>
+                                      </thead>
+
+                                      <tbody>
+                                        {items
+                                          .filter((x) => Math.floor(num(x.spec_qty)) > 0)
+                                          .map((it) => (
+                                            <tr key={`spec-${it.book_id}`} className="hover:bg-slate-50">
+                                              <td className="border-b border-slate-200 px-3 py-2">
+                                                <div className="font-medium">{it.title}</div>
+                                              </td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
+                                                {Math.max(0, Math.floor(num(it.spec_qty)))}
+                                              </td>
+                                              <td className="border-b border-slate-200 px-3 py-2">{it.spec_reason?.trim() || "-"}</td>
+                                              <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">₹0.00</td>
+                                            </tr>
+                                          ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         </div>
 
-                        <div className="h-2" />
+                        <div className="border-t bg-white px-4 py-3">
+                          <div className="flex flex-wrap items-center gap-2 justify-end">
+                            <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
+                            <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+                            <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
+                            <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
+                            <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
+                            <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
+                            <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
+                            <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                              <div className="text-[10px] opacity-80 leading-none">Grand</div>
+                              <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                            </div>
+
+                            <div className="ml-2 flex items-center gap-2">
+                              <button
+                                onClick={() => setPreviewOpen(false)}
+                                className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                              >
+                                Back
+                              </button>
+                              <button
+                                onClick={submitCreate}
+                                disabled={creating}
+                                className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                              >
+                                {creating ? "Saving..." : "Confirm Save"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
+
+                      <div className="h-2" />
                     </div>
                   </div>
-                )}
+                </div>
+              )}
+
               </div>
             </div>
           </div>

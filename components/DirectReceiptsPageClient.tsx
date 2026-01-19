@@ -25,6 +25,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
+import SupplierReceiptAllocationsModal from "@/components/SupplierReceiptAllocationsModal";
 import {
   ChevronLeft,
   FileText,
@@ -101,8 +102,13 @@ type DirectReceiptItem = {
   discount_amount?: number | string;
   net_amount?: number | string;
 
+  // ✅ specimen support (if present from backend)
+  is_specimen?: 0 | 1 | boolean;
+  specimen_reason?: string | null;
+
   book?: BookLite | null;
 };
+
 
 type DirectReceipt = {
   id: number;
@@ -218,8 +224,18 @@ const canEditItems = (r?: DirectReceipt | null) => {
 };
 
 const normalizeItemForView = (it: DirectReceiptItem) => {
-  const received_qty = it.received_qty ?? it.qty ?? 0;
-  const unit_price = it.unit_price ?? it.rate ?? 0;
+  // ✅ If received_qty is 0 but qty exists, use qty (because backend stores qty, not received_qty)
+  const received_qty =
+    (it.received_qty == null ? null : Number(it.received_qty)) && Number(it.received_qty) > 0
+      ? it.received_qty
+      : it.qty ?? it.received_qty ?? 0;
+
+  // ✅ If unit_price is 0 but rate exists, use rate
+  const unit_price =
+    (it.unit_price == null ? null : Number(it.unit_price)) && Number(it.unit_price) > 0
+      ? it.unit_price
+      : it.rate ?? it.unit_price ?? 0;
+
 
   let discount_pct = it.discount_pct ?? 0;
   let discount_amt = it.discount_amt ?? 0;
@@ -251,7 +267,13 @@ type UiItem = {
   title: string;
   meta: string;
 
+  // ✅ paid qty
   qty: string;
+
+  // ✅ specimen qty (free)
+  spec_qty: string;
+  spec_reason: string;
+
   unit_price: string;
 
   disc_pct: string;
@@ -259,6 +281,7 @@ type UiItem = {
 
   disc_mode: "PERCENT" | "AMOUNT" | "NONE";
 };
+
 
 const computeRow = (qty: number, unit: number, discAmtPerUnit: number) => {
   const q = clamp(num(qty), 0, 999999999);
@@ -337,17 +360,23 @@ export default function DirectReceiptsPageClient() {
   const [viewRow, setViewRow] = useState<DirectReceipt | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  // ✅ Allocations modal
+  const [allocOpen, setAllocOpen] = useState(false);
+
 
   // ✅ Convert/Edit modal (Challan -> Invoice with price update)
   const [convertOpen, setConvertOpen] = useState(false);
   const [convertSaving, setConvertSaving] = useState(false);
   const [convert, setConvert] = useState(() => ({
+    purchase_mode: "DIRECT" as any,
+    school_order_id: null as any,
     receive_doc_type: "INVOICE" as ReceiveDocType,
     doc_no: "",
     doc_date: todayISO(),
     received_date: todayISO(),
     remarks: "",
   }));
+
 
   type ConvertLine = {
     book_id: number;
@@ -566,18 +595,22 @@ export default function DirectReceiptsPageClient() {
   setItems((p) => {
     if (p.some((x) => Number(x.book_id) === Number(bookIdNum))) return p; // avoid duplicate
     return [
-      ...p,
-      {
-        book_id: bookIdNum,
-        title,
-        meta,
-        qty: "1",
-        unit_price: "",
-        disc_pct: "",
-        disc_amt: "",
-        disc_mode: "NONE",
-      },
-    ];
+        ...p,
+        {
+          book_id: bookIdNum,
+          title,
+          meta,
+
+          qty: "1",
+          spec_qty: "",
+          spec_reason: "",
+
+          unit_price: "",
+          disc_pct: "",
+          disc_amt: "",
+          disc_mode: "NONE",
+        },
+      ];
   });
 };
 
@@ -650,6 +683,13 @@ export default function DirectReceiptsPageClient() {
   };
 
   /* ------------ Row discount syncing (Create) ------------ */
+
+  const setRowSpecQty = (idx: number, v: string) =>
+  setItems((p) => p.map((r, i) => (i === idx ? { ...r, spec_qty: v } : r)));
+
+  const setRowSpecReason = (idx: number, v: string) =>
+    setItems((p) => p.map((r, i) => (i === idx ? { ...r, spec_reason: v } : r)));
+
 
   const setRowQty = (idx: number, v: string) => setItems((p) => p.map((r, i) => (i === idx ? { ...r, qty: v } : r)));
 
@@ -783,12 +823,11 @@ export default function DirectReceiptsPageClient() {
 
   const isInvoice = form.receive_doc_type === "INVOICE";
 
-  const anyMissingRateCreate = useMemo(() => {
-    if (!isInvoice) {
-      return items.some((x) => Math.floor(num(x.qty)) > 0 && num(x.unit_price) <= 0);
-    }
-    return false;
-  }, [items, isInvoice]);
+const anyMissingRatePaid = useMemo(() => {
+  return items.some((x) => Math.floor(num(x.qty)) > 0 && num(x.unit_price) <= 0);
+}, [items]);
+
+
 
   /* ------------ Submit (Create) ------------ */
 
@@ -796,42 +835,65 @@ export default function DirectReceiptsPageClient() {
     const supplier_id = form.supplier_id ? Number(form.supplier_id) : null;
     const school_id = form.school_id ? Number(form.school_id) : null;
 
-    const cleanItems = items
-      .map((it) => {
-        const qty = Math.max(0, Math.floor(num(it.qty)));
-        const rate = Math.max(0, num(it.unit_price));
+   const cleanItems = items
+  .flatMap((it) => {
+    const paidQty = Math.max(0, Math.floor(num(it.qty)));
+    const specQty = Math.max(0, Math.floor(num(it.spec_qty)));
+    const rate = Math.max(0, num(it.unit_price));
 
-        const discPct = Math.max(0, num(it.disc_pct));
-        const discAmt = Math.max(0, num(it.disc_amt));
+    const discPct = Math.max(0, num(it.disc_pct));
+    const discAmt = Math.max(0, num(it.disc_amt));
 
-        let item_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
-        let item_discount_value: number | null = null;
+    let item_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
+    let item_discount_value: number | null = null;
 
-        if (it.disc_mode === "AMOUNT" && discAmt > 0) {
-          item_discount_type = "AMOUNT";
-          item_discount_value = discAmt;
-        } else if (it.disc_mode === "PERCENT" && discPct > 0) {
-          item_discount_type = "PERCENT";
-          item_discount_value = discPct;
-        } else {
-          if (discAmt > 0) {
-            item_discount_type = "AMOUNT";
-            item_discount_value = discAmt;
-          } else if (discPct > 0) {
-            item_discount_type = "PERCENT";
-            item_discount_value = discPct;
-          }
-        }
+    if (it.disc_mode === "AMOUNT" && discAmt > 0) {
+      item_discount_type = "AMOUNT";
+      item_discount_value = discAmt;
+    } else if (it.disc_mode === "PERCENT" && discPct > 0) {
+      item_discount_type = "PERCENT";
+      item_discount_value = discPct;
+    } else {
+      if (discAmt > 0) {
+        item_discount_type = "AMOUNT";
+        item_discount_value = discAmt;
+      } else if (discPct > 0) {
+        item_discount_type = "PERCENT";
+        item_discount_value = discPct;
+      }
+    }
 
-        return {
-          book_id: it.book_id,
-          qty,
-          rate,
-          item_discount_type,
-          item_discount_value,
-        };
-      })
-      .filter((x) => x.book_id && x.qty > 0);
+    const out: any[] = [];
+
+    // ✅ Paid line
+    if (it.book_id && paidQty > 0) {
+      out.push({
+        book_id: it.book_id,
+        qty: paidQty,
+        rate,
+        item_discount_type,
+        item_discount_value,
+        is_specimen: 0,
+      });
+    }
+
+    // ✅ Specimen line (free)
+    if (it.book_id && specQty > 0) {
+      out.push({
+        book_id: it.book_id,
+        qty: specQty,
+        rate: 0,
+        item_discount_type: "NONE",
+        item_discount_value: null,
+        is_specimen: 1,
+        specimen_reason: (it.spec_reason || "").trim() || null,
+      });
+    }
+
+    return out;
+  })
+  .filter((x) => x.book_id && x.qty > 0);
+
 
     const billPct = clamp(num(form.bill_disc_pct), 0, 100);
     const billAmt = clamp(num(form.bill_disc_amt), 0, totalsBase.net);
@@ -850,7 +912,7 @@ export default function DirectReceiptsPageClient() {
     const docType = form.receive_doc_type;
     const docNo = form.doc_no?.trim() || null;
 
-    const anyZeroRate = cleanItems.some((x) => num(x.rate) <= 0);
+    const anyZeroRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
     const status: "draft" | "received" = docType === "INVOICE" ? "received" : anyZeroRate ? "draft" : "received";
 
     const payload: any = {
@@ -892,8 +954,9 @@ export default function DirectReceiptsPageClient() {
     if (!cleanItems.length) return "Enter qty for at least 1 book.";
 
     if (form.receive_doc_type === "INVOICE") {
-      const anyMissingRate = cleanItems.some((x) => num(x.rate) <= 0);
-      if (anyMissingRate) return "Invoice requires rate for all items.";
+     const anyMissingRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
+      if (anyMissingRate) return "Invoice requires rate for paid items.";
+
     }
 
     return null;
@@ -945,6 +1008,7 @@ export default function DirectReceiptsPageClient() {
   /* ------------ View receipt ------------ */
 
   const openView = async (id: number) => {
+    setAllocOpen(false); // ✅ view change hote hi allocation modal band
     setViewOpen(true);
     setViewId(id);
     setViewRow(null);
@@ -1022,10 +1086,15 @@ export default function DirectReceiptsPageClient() {
       remarks: viewRow.remarks || "",
     } as any);
 
-    const vItems = (viewRow.items || []).map(normalizeItemForView);
-    const mapped: ConvertLine[] = vItems.map((it) => {
+   const vItems = (viewRow.items || []).map(normalizeItemForView);
+
+    // ✅ skip specimen lines in convert modal
+    const mapped: ConvertLine[] = vItems
+      .filter((it: any) => !it?.is_specimen)
+      .map((it) => {
+
       const title = it.book?.title || `Book #${it.book_id}`;
-      const qty = Math.max(0, Math.floor(num(it.qty ?? it.received_qty ?? 0)));
+      const qty = Math.max(0, Math.floor(num(it.received_qty ?? it.qty ?? 0)));
       const rate = String(num(it.rate ?? it.unit_price ?? 0) || "");
 
       const t = String(it.item_discount_type || "").toUpperCase();
@@ -1187,7 +1256,25 @@ export default function DirectReceiptsPageClient() {
           item_discount_value,
         };
       })
+      
       .filter((x) => x.book_id && x.qty > 0);
+
+      // ✅ keep existing specimen lines (so convert doesn't delete them)
+const existingItems = (viewRow.items || []).map(normalizeItemForView);
+
+const specimenPayload = existingItems
+  .filter((it: any) => it?.is_specimen)
+  .map((it: any) => ({
+    book_id: it.book_id,
+    qty: Math.max(0, Math.floor(num(it.received_qty ?? it.qty ?? 0))),
+    rate: 0,
+    item_discount_type: "NONE",
+    item_discount_value: null,
+    is_specimen: 1,
+    specimen_reason: (it.specimen_reason || "").trim() || null,
+  }))
+  .filter((x) => x.book_id && x.qty > 0);
+
 
     setConvertSaving(true);
     try {
@@ -1201,7 +1288,7 @@ export default function DirectReceiptsPageClient() {
         invoice_no: docNo,
         invoice_date: (convert as any).doc_date || null,
 
-        items: itemsPayload,
+        items: [...itemsPayload, ...specimenPayload],
       };
 
       const res = await api.patch(`${API_BASE}/${viewId}`, patchPayload);
@@ -1560,6 +1647,20 @@ export default function DirectReceiptsPageClient() {
                               <FileText className="w-4 h-4" />
                               PDF
                             </button>
+
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await openView(r.id);      // ✅ load viewRow/viewId (receipt details)
+                                setAllocOpen(true);        // ✅ open allocations modal
+                              }}
+                              className="text-[12px] px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 flex items-center gap-2"
+                              title="Allocate books to schools"
+                            >
+                              Allocate
+                            </button>
+
+
                           </div>
                         </td>
                       </tr>
@@ -1753,7 +1854,7 @@ export default function DirectReceiptsPageClient() {
                     </div>
 
                     {/* challan warning */}
-                    {!isInvoice && anyMissingRateCreate && (
+                    {!isInvoice && anyMissingRatePaid && (
                       <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                         <b>Challan mode:</b> Some items have missing rate → this receipt will be saved as <b>DRAFT</b>. Later open it and{" "}
                         <b>Convert to Invoice</b> to update prices, then mark <b>Received</b>.
@@ -1831,8 +1932,17 @@ export default function DirectReceiptsPageClient() {
                         <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Qty</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">{isInvoice ? "Rate*" : "Rate"}</th>
+
+                            {/* ✅ keep Spec columns BEFORE Rate (to match tbody order) */}
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec Qty</th>
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-left w-56">Spec Reason</th>
+
+                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
+                              {isInvoice ? "Rate*" : "Rate"}
+                            </th>
+
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
@@ -1840,6 +1950,7 @@ export default function DirectReceiptsPageClient() {
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
                             <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
                           </tr>
+
                         </thead>
 
                         <tbody>
@@ -1873,6 +1984,31 @@ export default function DirectReceiptsPageClient() {
                                     title="Qty"
                                   />
                                 </td>
+
+                                {/* Spec Qty */}
+                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={it.spec_qty}
+                                    onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                                    onWheel={preventWheelChange}
+                                    className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right bg-white"
+                                    title="Specimen Qty (free)"
+                                  />
+                                </td>
+
+                                {/* Spec Reason */}
+                                <td className="border-b border-slate-200 px-2 py-1.5">
+                                  <input
+                                    value={it.spec_reason}
+                                    onChange={(e) => setRowSpecReason(idx, e.target.value)}
+                                    className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
+                                    placeholder="optional (e.g. Specimen)"
+                                    title="Specimen reason"
+                                  />
+                                </td>
+
 
                                 <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                   <input
@@ -1956,8 +2092,9 @@ export default function DirectReceiptsPageClient() {
                       </table>
 
                       <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
-                        Tip: Enter key will jump to next cell (Qty → Rate → %Disc → Disc₹ → next row).
+                        Tip: Enter key will jump to next cell (Qty → Rate → %Disc → Disc₹ → next row). Spec fields are manual.
                       </div>
+
                     </div>
                   )}
                 </div>
@@ -2070,7 +2207,7 @@ export default function DirectReceiptsPageClient() {
                         className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
                         title="Save"
                       >
-                        {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRateCreate ? "Save (Draft)" : "Save"}
+                        {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRatePaid ? "Save (Draft)" : "Save"}
                       </button>
                     </div>
                   </div>
@@ -2102,8 +2239,7 @@ export default function DirectReceiptsPageClient() {
                                   </>
                                 ) : null}
                               </div>
-
-                              {!isInvoice && anyMissingRateCreate ? (
+                              {!isInvoice && anyMissingRatePaid ? (
                                 <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                                   This Challan will be saved as <b>DRAFT</b> because some rates are missing/0.
                                 </div>
@@ -2137,41 +2273,50 @@ export default function DirectReceiptsPageClient() {
                                   </thead>
                                   <tbody>
                                     {items
-                                      .filter((x) => Math.floor(num(x.qty)) > 0)
-                                      .map((it) => {
-                                        const qty = Math.max(0, Math.floor(num(it.qty)));
-                                        const up = Math.max(0, num(it.unit_price));
-                                        const discAmt = Math.max(0, num(it.disc_amt));
+                                      .flatMap((it) => {
+                                        const paidQty = Math.max(0, Math.floor(num(it.qty)));
+                                        const specQty = Math.max(0, Math.floor(num(it.spec_qty)));
+
+                                        const rows: Array<{ kind: "PAID" | "SPEC"; qty: number }> = [];
+                                        if (paidQty > 0) rows.push({ kind: "PAID", qty: paidQty });
+                                        if (specQty > 0) rows.push({ kind: "SPEC", qty: specQty });
+
+                                        return rows.map((r) => ({ it, ...r }));
+                                      })
+                                      .map(({ it, kind, qty }) => {
+                                        const up = kind === "SPEC" ? 0 : Math.max(0, num(it.unit_price));
+                                        const discAmt = kind === "SPEC" ? 0 : Math.max(0, num(it.disc_amt));
                                         const row = computeRow(qty, up, discAmt);
+
                                         const discText =
-                                          it.disc_mode === "PERCENT"
+                                          kind === "SPEC"
+                                            ? "-"
+                                            : it.disc_mode === "PERCENT"
                                             ? `${fmtMoney(num(it.disc_pct))}%`
                                             : it.disc_mode === "AMOUNT"
                                             ? `₹${fmtMoney(num(it.disc_amt))}`
                                             : "-";
 
                                         return (
-                                          <tr key={it.book_id} className="hover:bg-slate-50">
+                                          <tr key={`${it.book_id}-${kind}`} className="hover:bg-slate-50">
                                             <td className="border-b border-slate-200 px-3 py-2">
                                               <div className="font-medium">{it.title}</div>
+                                              {kind === "SPEC" ? (
+                                                <div className="text-[11px] text-amber-700">
+                                                  Specimen{it.spec_reason?.trim() ? ` • ${it.spec_reason.trim()}` : ""}
+                                                </div>
+                                              ) : null}
                                             </td>
                                             <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              {up > 0 ? `₹${fmtMoney(up)}` : "-"}
-                                            </td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{up > 0 ? `₹${fmtMoney(up)}` : "-"}</td>
                                             <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              ₹{fmtMoney(row.grossLine)}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">
-                                              ₹{fmtMoney(row.netLine)}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">
-                                              ₹{fmtMoney(row.netLine)}
-                                            </td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.grossLine)}</td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.netLine)}</td>
+                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
                                           </tr>
                                         );
                                       })}
+
                                   </tbody>
                                 </table>
                               </div>
@@ -2559,6 +2704,12 @@ export default function DirectReceiptsPageClient() {
                                   <tr key={`${it.book_id}-${it.id || ""}`} className="hover:bg-slate-50">
                                     <td className="border-b border-slate-200 px-3 py-2">
                                       <div className="font-medium text-slate-900">{title}</div>
+                                      {(it as any).is_specimen ? (
+                                        <div className="text-[11px] text-amber-700">
+                                          Specimen{(it as any).specimen_reason ? ` • ${(it as any).specimen_reason}` : ""}
+                                        </div>
+                                      ) : null}
+
                                       <div className="text-[11px] text-slate-500">
                                         {[it.book?.class_name ? `C:${it.book.class_name}` : null, it.book?.subject ? `S:${it.book.subject}` : null, it.book?.code ? `Code:${it.book.code}` : null]
                                           .filter(Boolean)
@@ -2621,6 +2772,24 @@ export default function DirectReceiptsPageClient() {
                           Close
                         </button>
                       </div>
+                      {/* ✅ Allocations Modal */}
+                        {viewRow && (
+                          <SupplierReceiptAllocationsModal
+                            open={allocOpen}
+                            onClose={() => setAllocOpen(false)}
+                            receiptId={viewRow.id}
+                            receiptNo={viewRow.receipt_no}
+                            receiptStatus={viewRow.status}
+                            postedAt={(viewRow as any)?.posted_at ?? null}
+                            schools={schools}
+                            items={(viewRow.items || []) as any}
+                            onSaved={async () => {
+                              await fetchReceipts(); // refresh list
+                              if (viewId) await openView(viewId); // refresh current view
+                            }}
+                          />
+                        )}
+
                     </>
                   )}
                 </div>
