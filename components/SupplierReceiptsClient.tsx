@@ -229,6 +229,7 @@ const docTypePill = (t?: any) => {
 
 const safeSupplierAddress = (s?: SupplierLite | null) => s?.full_address || s?.address || s?.address_line1 || "";
 
+
 /** ordered qty from different keys */
 const getOrderedQty = (it: SchoolOrderItemLite) => num(it.total_order_qty ?? it.ordered_qty ?? 0);
 
@@ -290,16 +291,15 @@ type UiItem = {
   already_received_qty: number;
   pending_qty: number;
 
-  rec_qty: string; // receive now
-  unit_price: string; // rate (optional for challan)
+  rec_qty: string;
+  unit_price: string;
 
   disc_pct: string;
   disc_amt: string;
 
   disc_mode: "PERCENT" | "AMOUNT" | "NONE";
-  spec_qty: string;
-  spec_reason: string;
 
+  spec_qty: string; // keep
 };
 
 const computeRow = (qty: number, unit: number, discAmtPerUnit: number) => {
@@ -351,6 +351,8 @@ const canEditItems = (r?: SupplierReceipt | null) => {
 
 export default function SupplierReceiptsPageClient() {
   const { user, logout } = useAuth();
+
+  const [docNoErr, setDocNoErr] = useState<string>(""); // ✅ ADD HERE
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -680,6 +682,7 @@ export default function SupplierReceiptsPageClient() {
     setInfo(null);
     setCreateOpen(true);
     setPreviewOpen(false);
+    setDocNoErr(""); // ✅ reset
 
     const todayStr = todayISO();
 
@@ -717,12 +720,10 @@ export default function SupplierReceiptsPageClient() {
     setItems([]);
   };
 
-  const orderLabel = (o: SchoolOrderLite) => {
-    const pub = o.publisher?.name || (o.publisher_id ? `Publisher #${o.publisher_id}` : "Publisher");
-    const ord = o.order_no || `#${o.id}`;
-    const dt = formatDate(o.order_date || o.createdAt);
-    return `${pub} • ${ord} • ${dt}`;
-  };
+ const orderLabel = (o: SchoolOrderLite) => {
+  return o.order_no || `#${o.id}`;
+};
+
 
   /* ------------ Row discount syncing (Create) ------------ */
 
@@ -930,7 +931,7 @@ export default function SupplierReceiptsPageClient() {
             item_discount_type: "NONE",
             item_discount_value: null,
             is_specimen: 1,
-            specimen_reason: String(it.spec_reason || "").trim() || null,
+            specimen_reason: null,
           });
         }
 
@@ -999,7 +1000,14 @@ export default function SupplierReceiptsPageClient() {
     if (!form.school_id) return "School * required.";
     if (!form.school_order_id) return "Order * required.";
 
-    if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) return "Invoice No * required.";
+   if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) {
+      setDocNoErr("Please fill Invoice Number.");
+      return "Please fill Invoice Number."; // keeps existing flow, message shown too
+    } else {
+      // ✅ clear if ok
+      if (docNoErr) setDocNoErr("");
+    }
+
 
    const anyTooMuchPaid = items.some(
       (x) => Math.floor(num(x.rec_qty)) > x.pending_qty
@@ -1526,19 +1534,68 @@ export default function SupplierReceiptsPageClient() {
             </select>
           </div>
 
-          <div>
-            <MiniLabel>Doc Type</MiniLabel>
+            {/* Doc Type (small) */}
+          <div className="col-span-6 md:col-span-2 xl:col-span-1 flex flex-col">
+            <MiniLabel>As *</MiniLabel>
             <select
-              value={filterDocType}
-              onChange={(e) => setFilterDocType(e.target.value as any)}
-              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[140px]"
-              title="Doc Type"
+              value={form.receive_doc_type}
+              onChange={(e) =>
+                setForm((p) => ({
+                  ...p,
+                  receive_doc_type: e.target.value as ReceiveDocType,
+                  doc_date: p.doc_date || todayISO(),
+                }))
+              }
+              className={`border rounded-lg px-2 py-1.5 text-[12px] bg-white w-[120px] ${
+                isInvoice ? "border-indigo-300" : "border-amber-300"
+              }`}
+              title="Receiving As"
             >
-              <option value="">All</option>
               <option value="CHALLAN">Challan</option>
               <option value="INVOICE">Invoice</option>
             </select>
           </div>
+
+          {/* Doc No (small) */}
+          <div className="col-span-6 md:col-span-3 xl:col-span-2 flex flex-col">
+            <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
+            <input
+              value={form.doc_no}
+              onChange={(e) => setForm((p) => ({ ...p, doc_no: e.target.value }))}
+              className={`border rounded-lg px-2 py-1.5 text-[12px] bg-white w-[180px] ${
+                isInvoice ? "border-indigo-300" : "border-amber-300"
+              }`}
+              placeholder={isInvoice ? "Invoice no" : "Challan no"}
+              title="Doc No"
+            />
+          </div>
+
+          {/* Doc Date (small) */}
+          <div className="col-span-6 md:col-span-2 xl:col-span-1 flex flex-col">
+            <MiniLabel>Doc</MiniLabel>
+            <input
+              type="date"
+              value={form.doc_date}
+              onChange={(e) => setForm((p) => ({ ...p, doc_date: e.target.value }))}
+              className={`border rounded-lg px-2 py-1.5 text-[12px] bg-white w-[140px] ${
+                isInvoice ? "border-indigo-300" : "border-amber-300"
+              }`}
+              title="Doc Date"
+            />
+          </div>
+
+          {/* GRN Date (small) */}
+          <div className="col-span-6 md:col-span-2 xl:col-span-1 flex flex-col">
+            <MiniLabel>GRN *</MiniLabel>
+            <input
+              type="date"
+              value={form.received_date}
+              onChange={(e) => setForm((p) => ({ ...p, received_date: e.target.value }))}
+              className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white w-[140px]"
+              title="Received Date"
+            />
+          </div>
+
 
           <div>
             <MiniLabel>Doc No</MiniLabel>
@@ -1752,150 +1809,145 @@ export default function SupplierReceiptsPageClient() {
           <div className="h-full w-full p-2 sm:p-3">
             <div className="mx-auto w-full max-w-[1220px] h-full">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-[96vh] flex flex-col">
-                {/* HEADER */}
-                <div className="border-b bg-slate-50">
-                  <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate">
-                        Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                {/* HEADER (compact) */}
+                  <div className="border-b bg-slate-50">
+                    <div className="px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">
+                          Receipt{selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                        </div>
+                        {/* ✅ removed: INVOICE/CHALLAN helper text to save vertical space */}
                       </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {isInvoice
-                          ? "INVOICE: rate required, will be saved as RECEIVED"
-                          : "CHALLAN: you can save qty only; if any rate missing, it will be saved as DRAFT"}
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* ✅ removed: Fill Pending buttons from header */}
+                        <button
+                          onClick={() => {
+                            setPreviewOpen(false);
+                            setCreateOpen(false);
+                          }}
+                          className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                          title="Close"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => setItems((p) => p.map((x) => ({ ...x, rec_qty: String(x.pending_qty) })))}
-                        className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                        title="Fill Rec. = Pending"
-                      >
-                        <RefreshCcw className="w-4 h-4" />
-                        Fill Pending
-                      </button>
+                    {/* Top form continues below... */}
 
-                      <button
-                        onClick={() => {
-                          setPreviewOpen(false);
-                          setCreateOpen(false);
-                        }}
-                        className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                        title="Close"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
 
                   {/* Top form */}
+                  {/* Top form (compact + one-line on xl) */}
                   <div className="px-3 pb-2">
                     <div
-                      className={`grid grid-cols-12 gap-2 p-2 rounded-2xl border ${
+                      className={`grid grid-cols-12 gap-1 p-1 rounded-2xl border ${
                         isInvoice ? "bg-indigo-50/60 border-indigo-200" : "bg-amber-50/40 border-amber-200"
                       }`}
                     >
                       {/* School */}
-                        <div className="col-span-12 md:col-span-2">
-                          <MiniLabel>School *</MiniLabel>
-                          <select
-                            value={form.school_id}
-                            onChange={async (e) => {
-                              const v = e.target.value;
-                              setError(null);
-                              setForm((p) => ({
-                                ...p,
-                                school_id: v,
-                                supplier_id: "",
-                                school_order_id: "",
-                              }));
-                              setItems([]);
-                              setSchoolOrders([]);
-                              if (v) await fetchCompleteOrdersForSchool(Number(v));
-                            }}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                            title="School"
-                          >
-                            <option value="">Select</option>
-                            {schools.map((s) => (
-                              <option key={s.id} value={String(s.id)}>
-                                {s.name}
-                                {s.city ? ` • ${s.city}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Supplier (depends on selected School) */}
-                        <div className="col-span-12 md:col-span-3">
-                          <MiniLabel>Supplier *</MiniLabel>
-                          <select
-                            value={form.supplier_id}
-                            disabled={!form.school_id || ordersLoading}
-                            onChange={(e) => {
-                              const sid = e.target.value;
-
-                              // Supplier change => Order + items reset because orders list will change
-                              setForm((p) => ({
-                                ...p,
-                                supplier_id: sid,
-                                school_order_id: "",
-                              }));
-                              setItems([]);
-                            }}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
-                            title="Supplier"
-                          >
-                            <option value="">
-                              {ordersLoading ? "Loading..." : form.school_id ? "Select supplier" : "Select school first"}
+                      <div className="col-span-12 md:col-span-3 xl:col-span-2">
+                        <MiniLabel>School *</MiniLabel>
+                        <select
+                          value={form.school_id}
+                          onChange={async (e) => {
+                            const v = e.target.value;
+                            setError(null);
+                            setForm((p) => ({
+                              ...p,
+                              school_id: v,
+                              supplier_id: "",
+                              school_order_id: "",
+                            }));
+                            setItems([]);
+                            setSchoolOrders([]);
+                            if (v) await fetchCompleteOrdersForSchool(Number(v));
+                          }}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
+                          title="School"
+                        >
+                          <option value="">Select</option>
+                          {schools.map((s) => (
+                            <option key={s.id} value={String(s.id)}>
+                              {s.name}
+                              {s.city ? ` • ${s.city}` : ""}
                             </option>
+                          ))}
+                        </select>
+                      </div>
 
-                            {(form.school_id ? suppliersForSelectedSchool : suppliers).map((s) => (
-                              <option key={s.id} value={String(s.id)}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                      {/* Supplier (depends on selected School) */}
+                      <div className="col-span-12 md:col-span-3 xl:col-span-2">
+                        <MiniLabel>Supplier *</MiniLabel>
+                        <select
+                          value={form.supplier_id}
+                          disabled={!form.school_id || ordersLoading}
+                          onChange={(e) => {
+                            const sid = e.target.value;
+                            setForm((p) => ({
+                              ...p,
+                              supplier_id: sid,
+                              school_order_id: "",
+                            }));
+                            setItems([]);
+                          }}
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
+                          title="Supplier"
+                        >
+                          <option value="">
+                            {ordersLoading ? "Loading..." : form.school_id ? "Select supplier" : "Select school first"}
+                          </option>
 
-                        {/* Order (depends on selected Supplier too) */}
-                        <div className="col-span-12 md:col-span-4">
-                          <MiniLabel>Order *</MiniLabel>
-                          <select
-                            value={form.school_order_id}
-                            disabled={!form.school_id || !form.supplier_id || ordersLoading}
-                            onChange={async (e) => {
-                              const v = e.target.value;
-                              setForm((p) => ({ ...p, school_order_id: v }));
-                              setItems([]);
-                              if (v) await hydrateFromSelectedOrder(Number(v));
-                            }}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white disabled:opacity-60"
-                            title="Order"
-                          >
-                            <option value="">
-                              {ordersLoading
-                                ? "Loading..."
-                                : !form.school_id
-                                ? "Select school first"
-                                : !form.supplier_id
-                                ? "Select supplier first"
-                                : "Select order"}
+                          {(form.school_id ? suppliersForSelectedSchool : suppliers).map((s) => (
+                            <option key={s.id} value={String(s.id)}>
+                              {s.name}
                             </option>
+                          ))}
+                        </select>
+                      </div>
 
-                            {filteredOrdersForSchoolAndSupplier.map((o) => (
-                              <option key={o.id} value={String(o.id)}>
-                                {orderLabel(o)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                 {/* Order (small fixed width) */}
+<div className="col-span-12 md:col-span-3 xl:col-span-2 flex flex-col">
+  <MiniLabel>Order *</MiniLabel>
 
+  <select
+    value={form.school_order_id}
+    disabled={!form.school_id || !form.supplier_id || ordersLoading}
+    onChange={async (e) => {
+      const v = e.target.value;
+      setForm((p) => ({ ...p, school_order_id: v }));
+      setItems([]);
+      if (v) await hydrateFromSelectedOrder(Number(v));
+    }}
+    className="
+      border border-slate-300 rounded-lg
+      px-2 py-1.5 text-[12px] bg-white
+      disabled:opacity-60
+      w-[160px]        /* ✅ HARD WIDTH */
+    "
+    title="Order"
+  >
+    <option value="">
+      {ordersLoading
+        ? "Loading..."
+        : !form.school_id
+        ? "Select school"
+        : !form.supplier_id
+        ? "Select supplier"
+        : "Select order"}
+    </option>
+
+    {filteredOrdersForSchoolAndSupplier.map((o) => (
+      <option key={o.id} value={String(o.id)}>
+        {o.order_no || `#${o.id}`}
+      </option>
+    ))}
+  </select>
+</div>
 
 
                       {/* Doc Type */}
-                      <div className="col-span-6 md:col-span-2">
+                      <div className="col-span-6 md:col-span-3 xl:col-span-1">
                         <MiniLabel>Receiving As *</MiniLabel>
                         <select
                           value={form.receive_doc_type}
@@ -1916,22 +1968,39 @@ export default function SupplierReceiptsPageClient() {
                         </select>
                       </div>
 
-                      {/* Doc No */}
-                      <div className="col-span-6 md:col-span-2">
-                        <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
-                        <input
-                          value={form.doc_no}
-                          onChange={(e) => setForm((p) => ({ ...p, doc_no: e.target.value }))}
-                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
-                            isInvoice ? "border-indigo-300" : "border-amber-300"
-                          }`}
-                          placeholder={isInvoice ? "Invoice number" : "Challan number"}
-                          title="Doc No"
-                        />
-                      </div>
+                  {/* Doc No */}
+                  <div className="col-span-6 md:col-span-3 xl:col-span-2">
+                    <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
+
+                    <input
+                      value={form.doc_no}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setForm((p) => ({ ...p, doc_no: v }));
+
+                        // ✅ clear error as soon as user starts typing
+                        if (docNoErr && v.trim()) setDocNoErr("");
+                      }}
+                      className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
+                        isInvoice
+                          ? docNoErr
+                            ? "border-rose-400 bg-rose-50"
+                            : "border-indigo-300"
+                          : "border-amber-300"
+                      }`}
+                      placeholder={isInvoice ? "Invoice number" : "Challan number"}
+                      title="Doc No"
+                    />
+
+                    {/* ✅ inline hint inside create modal only */}
+                    {isInvoice && docNoErr ? (
+                      <div className="mt-1 text-[11px] text-rose-700">{docNoErr}</div>
+                    ) : null}
+                  </div>
+
 
                       {/* Doc Date */}
-                      <div className="col-span-6 md:col-span-1">
+                      <div className="col-span-6 md:col-span-3 xl:col-span-1">
                         <MiniLabel>Doc Date</MiniLabel>
                         <input
                           type="date"
@@ -1945,7 +2014,7 @@ export default function SupplierReceiptsPageClient() {
                       </div>
 
                       {/* GRN Date */}
-                      <div className="col-span-6 md:col-span-1">
+                      <div className="col-span-6 md:col-span-3 xl:col-span-1">
                         <MiniLabel>GRN *</MiniLabel>
                         <input
                           type="date"
@@ -1957,47 +2026,17 @@ export default function SupplierReceiptsPageClient() {
                       </div>
                     </div>
 
-                    {/* Row-2 */}
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <div className="min-w-[260px] w-[380px] md:w-[520px]">
-                        <MiniLabel>Remarks</MiniLabel>
-                        <input
-                          value={form.remarks}
-                          onChange={(e) => setForm((p) => ({ ...p, remarks: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          placeholder="optional"
-                          title="Remarks"
-                        />
-                      </div>
-
-                      <div className="ml-auto flex flex-wrap items-center gap-2">
-                        <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                        <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                        <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                          <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                          <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setItems((p) => p.map((x) => ({ ...x, rec_qty: String(x.pending_qty) })))}
-                          className="sm:hidden inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                          title="Fill Rec. = Pending"
-                        >
-                          <RefreshCcw className="w-4 h-4" />
-                          Fill
-                        </button>
-                      </div>
-                    </div>
+             
 
                     {/* challan warning */}
                     {!isInvoice && anyMissingRateCreate && (
                       <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                        <b>Challan mode:</b> Some items have missing rate → this receipt will be saved as <b>DRAFT</b>.
-                        Later open it and <b>Convert to Invoice</b> to update prices, then mark <b>Received</b>.
+                        <b>Challan mode:</b> Some items have missing rate → this receipt will be saved as <b>DRAFT</b>. Later open it and{" "}
+                        <b>Convert to Invoice</b> to update prices, then mark <b>Received</b>.
                       </div>
                     )}
                   </div>
+
                 </div>
 
                 {/* LISTING */}
@@ -2005,313 +2044,284 @@ export default function SupplierReceiptsPageClient() {
                   {items.length === 0 ? (
                     <div className="p-4 text-sm text-slate-500">Select an order to load books.</div>
                   ) : (
-                    <div className="h-full overflow-auto">
-                      <table className="w-full text-xs border-collapse">
-                        <thead className="bg-slate-100 sticky top-0 z-10">
-                          <tr>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Rec.</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec.</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-left w-56">Specimen Reason</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
-                              {isInvoice ? "Rate*" : "Rate"}
-                            </th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Net</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                         {items.map((it, idx) => {
-                            const qty = Math.max(0, Math.floor(num(it.rec_qty)));
+                  <div className="h-full overflow-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-slate-100 sticky top-0 z-10">
+                        <tr>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
 
-                            // ✅ Specimen qty: use typed field + clamp limit 500
-                            const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+                          {/* ✅ smaller */}
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">Rec</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">Spec</th>
 
-                            const up = Math.max(0, num(it.unit_price));
-                            const discAmt = Math.max(0, num(it.disc_amt));
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20">{isInvoice ? "Rate*" : "Rate"}</th>
 
-                            // totals ONLY for paid qty (rec_qty)
-                            const row = computeRow(qty, up, discAmt);
+                          {/* ✅ smaller */}
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">%Disc</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20">Disc₹</th>
+
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Gross</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Net</th>
+
+                          {/* ❌ Amount removed */}
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"></th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {items.map((it, idx) => {
+                          const qty = Math.max(0, Math.floor(num(it.rec_qty)));
+                          const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+
+                          const up = Math.max(0, num(it.unit_price));
+                          const discAmt = Math.max(0, num(it.disc_amt));
+
+                          // totals ONLY for paid qty (rec_qty)
+                          const row = computeRow(qty, up, discAmt);
 
                           // ✅ validation:
                           // - paid cannot exceed pending
                           // - specimen can exceed pending (allowed)
                           const tooMuchPaid = qty > it.pending_qty;
 
+                          // invoice requires rate ONLY if paid qty > 0
+                          const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
 
-                            // invoice requires rate ONLY if paid qty > 0
-                            const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
+                          // ✅ excel-like cell inputs (no rounded boxes)
+                          const cellInput =
+                            "w-full bg-transparent border-0 outline-none focus:ring-0 px-1 py-1 text-[12px]";
+                          const cellNum = cellInput + " text-right";
 
-                         return (
-                                <tr key={it.book_id} className="hover:bg-slate-50">
-                                  <td className="border-b border-slate-200 px-2 py-1.5">
-                                    <div className="font-medium text-slate-900">{it.title}</div>
-                                    <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
-                                  </td>
+                          return (
+                            <tr key={it.book_id} className="hover:bg-slate-50">
+                              <td className="border-b border-slate-200 px-2 py-1.5">
+                                <div className="font-medium text-slate-900">{it.title}</div>
+                                <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
+                              </td>
 
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">{it.pending_qty}</td>
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right">{it.ordered_qty}</td>
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">{it.pending_qty}</td>
 
-                                  {/* Paid Receive Qty */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <input
-                                      ref={(el) => {
-                                        cellRefs.current[cellKey(idx, "rec")] = el;
-                                      }}
-                                      type="number"
-                                      min={0}
-                                      value={it.rec_qty}
-                                      onChange={(e) => setRowRecQty(idx, e.target.value)}
-                                      onWheel={preventWheelChange}
-                                      onKeyDown={(e) => onCellEnter(e, idx, "rec")}
-                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                        tooMuchPaid ? "border-rose-400 bg-rose-50" : "border-slate-300"
-                                      }`}
-                                      title="Received now (Paid)"
-                                    />
-                                    {tooMuchPaid ? (
-                                      <div className="text-[10px] text-rose-700 mt-1">
-                                        Paid cannot exceed Pending: {it.pending_qty}
-                                      </div>
-                                    ) : null}
-                                  </td>
+                              {/* Rec (excel cell) */}
+                              <td className={`border-b border-slate-200 px-1 py-0.5 ${tooMuchPaid ? "bg-rose-50" : ""}`}>
+                                <input
+                                  ref={(el) => {
+                                    cellRefs.current[cellKey(idx, "rec")] = el;
+                                  }}
+                                  type="number"
+                                  min={0}
+                                  value={it.rec_qty}
+                                  onChange={(e) => setRowRecQty(idx, e.target.value)}
+                                  onWheel={preventWheelChange}
+                                  onKeyDown={(e) => onCellEnter(e, idx, "rec")}
+                                  className={`${cellNum} ${tooMuchPaid ? "text-rose-700 font-semibold" : ""}`}
+                                  title="Received now (Paid)"
+                                />
+                              </td>
 
-                                  {/* Specimen Qty (can exceed pending) */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={it.spec_qty || ""}
-                                      onChange={(e) => setRowSpecQty(idx, e.target.value)}
-                                      onWheel={preventWheelChange}
-                                      className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right bg-white"
-                                      title="Specimen qty (Rate will be 0)"
-                                    />
-                                  </td>
+                              {/* Spec (excel cell) */}
+                              <td className="border-b border-slate-200 px-1 py-0.5">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={it.spec_qty || ""}
+                                  onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                                  onWheel={preventWheelChange}
+                                  className={cellNum}
+                                  title="Specimen qty (Rate will be 0)"
+                                />
+                              </td>
 
-                                  {/* Specimen Reason */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5">
-                                    <input
-                                      value={it.spec_reason || ""}
-                                      onChange={(e) => setRowSpecReason(idx, e.target.value)}
-                                      className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
-                                      placeholder="optional"
-                                      title="Specimen reason"
-                                    />
-                                  </td>
+                              {/* Rate (excel cell) */}
+                              <td className={`border-b border-slate-200 px-1 py-0.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
+                                <input
+                                  ref={(el) => {
+                                    cellRefs.current[cellKey(idx, "mrp")] = el;
+                                  }}
+                                  type="number"
+                                  min={0}
+                                  value={it.unit_price}
+                                  onChange={(e) => setRowUnit(idx, e.target.value)}
+                                  onWheel={preventWheelChange}
+                                  onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+                                  className={`${cellNum} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
+                                  title={isInvoice ? "Rate (required for paid qty)" : "Rate (optional for challan draft)"}
+                                />
+                              </td>
 
-                                  {/* Rate */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <input
-                                      ref={(el) => {
-                                        cellRefs.current[cellKey(idx, "mrp")] = el;
-                                      }}
-                                      type="number"
-                                      min={0}
-                                      value={it.unit_price}
-                                      onChange={(e) => setRowUnit(idx, e.target.value)}
-                                      onWheel={preventWheelChange}
-                                      onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
-                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                        missingRateInvoice ? "border-rose-400 bg-rose-50" : "border-slate-300"
-                                      }`}
-                                      title={isInvoice ? "Rate (required for paid qty)" : "Rate (optional for challan draft)"}
-                                    />
-                                  </td>
+                              {/* % Disc (small excel cell) */}
+                              <td className="border-b border-slate-200 px-1 py-0.5">
+                                <input
+                                  ref={(el) => {
+                                    cellRefs.current[cellKey(idx, "pct")] = el;
+                                  }}
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={it.disc_pct}
+                                  onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                                  onWheel={preventWheelChange}
+                                  onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+                                  className={cellNum}
+                                  title="% discount (auto sync Disc₹)"
+                                />
+                              </td>
 
-                                  {/* % Disc */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <input
-                                      ref={(el) => {
-                                        cellRefs.current[cellKey(idx, "pct")] = el;
-                                      }}
-                                      type="number"
-                                      min={0}
-                                      max={100}
-                                      value={it.disc_pct}
-                                      onChange={(e) => setRowDiscPct(idx, e.target.value)}
-                                      onWheel={preventWheelChange}
-                                      onKeyDown={(e) => onCellEnter(e, idx, "pct")}
-                                      className={`w-16 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                        it.disc_mode === "PERCENT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                      }`}
-                                      title="% discount (auto sync Disc₹)"
-                                    />
-                                  </td>
+                              {/* Disc ₹ (small excel cell) */}
+                              <td className="border-b border-slate-200 px-1 py-0.5">
+                                <input
+                                  ref={(el) => {
+                                    cellRefs.current[cellKey(idx, "amt")] = el;
+                                  }}
+                                  type="number"
+                                  min={0}
+                                  value={it.disc_amt}
+                                  onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                                  onWheel={preventWheelChange}
+                                  onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+                                  className={cellNum}
+                                  title="Fixed discount per unit (auto sync %)"
+                                />
+                              </td>
 
-                                  {/* Disc ₹ */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <input
-                                      ref={(el) => {
-                                        cellRefs.current[cellKey(idx, "amt")] = el;
-                                      }}
-                                      type="number"
-                                      min={0}
-                                      value={it.disc_amt}
-                                      onChange={(e) => setRowDiscAmt(idx, e.target.value)}
-                                      onWheel={preventWheelChange}
-                                      onKeyDown={(e) => onCellEnter(e, idx, "amt")}
-                                      className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                        it.disc_mode === "AMOUNT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                      }`}
-                                      title="Fixed discount per unit (auto sync %)"
-                                    />
-                                  </td>
+                              {/* Gross / Net (Paid only) */}
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+                                ₹{fmtMoney(row.grossLine)}
+                              </td>
 
-                                  {/* Gross / Net / Amount (Paid only) */}
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.grossLine)}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">₹{fmtMoney(row.netLine)}</td>
+                              {/* ✅ Net is final net amount (Amount column removed) */}
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
+                                ₹{fmtMoney(row.netLine)}
+                              </td>
 
-                                  <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                    <button
-                                      type="button"
-                                      onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
-                                      className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                      title="Remove line (does not change order)"
-                                    >
-                                      <Trash2 className="w-4 h-4 text-rose-600" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
+                              <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                                  className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                                  title="Remove line (does not change order)"
+                                >
+                                  <Trash2 className="w-4 h-4 text-rose-600" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
 
-                          })}
-
-                        </tbody>
-
-                      </table>
-
-                      <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
-                        Tip: Enter key will jump to next cell (Rec → Rate → %Disc → Disc₹ → next row).
-                      </div>
+                    <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
+                      Tip: Enter key will jump to next cell (Rec → Rate → %Disc → Disc₹ → next row).
                     </div>
+                  </div>
+
                   )}
                 </div>
 
-                {/* BOTTOM BAR */}
-                <div className="border-t bg-white">
-                  <div className="px-4 py-2 bg-slate-50 flex flex-wrap items-end gap-2">
-                    <div>
-                      <MiniLabel>Bill Disc %</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={form.bill_disc_pct}
-                        onChange={(e) => syncBillDiscFromPct(e.target.value)}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Bill discount percent (auto sync ₹)"
-                      />
+              {/* BOTTOM BAR (compact + no labels, placeholder only) */}
+              <div className="border-t bg-white">
+                <div className="px-3 py-2 bg-slate-50 flex flex-wrap items-center gap-2">
+                  {/* ✅ Excel-like inputs (no MiniLabel) */}
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={form.bill_disc_pct}
+                    onChange={(e) => syncBillDiscFromPct(e.target.value)}
+                    onWheel={preventWheelChange}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] text-right w-[92px] bg-white"
+                    placeholder="Bill %"
+                    title="Bill discount %"
+                  />
+
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.bill_disc_amt}
+                    onChange={(e) => syncBillDiscFromAmt(e.target.value)}
+                    onWheel={preventWheelChange}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] text-right w-[110px] bg-white"
+                    placeholder="Bill ₹"
+                    title="Bill discount ₹"
+                  />
+
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.shipping_charge}
+                    onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
+                    onWheel={preventWheelChange}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] text-right w-[90px] bg-white"
+                    placeholder="Ship"
+                    title="Shipping"
+                  />
+
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.other_charge}
+                    onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
+                    onWheel={preventWheelChange}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] text-right w-[90px] bg-white"
+                    placeholder="Other"
+                    title="Other"
+                  />
+
+                  <input
+                    type="number"
+                    value={form.round_off}
+                    onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
+                    onWheel={preventWheelChange}
+                    className="border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] text-right w-[90px] bg-white"
+                    placeholder="Round"
+                    title="Round off"
+                  />
+
+                  {/* ✅ totals + actions (right side) */}
+                  <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-[12px]">
+                      Disc: <b>₹{fmtMoney(totals.itemDisc + totals.billDisc)}</b>
                     </div>
 
-                    <div>
-                      <MiniLabel>Bill Disc ₹</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.bill_disc_amt}
-                        onChange={(e) => syncBillDiscFromAmt(e.target.value)}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[130px] bg-white"
-                        placeholder="0"
-                        title="Bill discount amount (auto sync %)"
-                      />
+                    <div className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[12px]">
+                      Grand: <b>₹{fmtMoney(totals.grand)}</b>
                     </div>
 
-                    <div>
-                      <MiniLabel>Ship</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.shipping_charge}
-                        onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Shipping charge"
-                      />
-                    </div>
+                    <button
+                      onClick={() => {
+                        setPreviewOpen(false);
+                        setCreateOpen(false);
+                      }}
+                      className="text-[12px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                      title="Cancel"
+                    >
+                      Cancel
+                    </button>
 
-                    <div>
-                      <MiniLabel>Other</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.other_charge}
-                        onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Other charge"
-                      />
-                    </div>
+                    <button
+                      onClick={openPreview}
+                      disabled={items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)}
+                      className="text-[12px] px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
+                      title="Preview before saving"
+                    >
+                      <Eye className="w-4 h-4" />
+                      Preview
+                    </button>
 
-                    <div>
-                      <MiniLabel>Round</MiniLabel>
-                      <input
-                        type="number"
-                        value={form.round_off}
-                        onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Round off"
-                      />
-                    </div>
-
-                    <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                      <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                      <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                        <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                        <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          setPreviewOpen(false);
-                          setCreateOpen(false);
-                        }}
-                        className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                        title="Cancel"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
-                        onClick={openPreview}
-                        disabled={items.some((x) => Math.floor(num(x.rec_qty)) + Math.floor(num(x.spec_qty)) > x.pending_qty)}
-                        className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
-                        title="Preview before saving"
-                      >
-                        <Eye className="w-4 h-4" />
-                        Preview
-                      </button>
-
-                      <button
-                        onClick={submitCreate}
-                        disabled={
-                          creating ||
-                          items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)
-                        }
-
-                        className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                        title="Save"
-                      >
-                        {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRateCreate ? "Save (Draft)" : "Save"}
-                      </button>
-                    </div>
+                    <button
+                      onClick={submitCreate}
+                      disabled={creating || items.some((x) => Math.floor(num(x.rec_qty)) > x.pending_qty)}
+                      className="text-[12px] px-4 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                      title="Save"
+                    >
+                      {creating ? "Saving..." : isInvoice ? "Save" : anyMissingRateCreate ? "Save Draft" : "Save"}
+                    </button>
                   </div>
                 </div>
+              </div>
+
 
                 {/* Preview Modal */}
                {previewOpen && (
