@@ -684,27 +684,33 @@ export default function SupplierReceiptsPageClient() {
     const todayStr = todayISO();
 
   setForm({
-        school_id: "",
-        school_order_id: "",
-        supplier_id: "",
+    school_id: "",
+    school_order_id: "",
+    supplier_id: "",
 
-        receive_doc_type: "INVOICE",
-        doc_no: "",
-        doc_date: todayStr,
-        invoice_no: "",
+    receive_doc_type: "INVOICE",
+    doc_no: "",
+    doc_date: todayStr,
+    invoice_no: "",
 
-        invoice_date: "",
-        received_date: todayStr,
-        status: "draft",
-        remarks: "",
+    invoice_date: "",
+    received_date: todayStr,
+    status: "draft",
+    remarks: "",
 
-        bill_disc_pct: "",
-        bill_disc_amt: "",
+    bill_disc_pct: "",
+    bill_disc_amt: "",
 
-        shipping_charge: "",
-        other_charge: "",
-        round_off: "",
-      });
+    shipping_charge: "",
+    other_charge: "",
+    round_off: "",
+
+    // ✅ FIXED
+    spec_qty: "",
+    spec_reason: "",
+});
+
+
 
 
     setSchoolOrders([]);
