@@ -300,6 +300,7 @@ type UiItem = {
   disc_mode: "PERCENT" | "AMOUNT" | "NONE";
 
   spec_qty: string; // keep
+  spec_reason: string; // ✅ ADD
 };
 
 const computeRow = (qty: number, unit: number, discAmtPerUnit: number) => {
