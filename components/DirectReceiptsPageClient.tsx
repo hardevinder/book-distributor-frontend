@@ -267,6 +267,8 @@ type UiItem = {
   title: string;
   meta: string;
 
+  school_id?: string; // ✅ ADD THIS
+
   // ✅ paid qty
   qty: string;
 
@@ -313,8 +315,7 @@ export default function DirectReceiptsPageClient() {
   const [booksLoading, setBooksLoading] = useState(false);
 
   // filters
-  const [filterSupplierId, setFilterSupplierId] = useState("");
-  const [filterSchoolId, setFilterSchoolId] = useState("");
+  const [filterSupplierId, setFilterSupplierId] = useState("");  
   const [filterDocNo, setFilterDocNo] = useState("");
   const [filterDocType, setFilterDocType] = useState<"" | ReceiveDocType>("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -328,11 +329,66 @@ export default function DirectReceiptsPageClient() {
   // preview before save
   const [previewOpen, setPreviewOpen] = useState(false);
 
+    // ✅ blank row (for + button)
+ const makeBlankItem = (): UiItem => ({
+  book_id: 0,
+  title: "",
+  meta: "",
+  school_id: "",
+
+  qty: "1",
+  spec_qty: "",      // ✅ string
+  spec_reason: "",
+
+  unit_price: "",
+  disc_pct: "",
+  disc_amt: "",
+  disc_mode: "PERCENT",
+});
+
+
+  // ✅ set book in a row
+  const setRowBook = (idx: number, bookIdStr: string) => {
+    const bid = Number(bookIdStr || 0);
+    const b = books.find((x) => Number(x.id) === bid);
+
+    setItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== idx) return it;
+        if (!bid || !b) return { ...it, book_id: 0, title: "", meta: "" };
+
+        return {
+          ...it,
+          book_id: bid,
+          title: b.title || "",
+          meta: [b.subject, b.class_name, b.code].filter(Boolean).join(" • "),
+        };
+      })
+    );
+  };
+
+  // ✅ set school in a row
+  const setRowSchool = (idx: number, schoolId: string) => {
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, school_id: schoolId } : it))
+    );
+  };
+
+  // ✅ + button adds next row
+  const addRowAfter = (idx: number) => {
+    setItems((prev) => {
+      const next = [...prev];
+      next.splice(idx + 1, 0, makeBlankItem());
+      return next;
+    });
+  };
+
+
   const [form, setForm] = useState(() => {
     const t = todayISO();
     return {
       supplier_id: "",
-      school_id: "",
+  
 
       receive_doc_type: "INVOICE" as ReceiveDocType,
       doc_no: "",
@@ -351,8 +407,33 @@ export default function DirectReceiptsPageClient() {
     };
   });
 
-  const [items, setItems] = useState<UiItem[]>([]);
+  const [items, setItems] = useState<UiItem[]>(() => [makeBlankItem()]);
+  // ✅ derive unique school_ids from rows (only rows with qty/spec_qty > 0)
+  const getRowSchoolIds = () => {
+    const used = items
+      .filter((it) => Math.floor(num(it.qty)) > 0 || Math.floor(num(it.spec_qty)) > 0)
+      .map((it) => String(it.school_id || "").trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(used)); // array of school_id strings
+  };
+
   const [quickBookId, setQuickBookId] = useState<string>("");
+
+  // ✅ derive ONE school_id from rows (only rows with qty/spec_qty > 0)
+  const deriveSingleSchoolIdFromRows = () => {
+    const used = items
+      .filter((it) => Math.floor(num(it.qty)) > 0 || Math.floor(num(it.spec_qty)) > 0)
+      .map((it) => String(it.school_id || "").trim())
+      .filter(Boolean);
+
+    const uniq = Array.from(new Set(used));
+
+    if (uniq.length === 0) return null;
+    if (uniq.length > 1) return "__MULTI__";
+    return Number(uniq[0]);
+  };
+
 
   // view modal
   const [viewOpen, setViewOpen] = useState(false);
@@ -361,7 +442,14 @@ export default function DirectReceiptsPageClient() {
   const [viewLoading, setViewLoading] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   // ✅ Allocations modal
-  const [allocOpen, setAllocOpen] = useState(false);
+ // ✅ Allocations modal
+const [allocOpen, setAllocOpen] = useState(false);
+const [allocReceiptId, setAllocReceiptId] = useState<number | null>(null);
+const [allocReceiptNo, setAllocReceiptNo] = useState<string>("");
+const [allocReceiptStatus, setAllocReceiptStatus] = useState<DirectReceipt["status"]>("draft");
+const [allocPostedAt, setAllocPostedAt] = useState<string | null>(null);
+const [allocItems, setAllocItems] = useState<any[]>([]);
+
 
 
   // ✅ Convert/Edit modal (Challan -> Invoice with price update)
@@ -402,6 +490,20 @@ export default function DirectReceiptsPageClient() {
     code: "",
     isbn: "",
   }));
+
+  
+
+  // ✅ Which row triggered "New Book"
+const [bookCreateRowIdx, setBookCreateRowIdx] = useState<number | null>(null);
+
+// ✅ open create-book for a particular row
+const openCreateBookForRow = (rowIdx: number) => {
+  setBookCreateError(null);
+  setBookForm({ title: "", publisher_id: "", mrp: "", class_name: "", subject: "", code: "", isbn: "" });
+  setBookCreateRowIdx(rowIdx);
+  setBookCreateOpen(true);
+};
+
 
 
   /* ------------ Enter-to-next-cell (create table) ------------ */
@@ -508,8 +610,6 @@ export default function DirectReceiptsPageClient() {
       if (filterSupplierId === "__NULL__") params.supplier_id = "null";
       else if (filterSupplierId) params.supplier_id = Number(filterSupplierId);
 
-      if (filterSchoolId === "__NULL__") params.school_id = "null";
-      else if (filterSchoolId) params.school_id = Number(filterSchoolId);
 
       if (filterStatus) params.status = filterStatus;
       if (filterFrom) params.from = filterFrom;
@@ -567,7 +667,7 @@ export default function DirectReceiptsPageClient() {
       round_off: "",
     });
 
-    setItems([]);
+    setItems([makeBlankItem()]);
     setQuickBookId("");
   };
 
@@ -616,6 +716,43 @@ export default function DirectReceiptsPageClient() {
 
 
   /* ------------ ✅ Create Book (NEW) ------------ */
+const openAllocationForReceipt = async (receiptId: number) => {
+  setError(null);
+
+  try {
+    // 1) fetch latest
+    const res = await api.get<GetResponse>(`${API_BASE}/${receiptId}`);
+    let row = (res?.data as any)?.receipt as DirectReceipt | undefined;
+    if (!row) throw new Error("Receipt not found");
+
+    // 2) must be received
+    if (row.status !== "received") {
+      return setError("First mark this receipt as RECEIVED, then allocate.");
+    }
+
+    // 3) if posted_at missing, trigger posting by re-patching received
+    if (!(row as any)?.posted_at) {
+      await api.patch(`${API_BASE}/${receiptId}/status`, { status: "received" });
+
+      const res2 = await api.get<GetResponse>(`${API_BASE}/${receiptId}`);
+      row = (res2?.data as any)?.receipt as DirectReceipt | undefined;
+      if (!row) throw new Error("Receipt not found after posting");
+    }
+
+    setAllocReceiptId(row.id);
+    setAllocReceiptNo(row.receipt_no || `#${row.id}`);
+    setAllocReceiptStatus(row.status);
+    setAllocPostedAt((row as any)?.posted_at ?? null);
+    setAllocItems((row.items || []).map(normalizeItemForView));
+
+    setAllocOpen(true);
+  } catch (e: any) {
+    console.error(e);
+    setError(e?.response?.data?.error || e?.message || "Failed to open allocations");
+  }
+};
+
+
 
   const submitCreateBook = async () => {
     setBookCreateError(null);
@@ -658,21 +795,37 @@ export default function DirectReceiptsPageClient() {
         code: created?.code ?? payload.code ?? null,
         isbn: created?.isbn ?? payload.isbn ?? null,
       };
-
-    setBooks((prev) => {
+      setBooks((prev) => {
         const exists = prev.some((b) => Number(b.id) === createdId);
         return exists ? prev : [newBook, ...prev];
       });
 
-      // ✅ Auto-select in dropdown
-      setQuickBookId(String(createdId));
+      // ✅ If opened from a row: set book in SAME row
+      if (bookCreateRowIdx != null) {
+        setItems((prev) => {
+          const next = [...prev];
+          if (!next[bookCreateRowIdx]) return next;
 
-      // ✅ Auto-add to lines (use newBook immediately, no dependency on state refresh)
-      addBookLine(createdId, newBook);
+          next[bookCreateRowIdx] = {
+            ...next[bookCreateRowIdx],
+            book_id: createdId,
+            title: newBook.title || "",
+            meta: [newBook.subject, newBook.class_name, newBook.code].filter(Boolean).join(" • "),
+          };
+          return next;
+        });
+
+        setBookCreateRowIdx(null);
+      } else {
+        // fallback if opened from top button (if you keep it)
+        setQuickBookId(String(createdId));
+        addBookLine(createdId, newBook);
+      }
 
       // ✅ Reset + close
       setBookForm({ title: "", publisher_id: "", mrp: "", class_name: "", subject: "", code: "", isbn: "" });
       setBookCreateOpen(false);
+
 
     } catch (e: any) {
       console.error(e);
@@ -833,7 +986,10 @@ const anyMissingRatePaid = useMemo(() => {
 
   const buildPayload = () => {
     const supplier_id = form.supplier_id ? Number(form.supplier_id) : null;
-    const school_id = form.school_id ? Number(form.school_id) : null;
+   const rowSchoolIds = getRowSchoolIds();
+
+
+
 
    const cleanItems = items
   .flatMap((it) => {
@@ -920,7 +1076,7 @@ const anyMissingRatePaid = useMemo(() => {
       school_order_id: null,
 
       supplier_id,
-      school_id,
+     school_id: null,
 
       receive_doc_type: docType,
       doc_no: docNo,
@@ -947,20 +1103,20 @@ const anyMissingRatePaid = useMemo(() => {
     return { payload, cleanItems, status };
   };
 
-  const validateBeforePreview = () => {
-    if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) return "Invoice No * required.";
+const validateBeforePreview = () => {
+  if (form.receive_doc_type === "INVOICE" && !form.doc_no.trim()) return "Invoice No * required.";
 
-    const { cleanItems } = buildPayload();
-    if (!cleanItems.length) return "Enter qty for at least 1 book.";
+  const { cleanItems } = buildPayload();
+  if (!cleanItems.length) return "Enter qty for at least 1 book.";
 
-    if (form.receive_doc_type === "INVOICE") {
-     const anyMissingRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
-      if (anyMissingRate) return "Invoice requires rate for paid items.";
+  if (form.receive_doc_type === "INVOICE") {
+    const anyMissingRate = cleanItems.some((x) => !x.is_specimen && num(x.rate) <= 0);
+    if (anyMissingRate) return "Invoice requires rate for paid items.";
+  }
 
-    }
+  return null;
+};
 
-    return null;
-  };
 
   const openPreview = () => {
     setError(null);
@@ -993,10 +1149,19 @@ const anyMissingRatePaid = useMemo(() => {
       } else {
         setInfo(res?.data?.message || "Receipt created.");
       }
-
       setPreviewOpen(false);
       setCreateOpen(false);
       await fetchReceipts();
+
+      // ✅ NEW: open allocation modal directly after create (only if received)
+      const newId =
+        Number((res?.data as any)?.receipt?.id) ||
+        Number((res?.data as any)?.id);
+
+      if (newId) {
+        await openAllocationForReceipt(newId);
+      }
+
     } catch (e: any) {
       console.error(e);
       setError(e?.response?.data?.error || e?.response?.data?.message || "Create failed");
@@ -1464,24 +1629,7 @@ const specimenPayload = existingItems
             </select>
           </div>
 
-          <div>
-            <MiniLabel>School</MiniLabel>
-            <select
-              value={filterSchoolId}
-              onChange={(e) => setFilterSchoolId(e.target.value)}
-              className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[220px]"
-              title="School"
-            >
-              <option value="">All</option>
-              <option value="__NULL__">No School</option>
-              {schools.map((s) => (
-                <option key={s.id} value={String(s.id)}>
-                  {s.name}
-                  {s.city ? ` • ${s.city}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          
 
           <div>
             <MiniLabel>Status</MiniLabel>
@@ -1520,22 +1668,6 @@ const specimenPayload = existingItems
             />
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              fetchReceipts();
-            }}
-            disabled={loading}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-semibold
-                       text-emerald-800 border border-emerald-200
-                       bg-gradient-to-r from-emerald-50 to-cyan-50 hover:from-emerald-100 hover:to-cyan-100
-                       disabled:opacity-60"
-            title="Refresh"
-          >
-            <RefreshCcw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
 
           <button
             type="button"
@@ -1585,8 +1717,7 @@ const specimenPayload = existingItems
                 <thead className="bg-slate-100">
                   <tr>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Receipt</th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">Supplier</th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left">School</th>
+                    <th className="border-b border-slate-200 px-3 py-2 text-left">Supplier</th>                    
                     <th className="border-b border-slate-200 px-3 py-2 text-left">Doc</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-left">GRN</th>
                     <th className="border-b border-slate-200 px-3 py-2 text-right">Grand</th>
@@ -1606,9 +1737,6 @@ const specimenPayload = existingItems
                         </td>
                         <td className="border-b border-slate-200 px-3 py-2">
                           {r.supplier?.name || (r.supplier_id ? `Supplier #${r.supplier_id}` : "—")}
-                        </td>
-                        <td className="border-b border-slate-200 px-3 py-2">
-                          {r.school?.name || (r.school_id ? `School #${r.school_id}` : "—")}
                         </td>
 
                         <td className="border-b border-slate-200 px-3 py-2">
@@ -1650,15 +1778,13 @@ const specimenPayload = existingItems
 
                             <button
                               type="button"
-                              onClick={async () => {
-                                await openView(r.id);      // ✅ load viewRow/viewId (receipt details)
-                                setAllocOpen(true);        // ✅ open allocations modal
-                              }}
+                              onClick={() => openAllocationForReceipt(r.id)} // ✅ loads latest receipt + items + opens modal
                               className="text-[12px] px-3 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 flex items-center gap-2"
                               title="Allocate books to schools"
                             >
                               Allocate
                             </button>
+
 
 
                           </div>
@@ -1677,824 +1803,769 @@ const specimenPayload = existingItems
           )}
         </section>
       </main>
+{/* ---------------- Create Modal (UPDATED: select Book + School inside listing + "+" adds next row) ---------------- */}
+{createOpen && (
+  <div className="fixed inset-0 z-50 bg-black/50">
+    <div className="h-full w-full p-2 sm:p-3">
+      <div className="mx-auto w-full max-w-[1220px] h-full">
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-[96vh] flex flex-col">
+          {/* HEADER */}
+          <div className="border-b bg-slate-50">
+            <div className="px-3 py-2 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate">
+                  Direct Receipt
+                  {selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                  {selectedSchoolName ? ` • ${selectedSchoolName}` : ""}
+                </div>
+             
+              </div>
 
-      {/* ---------------- Create Modal ---------------- */}
-      {createOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50">
-          <div className="h-full w-full p-2 sm:p-3">
-            <div className="mx-auto w-full max-w-[1220px] h-full">
-              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-[96vh] flex flex-col">
-                {/* HEADER */}
-                <div className="border-b bg-slate-50">
-                  <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold truncate">
-                        Direct Receipt
-                        {selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
-                        {selectedSchoolName ? ` • ${selectedSchoolName}` : ""}
+              <div className="flex items-center gap-2 shrink-0">
+                
+
+               <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewOpen(false);
+                    setCreateOpen(false);
+                  }}
+                  className="p-1 text-slate-500 hover:text-slate-900"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+
+              </div>
+            </div>
+
+            {/* Top form */}
+            <div className="px-3 pb-2">
+              <div
+                className={`grid grid-cols-12 gap-2 p-2 rounded-2xl border ${
+                  isInvoice ? "bg-indigo-50/60 border-indigo-200" : "bg-amber-50/40 border-amber-200"
+                }`}
+              >
+                {/* Supplier (optional) */}
+                <div className="col-span-12 md:col-span-3">
+                  <MiniLabel>Supplier (optional)</MiniLabel>
+                  <select
+                    value={form.supplier_id}
+                    onChange={(e) => setForm((p) => ({ ...p, supplier_id: e.target.value }))}
+                    className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
+                    title="Supplier"
+                  >
+                    <option value="">—</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={String(s.id)}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Doc Type */}
+                <div className="col-span-6 md:col-span-2">
+                  <MiniLabel>Receiving As *</MiniLabel>
+                  <select
+                    value={form.receive_doc_type}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        receive_doc_type: e.target.value as ReceiveDocType,
+                        doc_date: p.doc_date || todayISO(),
+                      }))
+                    }
+                    className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
+                      isInvoice ? "border-indigo-300" : "border-amber-300"
+                    }`}
+                    title="Receiving As"
+                  >
+                    <option value="CHALLAN">Challan</option>
+                    <option value="INVOICE">Invoice</option>
+                  </select>
+                </div>
+
+                {/* Doc No */}
+                <div className="col-span-6 md:col-span-2">
+                  <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
+                  <input
+                    value={form.doc_no}
+                    onChange={(e) => setForm((p) => ({ ...p, doc_no: e.target.value }))}
+                    className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
+                      isInvoice ? "border-indigo-300" : "border-amber-300"
+                    }`}
+                    placeholder={isInvoice ? "Invoice number" : "Challan number"}
+                    title="Doc No"
+                  />
+                </div>
+
+                {/* Doc Date */}
+                <div className="col-span-6 md:col-span-1">
+                  <MiniLabel>Doc Date</MiniLabel>
+                  <input
+                    type="date"
+                    value={form.doc_date}
+                    onChange={(e) => setForm((p) => ({ ...p, doc_date: e.target.value }))}
+                    className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
+                      isInvoice ? "border-indigo-300" : "border-amber-300"
+                    }`}
+                    title="Doc Date"
+                  />
+                </div>
+
+                {/* GRN Date */}
+                <div className="col-span-6 md:col-span-1">
+                  <MiniLabel>GRN *</MiniLabel>
+                  <input
+                    type="date"
+                    value={form.received_date}
+                    onChange={(e) => setForm((p) => ({ ...p, received_date: e.target.value }))}
+                    className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
+                    title="Received Date"
+                  />
+                </div>
+              </div>
+
+              {/* Row-2 */}
+      
+              {/* challan warning */}
+              {!isInvoice && anyMissingRatePaid && (
+                <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                  <b>Challan mode:</b> Some items have missing rate → this receipt will be saved as <b>DRAFT</b>. Later open it and{" "}
+                  <b>Convert to Invoice</b> to update prices, then mark <b>Received</b>.
+                </div>
+              )}
+
+            
+            </div>
+          </div>
+
+          {/* LISTING */}
+       <div className="flex-1 min-h-0">
+              <div className="h-full overflow-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="bg-slate-100 sticky top-0 z-10">
+                    <tr>
+                      {/* ✅ Book dropdown */}
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-left w-[420px]">Book</th>
+
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Qty</th>
+
+                      {/* Spec */}
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec Qty</th>
+
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
+                        {isInvoice ? "Rate*" : "Rate"}
+                      </th>
+
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
+
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Net</th>
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
+
+                      {/* ✅ actions: + and delete */}
+                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20"> </th>
+                    </tr>
+                  </thead>
+
+            <tbody>
+                  {items.map((it, idx) => {
+                    const qty = Math.max(0, Math.floor(num(it.qty)));
+                    const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+
+                    const up = Math.max(0, num(it.unit_price));
+                    const discAmt = Math.max(0, num(it.disc_amt));
+
+                    // ✅ totals ONLY for paid qty (qty)
+                    const row = computeRow(qty, up, discAmt);
+
+                    const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
+
+                    return (
+                    <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
+                      {/* ✅ Book select + New Book (+) */}
+                      <td className="border-b border-slate-200 px-2 py-1.5">
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1">
+                            <select
+                              value={it.book_id ? String(it.book_id) : ""}
+                              onChange={(e) => setRowBook(idx, e.target.value)}
+                              className="w-full bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 px-1 py-1 text-[12px]"
+                              title="Select book"
+                            >
+                              <option value="">Select a book</option>
+                              {books.map((b) => (
+                                <option key={b.id} value={String(b.id)}>
+                                  {b.title}
+                                </option>
+                              ))}
+                            </select>
+
+                          </div>
+
+                          {/* ✅ Add NEW Book for this row */}
+                          <button
+                            type="button"
+                            onClick={() => openCreateBookForRow(idx)}
+                            className="mt-1 px-2 text-[14px] font-bold text-slate-600 hover:text-slate-900"
+                            title="Add new book"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* Qty (compact) */}
+                      <td className="border-b border-slate-200 px-1 py-0.5">
+                        <input
+                          ref={(el) => {
+                            cellRefs.current[cellKey(idx, "qty")] = el;
+                          }}
+                          type="number"
+                          min={0}
+                          value={it.qty}
+                          onChange={(e) => setRowQty(idx, e.target.value)}
+                          onWheel={preventWheelChange}
+                          onKeyDown={(e) => onCellEnter(e, idx, "qty")}
+                          className={`${cellInput} ${wQty}`}
+                          title="Qty"
+                        />
+                      </td>
+
+                      {/* Spec Qty (compact) */}
+                      <td className="border-b border-slate-200 px-1 py-0.5">
+                        <input
+                          type="number"
+                          min={0}
+                          value={it.spec_qty || ""}
+                          onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                          onWheel={preventWheelChange}
+                          className={`${cellInput} ${wSpec}`}
+                          title="Specimen Qty (free)"
+                        />
+                      </td>
+
+                      {/* Rate (compact) */}
+                      <td className={`border-b border-slate-200 px-1 py-0.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
+                        <input
+                          ref={(el) => {
+                            cellRefs.current[cellKey(idx, "mrp")] = el;
+                          }}
+                          type="number"
+                          min={0}
+                          value={it.unit_price}
+                          onChange={(e) => setRowUnit(idx, e.target.value)}
+                          onWheel={preventWheelChange}
+                          onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+                          className={`${cellInput} ${wRate} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
+                          title={isInvoice ? "Rate (required)" : "Rate (optional)"}
+                        />
+                      </td>
+
+                      {/* %Disc (compact) */}
+                      <td className="border-b border-slate-200 px-1 py-0.5">
+                        <input
+                          ref={(el) => {
+                            cellRefs.current[cellKey(idx, "pct")] = el;
+                          }}
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={it.disc_pct}
+                          onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                          onWheel={preventWheelChange}
+                          onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+                          className={`${cellInput} ${wPct}`}
+                          title="% discount (auto sync Disc₹)"
+                        />
+                      </td>
+
+                      {/* Disc₹ (compact) */}
+                      <td className="border-b border-slate-200 px-1 py-0.5">
+                        <input
+                          ref={(el) => {
+                            cellRefs.current[cellKey(idx, "amt")] = el;
+                          }}
+                          type="number"
+                          min={0}
+                          value={it.disc_amt}
+                          onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                          onWheel={preventWheelChange}
+                          onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+                          className={`${cellInput} ${wAmt}`}
+                          title="Fixed discount per unit (auto sync %)"
+                        />
+                      </td>
+
+                      {/* Gross / Net (paid qty only) */}
+                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+                        ₹{fmtMoney(row.grossLine)}
+                      </td>
+
+                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
+                        ₹{fmtMoney(row.netLine)}
+                      </td>
+
+                      {/* ✅ actions */}
+                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => addRowAfter(idx)}
+                            className="inline-flex items-center justify-center p-1.5 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100"
+                            title="Add next row"
+                          >
+                            <PlusCircle className="w-4 h-4 text-indigo-700" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                            className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                            title="Remove line"
+                          >
+                            <Trash2 className="w-4 h-4 text-rose-600" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    );
+                  })}
+                </tbody>
+
+
+                </table>
+
+                <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
+                  Tip: Select book in row, press “+” to add next row. Enter key navigation stays same for Qty/Rate/Disc.
+                </div>
+              </div>
+            </div>
+
+
+
+          {/* BOTTOM BAR */}
+          <div className="border-t bg-white">
+            <div className="px-3 py-1.5 bg-white flex flex-nowrap items-end gap-2">
+              <div>
+                <MiniLabel>Bill Disc %</MiniLabel>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={form.bill_disc_pct}
+                  onChange={(e) => syncBillDiscFromPct(e.target.value)}
+                  onWheel={preventWheelChange}
+                  className={`${bottomInput} ${w80}`}
+                  placeholder="0"
+                  title="Bill discount percent (auto sync ₹)"
+                />
+              </div>
+
+              <div>
+                <MiniLabel>Bill Disc ₹</MiniLabel>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.bill_disc_amt}
+                  onChange={(e) => syncBillDiscFromAmt(e.target.value)}
+                  onWheel={preventWheelChange}
+                  className={`${bottomInput} ${w90}`}
+                  placeholder="0"
+                  title="Bill discount amount (auto sync %)"
+                />
+              </div>
+
+              <div>
+                <MiniLabel>Ship</MiniLabel>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.shipping_charge}
+                  onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
+                  onWheel={preventWheelChange}
+                    className={`${bottomInput} ${w80}`}
+
+                  placeholder="0"
+                  title="Shipping charge"
+                />
+              </div>
+
+              <div>
+                <MiniLabel>Other</MiniLabel>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.other_charge}
+                  onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
+                  onWheel={preventWheelChange}
+                  className={`${bottomInput} ${w80}`}
+                  placeholder="0"
+                  title="Other charge"
+                />
+              </div>
+
+              <div>
+                <MiniLabel>Round</MiniLabel>
+                <input
+                  type="number"
+                  value={form.round_off}
+                  onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
+                  onWheel={preventWheelChange}
+                 className={`${bottomInput} ${w80}`}
+                  placeholder="0"
+                  title="Round off"
+                />
+              </div>
+
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+                <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
+                <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                  <div className="text-[10px] opacity-80 leading-none">Grand</div>
+                  <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setPreviewOpen(false);
+                    setCreateOpen(false);
+                  }}
+                  className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  title="Cancel"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={openPreview}
+                  disabled={!items.length}
+                  className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
+                  title="Preview before saving"
+                >
+                  <Eye className="w-4 h-4" />
+                  Preview
+                </button>
+
+                <button
+                  onClick={submitCreate}
+                  disabled={creating || !items.length}
+                  className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                  title="Save"
+                >
+                  {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRatePaid ? "Save (Draft)" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ---------------- Preview Modal ---------------- */}
+          {previewOpen && (
+            <div className="fixed inset-0 z-[60] bg-black/60">
+              <div className="h-full w-full p-2 sm:p-3">
+                <div className="mx-auto w-full max-w-[1180px] h-[96vh]">
+                  <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-full flex flex-col">
+                    <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">
+                          Preview Direct Receipt
+                          {selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
+                          {selectedSchoolName ? ` • ${selectedSchoolName}` : ""}
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-600">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(form.receive_doc_type)}`}>
+                            {form.receive_doc_type}
+                          </span>{" "}
+                          <b className="ml-2">{form.doc_no || "-"}</b> • Doc Date: <b>{form.doc_date || "-"}</b> • GRN:{" "}
+                          <b>{form.received_date || "-"}</b>
+                          {form.remarks?.trim() ? (
+                            <>
+                              {" "}
+                              • Remarks: <b>{form.remarks.trim()}</b>
+                            </>
+                          ) : null}
+                        </div>
+                        {!isInvoice && anyMissingRatePaid ? (
+                          <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                            This Challan will be saved as <b>DRAFT</b> because some rates are missing/0.
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="text-[11px] text-slate-500 truncate">
-                        {isInvoice
-                          ? "INVOICE: rate required, will be saved as RECEIVED"
-                          : "CHALLAN: you can save qty only; if any rate missing, it will be saved as DRAFT"}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => setItems((p) => p.map((x) => ({ ...x, qty: x.qty || "1" })))}
-                        className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                        title="No-op"
-                      >
-                        <RefreshCcw className="w-4 h-4" />
-                        Refresh
-                      </button>
 
                       <button
-                        onClick={() => {
-                          setPreviewOpen(false);
-                          setCreateOpen(false);
-                        }}
+                        onClick={() => setPreviewOpen(false)}
                         className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                        title="Close"
+                        title="Close preview"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
-                  </div>
 
-                  {/* Top form */}
-                  <div className="px-3 pb-2">
-                    <div
-                      className={`grid grid-cols-12 gap-2 p-2 rounded-2xl border ${
-                        isInvoice ? "bg-indigo-50/60 border-indigo-200" : "bg-amber-50/40 border-amber-200"
-                      }`}
-                    >
-                      {/* Supplier (optional) */}
-                      <div className="col-span-12 md:col-span-3">
-                        <MiniLabel>Supplier (optional)</MiniLabel>
-                        <select
-                          value={form.supplier_id}
-                          onChange={(e) => setForm((p) => ({ ...p, supplier_id: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          title="Supplier"
-                        >
-                          <option value="">—</option>
-                          {suppliers.map((s) => (
-                            <option key={s.id} value={String(s.id)}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    <div className="flex-1 min-h-0 p-3">
+                      <div className="h-full border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
+                        <div className="px-3 py-2 bg-slate-100 text-xs font-semibold">Lines</div>
+                        <div className="flex-1 min-h-0 overflow-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-white sticky top-0 z-10">
+                        <tr>
+                          <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Qty</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Rate</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Disc</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Gross</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Net</th>
+                          <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
+                        </tr>
+                      </thead>
 
-                      {/* School (optional) */}
-                      <div className="col-span-12 md:col-span-3">
-                        <MiniLabel>School (optional)</MiniLabel>
-                        <select
-                          value={form.school_id}
-                          onChange={(e) => setForm((p) => ({ ...p, school_id: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          title="School"
-                        >
-                          <option value="">—</option>
-                          {schools.map((s) => (
-                            <option key={s.id} value={String(s.id)}>
-                              {s.name}
-                              {s.city ? ` • ${s.city}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                        <tbody>
+                          {items
+                            .flatMap((it) => {
+                              const paidQty = Math.max(0, Math.floor(num(it.qty)));
+                              const specQty = Math.max(0, Math.floor(num(it.spec_qty)));
 
-                      {/* Doc Type */}
-                      <div className="col-span-6 md:col-span-2">
-                        <MiniLabel>Receiving As *</MiniLabel>
-                        <select
-                          value={form.receive_doc_type}
-                          onChange={(e) =>
-                            setForm((p) => ({
-                              ...p,
-                              receive_doc_type: e.target.value as ReceiveDocType,
-                              doc_date: p.doc_date || todayISO(),
-                            }))
-                          }
-                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
-                            isInvoice ? "border-indigo-300" : "border-amber-300"
-                          }`}
-                          title="Receiving As"
-                        >
-                          <option value="CHALLAN">Challan</option>
-                          <option value="INVOICE">Invoice</option>
-                        </select>
-                      </div>
+                              const rows: Array<{ kind: "PAID" | "SPEC"; qty: number }> = [];
+                              if (paidQty > 0) rows.push({ kind: "PAID", qty: paidQty });
+                              if (specQty > 0) rows.push({ kind: "SPEC", qty: specQty });
 
-                      {/* Doc No */}
-                      <div className="col-span-6 md:col-span-2">
-                        <MiniLabel>{isInvoice ? "Invoice No *" : "Challan No"}</MiniLabel>
-                        <input
-                          value={form.doc_no}
-                          onChange={(e) => setForm((p) => ({ ...p, doc_no: e.target.value }))}
-                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
-                            isInvoice ? "border-indigo-300" : "border-amber-300"
-                          }`}
-                          placeholder={isInvoice ? "Invoice number" : "Challan number"}
-                          title="Doc No"
-                        />
-                      </div>
+                              return rows.map((r) => ({ it, ...r }));
+                            })
+                            .map(({ it, kind, qty }) => {
+                              const isSpec = kind === "SPEC";
 
-                      {/* Doc Date */}
-                      <div className="col-span-6 md:col-span-1">
-                        <MiniLabel>Doc Date</MiniLabel>
-                        <input
-                          type="date"
-                          value={form.doc_date}
-                          onChange={(e) => setForm((p) => ({ ...p, doc_date: e.target.value }))}
-                          className={`w-full border rounded-lg px-2 py-1.5 text-[12px] bg-white ${
-                            isInvoice ? "border-indigo-300" : "border-amber-300"
-                          }`}
-                          title="Doc Date"
-                        />
-                      </div>
+                              const up = isSpec ? 0 : Math.max(0, num(it.unit_price));
+                              const discAmt = isSpec ? 0 : Math.max(0, num(it.disc_amt));
+                              const row = computeRow(qty, up, discAmt);
 
-                      {/* GRN Date */}
-                      <div className="col-span-6 md:col-span-1">
-                        <MiniLabel>GRN *</MiniLabel>
-                        <input
-                          type="date"
-                          value={form.received_date}
-                          onChange={(e) => setForm((p) => ({ ...p, received_date: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          title="Received Date"
-                        />
-                      </div>
-                    </div>
+                              const discText = isSpec
+                                ? "-"
+                                : it.disc_mode === "PERCENT" && num(it.disc_pct) > 0
+                                ? `${fmtMoney(num(it.disc_pct))}%`
+                                : it.disc_mode === "AMOUNT" && num(it.disc_amt) > 0
+                                ? `₹${fmtMoney(num(it.disc_amt))}`
+                                : "-";
 
-                    {/* Row-2 */}
-                    <div className="mt-2 flex flex-wrap items-end gap-2">
-                      <div className="min-w-[260px] w-[380px] md:w-[520px]">
-                        <MiniLabel>Remarks</MiniLabel>
-                        <input
-                          value={form.remarks}
-                          onChange={(e) => setForm((p) => ({ ...p, remarks: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-[12px] bg-white"
-                          placeholder="optional"
-                          title="Remarks"
-                        />
-                      </div>
+                              return (
+                                <tr key={`${it.book_id}-${kind}`} className="hover:bg-slate-50">
+                                  <td className="border-b border-slate-200 px-3 py-2">
+                                    <div className="font-medium text-slate-900">{it.title}</div>
 
-                      <div className="ml-auto flex flex-wrap items-center gap-2">
-                        <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                        <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                        <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                          <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                          <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                                   
+
+                                    {/* specimen reason (only for SPEC line) */}
+                                    {isSpec ? (
+                                      <div className="text-[11px] text-amber-700 mt-0.5">
+                                        Specimen{it.spec_reason?.trim() ? ` • ${it.spec_reason.trim()}` : ""}
+                                      </div>
+                                    ) : null}
+                                  </td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">{qty}</td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                    {up > 0 ? `₹${fmtMoney(up)}` : "-"}
+                                  </td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                    ₹{fmtMoney(row.grossLine)}
+                                  </td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right">
+                                    ₹{fmtMoney(row.netLine)}
+                                  </td>
+
+                                  <td className="border-b border-slate-200 px-3 py-2 text-right font-extrabold">
+                                    ₹{fmtMoney(row.netLine)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                    </table>
+
                         </div>
                       </div>
                     </div>
 
-                    {/* challan warning */}
-                    {!isInvoice && anyMissingRatePaid && (
-                      <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                        <b>Challan mode:</b> Some items have missing rate → this receipt will be saved as <b>DRAFT</b>. Later open it and{" "}
-                        <b>Convert to Invoice</b> to update prices, then mark <b>Received</b>.
+                    <div className="border-t bg-white px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2 justify-end">
+                        <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
+                        <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+                        <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
+                        <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
+                        <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
+                        <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
+                        <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
+                        <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                          <div className="text-[10px] opacity-80 leading-none">Grand</div>
+                          <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                        </div>
+
+                        <div className="ml-2 flex items-center gap-2">
+                          <button
+                            onClick={() => setPreviewOpen(false)}
+                            className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                          >
+                            Back
+                          </button>
+                          <button
+                            onClick={submitCreate}
+                            disabled={creating}
+                            className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                          >
+                            {creating ? "Saving..." : "Confirm Save"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="h-2" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Create Book Modal (unchanged) */}
+          {bookCreateOpen && (
+            <div className="fixed inset-0 z-[65] bg-black/60">
+              <div className="h-full w-full p-3 sm:p-4 flex items-center justify-center">
+                <div className="w-full max-w-[720px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+                  <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-emerald-50 flex items-center justify-between">
+                    <div className="text-sm font-semibold">Add New Book</div>
+                    <button
+                      onClick={() => setBookCreateOpen(false)}
+                      className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                      title="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="p-4">
+                    {bookCreateError && (
+                      <div className="mb-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                        {bookCreateError}
                       </div>
                     )}
 
-                    {/* Quick add book */}
-                    <div className="mt-3 flex flex-wrap items-end gap-2">
-                      <div className="min-w-[320px]">
-                        <MiniLabel>Add Book</MiniLabel>
+                    <div className="grid grid-cols-12 gap-3">
+                      <div className="col-span-12">
+                        <MiniLabel>Title *</MiniLabel>
+                        <input
+                          value={bookForm.title}
+                          onChange={(e) => setBookForm((p) => ({ ...p, title: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="Book name"
+                        />
+                      </div>
+
+                      <div className="col-span-12">
+                        <MiniLabel>Publisher *</MiniLabel>
                         <select
-                          value={quickBookId}
-                          onChange={(e) => setQuickBookId(e.target.value)}
-                          className="border border-slate-300 rounded-xl px-3 py-2 bg-white text-[12px] min-w-[320px]"
-                          disabled={booksLoading}
-                          title="Add Book"
+                          value={(bookForm as any).publisher_id}
+                          onChange={(e) => setBookForm((p) => ({ ...p, publisher_id: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
                         >
-                          <option value="">{booksLoading ? "Loading books..." : "Select a book"}</option>
-                          {books.map((b) => (
-                            <option key={b.id} value={String(b.id)}>
-                              {b.title}
+                          <option value="">Select publisher</option>
+                          {publishers.map((p) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {p.name}
                             </option>
                           ))}
                         </select>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const id = Number(quickBookId);
-                          if (!id) return;
-                          addBookLine(id);
-                          setQuickBookId("");
-                        }}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 text-[12px] font-semibold"
-                      >
-                        <BookOpen className="w-4 h-4" />
-                        Add
-                      </button>
-
-                      {/* ✅ NEW: + button to create book if not in dropdown */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBookCreateError(null);
-                         setBookForm({ title: "", publisher_id: "", mrp: "", class_name: "", subject: "", code: "", isbn: "" });
-                          setBookCreateOpen(true);
-                        }}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 text-[12px] font-semibold"
-                        title="Create new book"
-                      >
-                        <PlusCircle className="w-4 h-4" />
-                        New Book
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => fetchBooks()}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-[12px]"
-                      >
-                        <RefreshCcw className={`w-4 h-4 ${booksLoading ? "animate-spin" : ""}`} />
-                        Reload Books
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* LISTING */}
-                <div className="flex-1 min-h-0">
-                  {items.length === 0 ? (
-                    <div className="p-4 text-sm text-slate-500">Add books to start.</div>
-                  ) : (
-                    <div className="h-full overflow-auto">
-                      <table className="w-full text-xs border-collapse">
-                        <thead className="bg-slate-100 sticky top-0 z-10">
-                          <tr>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
-
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Qty</th>
-
-                            {/* ✅ keep Spec columns BEFORE Rate (to match tbody order) */}
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec Qty</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-left w-56">Spec Reason</th>
-
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
-                              {isInvoice ? "Rate*" : "Rate"}
-                            </th>
-
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Net</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
-                            <th className="border-b border-slate-200 px-2 py-1.5 text-right w-10"> </th>
-                          </tr>
-
-                        </thead>
-
-                        <tbody>
-                          {items.map((it, idx) => {
-                            const qty = Math.max(0, Math.floor(num(it.qty)));
-                            const up = Math.max(0, num(it.unit_price));
-                            const discAmt = Math.max(0, num(it.disc_amt));
-                            const row = computeRow(qty, up, discAmt);
-
-                            const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
-
-                            return (
-                              <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
-                                <td className="border-b border-slate-200 px-2 py-1.5">
-                                  <div className="font-medium text-slate-900">{it.title}</div>
-                                  <div className="text-[11px] text-slate-500 hidden md:block">{it.meta}</div>
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "qty")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.qty}
-                                    onChange={(e) => setRowQty(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "qty")}
-                                    className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right bg-white"
-                                    title="Qty"
-                                  />
-                                </td>
-
-                                {/* Spec Qty */}
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={it.spec_qty}
-                                    onChange={(e) => setRowSpecQty(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] text-right bg-white"
-                                    title="Specimen Qty (free)"
-                                  />
-                                </td>
-
-                                {/* Spec Reason */}
-                                <td className="border-b border-slate-200 px-2 py-1.5">
-                                  <input
-                                    value={it.spec_reason}
-                                    onChange={(e) => setRowSpecReason(idx, e.target.value)}
-                                    className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-[12px] bg-white"
-                                    placeholder="optional (e.g. Specimen)"
-                                    title="Specimen reason"
-                                  />
-                                </td>
-
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "mrp")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.unit_price}
-                                    onChange={(e) => setRowUnit(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
-                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      missingRateInvoice ? "border-rose-400 bg-rose-50" : "border-slate-300"
-                                    }`}
-                                    title={isInvoice ? "Rate (required)" : "Rate (optional for challan draft)"}
-                                  />
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "pct")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    max={100}
-                                    value={it.disc_pct}
-                                    onChange={(e) => setRowDiscPct(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "pct")}
-                                    className={`w-16 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      it.disc_mode === "PERCENT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                    }`}
-                                    title="% discount (auto sync Disc₹)"
-                                  />
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <input
-                                    ref={(el) => {
-                                      cellRefs.current[cellKey(idx, "amt")] = el;
-                                    }}
-                                    type="number"
-                                    min={0}
-                                    value={it.disc_amt}
-                                    onChange={(e) => setRowDiscAmt(idx, e.target.value)}
-                                    onWheel={preventWheelChange}
-                                    onKeyDown={(e) => onCellEnter(e, idx, "amt")}
-                                    className={`w-24 border rounded-xl px-2 py-1.5 text-[12px] text-right bg-white ${
-                                      it.disc_mode === "AMOUNT" ? "border-indigo-300 bg-indigo-50" : "border-slate-300"
-                                    }`}
-                                    title="Fixed discount per unit (auto sync %)"
-                                  />
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                  ₹{fmtMoney(row.grossLine)}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                                  ₹{fmtMoney(row.netLine)}
-                                </td>
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
-                                  ₹{fmtMoney(row.netLine)}
-                                </td>
-
-                                <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
-                                    className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                    title="Remove line"
-                                  >
-                                    <Trash2 className="w-4 h-4 text-rose-600" />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-
-                      <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
-                        Tip: Enter key will jump to next cell (Qty → Rate → %Disc → Disc₹ → next row). Spec fields are manual.
+                      <div className="col-span-12 md:col-span-4">
+                        <MiniLabel>MRP *</MiniLabel>
+                        <input
+                          type="number"
+                          min={0}
+                          value={(bookForm as any).mrp}
+                          onChange={(e) => setBookForm((p) => ({ ...p, mrp: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="e.g. 250"
+                        />
                       </div>
 
-                    </div>
-                  )}
-                </div>
-
-                {/* BOTTOM BAR */}
-                <div className="border-t bg-white">
-                  <div className="px-4 py-2 bg-slate-50 flex flex-wrap items-end gap-2">
-                    <div>
-                      <MiniLabel>Bill Disc %</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={form.bill_disc_pct}
-                        onChange={(e) => syncBillDiscFromPct(e.target.value)}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Bill discount percent (auto sync ₹)"
-                      />
-                    </div>
-
-                    <div>
-                      <MiniLabel>Bill Disc ₹</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.bill_disc_amt}
-                        onChange={(e) => syncBillDiscFromAmt(e.target.value)}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[130px] bg-white"
-                        placeholder="0"
-                        title="Bill discount amount (auto sync %)"
-                      />
-                    </div>
-
-                    <div>
-                      <MiniLabel>Ship</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.shipping_charge}
-                        onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Shipping charge"
-                      />
-                    </div>
-
-                    <div>
-                      <MiniLabel>Other</MiniLabel>
-                      <input
-                        type="number"
-                        min={0}
-                        value={form.other_charge}
-                        onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Other charge"
-                      />
-                    </div>
-
-                    <div>
-                      <MiniLabel>Round</MiniLabel>
-                      <input
-                        type="number"
-                        value={form.round_off}
-                        onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
-                        onWheel={preventWheelChange}
-                        className="border border-slate-300 rounded-xl px-2 py-2 text-[12px] text-right w-[110px] bg-white"
-                        placeholder="0"
-                        title="Round off"
-                      />
-                    </div>
-
-                    <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                      <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                      <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                        <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                        <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+                      <div className="col-span-12 md:col-span-4">
+                        <MiniLabel>Class</MiniLabel>
+                        <input
+                          value={bookForm.class_name}
+                          onChange={(e) => setBookForm((p) => ({ ...p, class_name: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="e.g. 6"
+                        />
                       </div>
 
+                      <div className="col-span-12 md:col-span-4">
+                        <MiniLabel>Subject</MiniLabel>
+                        <input
+                          value={bookForm.subject}
+                          onChange={(e) => setBookForm((p) => ({ ...p, subject: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="e.g. English"
+                        />
+                      </div>
+
+                      <div className="col-span-12 md:col-span-4">
+                        <MiniLabel>Code</MiniLabel>
+                        <input
+                          value={bookForm.code}
+                          onChange={(e) => setBookForm((p) => ({ ...p, code: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="optional"
+                        />
+                      </div>
+
+                      <div className="col-span-12">
+                        <MiniLabel>ISBN</MiniLabel>
+                        <input
+                          value={bookForm.isbn}
+                          onChange={(e) => setBookForm((p) => ({ ...p, isbn: e.target.value }))}
+                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
+                          placeholder="optional"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-end gap-2">
                       <button
-                        onClick={() => {
-                          setPreviewOpen(false);
-                          setCreateOpen(false);
-                        }}
+                        onClick={() => setBookCreateOpen(false)}
                         className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                        title="Cancel"
                       >
                         Cancel
                       </button>
 
                       <button
-                        onClick={openPreview}
-                        disabled={!items.length}
-                        className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
-                        title="Preview before saving"
-                      >
-                        <Eye className="w-4 h-4" />
-                        Preview
-                      </button>
-
-                      <button
-                        onClick={submitCreate}
-                        disabled={creating || !items.length}
+                        onClick={submitCreateBook}
+                        disabled={bookCreating}
                         className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                        title="Save"
                       >
-                        {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRatePaid ? "Save (Draft)" : "Save"}
+                        {bookCreating ? "Creating..." : "Create & Add"}
                       </button>
+                    </div>
+
+                    <div className="mt-2 text-[11px] text-slate-500">
+                      Book will be created and will appear in the book dropdown.
                     </div>
                   </div>
                 </div>
-
-                {/* ---------------- Preview Modal ---------------- */}
-                {previewOpen && (
-                  <div className="fixed inset-0 z-[60] bg-black/60">
-                    <div className="h-full w-full p-2 sm:p-3">
-                      <div className="mx-auto w-full max-w-[1180px] h-[96vh]">
-                        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden h-full flex flex-col">
-                          <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-indigo-50 flex items-center justify-between">
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold truncate">
-                                Preview Direct Receipt
-                                {selectedSupplierName ? ` • ${selectedSupplierName}` : ""}
-                                {selectedSchoolName ? ` • ${selectedSchoolName}` : ""}
-                              </div>
-                              <div className="mt-1 text-[11px] text-slate-600">
-                                <span className={`px-2 py-0.5 rounded-full text-[11px] ${docTypePill(form.receive_doc_type)}`}>
-                                  {form.receive_doc_type}
-                                </span>{" "}
-                                <b className="ml-2">{form.doc_no || "-"}</b> • Doc Date: <b>{form.doc_date || "-"}</b> • GRN:{" "}
-                                <b>{form.received_date || "-"}</b>
-                                {form.remarks?.trim() ? (
-                                  <>
-                                    {" "}
-                                    • Remarks: <b>{form.remarks.trim()}</b>
-                                  </>
-                                ) : null}
-                              </div>
-                              {!isInvoice && anyMissingRatePaid ? (
-                                <div className="mt-2 text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                                  This Challan will be saved as <b>DRAFT</b> because some rates are missing/0.
-                                </div>
-                              ) : null}
-                            </div>
-
-                            <button
-                              onClick={() => setPreviewOpen(false)}
-                              className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                              title="Close preview"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          <div className="flex-1 min-h-0 p-3">
-                            <div className="h-full border border-slate-200 rounded-2xl overflow-hidden flex flex-col">
-                              <div className="px-3 py-2 bg-slate-100 text-xs font-semibold">Lines</div>
-                              <div className="flex-1 min-h-0 overflow-auto">
-                                <table className="w-full text-xs border-collapse">
-                                  <thead className="bg-white sticky top-0">
-                                    <tr>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-left">Book</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Qty</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Rate</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Disc</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Gross</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Net</th>
-                                      <th className="border-b border-slate-200 px-3 py-2 text-right">Amount</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {items
-                                      .flatMap((it) => {
-                                        const paidQty = Math.max(0, Math.floor(num(it.qty)));
-                                        const specQty = Math.max(0, Math.floor(num(it.spec_qty)));
-
-                                        const rows: Array<{ kind: "PAID" | "SPEC"; qty: number }> = [];
-                                        if (paidQty > 0) rows.push({ kind: "PAID", qty: paidQty });
-                                        if (specQty > 0) rows.push({ kind: "SPEC", qty: specQty });
-
-                                        return rows.map((r) => ({ it, ...r }));
-                                      })
-                                      .map(({ it, kind, qty }) => {
-                                        const up = kind === "SPEC" ? 0 : Math.max(0, num(it.unit_price));
-                                        const discAmt = kind === "SPEC" ? 0 : Math.max(0, num(it.disc_amt));
-                                        const row = computeRow(qty, up, discAmt);
-
-                                        const discText =
-                                          kind === "SPEC"
-                                            ? "-"
-                                            : it.disc_mode === "PERCENT"
-                                            ? `${fmtMoney(num(it.disc_pct))}%`
-                                            : it.disc_mode === "AMOUNT"
-                                            ? `₹${fmtMoney(num(it.disc_amt))}`
-                                            : "-";
-
-                                        return (
-                                          <tr key={`${it.book_id}-${kind}`} className="hover:bg-slate-50">
-                                            <td className="border-b border-slate-200 px-3 py-2">
-                                              <div className="font-medium">{it.title}</div>
-                                              {kind === "SPEC" ? (
-                                                <div className="text-[11px] text-amber-700">
-                                                  Specimen{it.spec_reason?.trim() ? ` • ${it.spec_reason.trim()}` : ""}
-                                                </div>
-                                              ) : null}
-                                            </td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{qty}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{up > 0 ? `₹${fmtMoney(up)}` : "-"}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.grossLine)}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(row.netLine)}</td>
-                                            <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">₹{fmtMoney(row.netLine)}</td>
-                                          </tr>
-                                        );
-                                      })}
-
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="border-t bg-white px-4 py-3">
-                            <div className="flex flex-wrap items-center gap-2 justify-end">
-                              <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                              <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                              <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                              <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                              <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
-                              <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
-                              <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
-                              <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                                <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                                <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                              </div>
-
-                              <div className="ml-2 flex items-center gap-2">
-                                <button
-                                  onClick={() => setPreviewOpen(false)}
-                                  className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                                >
-                                  Back
-                                </button>
-                                <button
-                                  onClick={submitCreate}
-                                  disabled={creating}
-                                  className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                                >
-                                  {creating ? "Saving..." : "Confirm Save"}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="h-2" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ✅ Create Book Modal (NEW) */}
-                {bookCreateOpen && (
-                  <div className="fixed inset-0 z-[65] bg-black/60">
-                    <div className="h-full w-full p-3 sm:p-4 flex items-center justify-center">
-                      <div className="w-full max-w-[720px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-                        <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-emerald-50 flex items-center justify-between">
-                          <div className="text-sm font-semibold">Add New Book</div>
-                          <button
-                            onClick={() => setBookCreateOpen(false)}
-                            className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                            title="Close"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-
-                        <div className="p-4">
-                          {bookCreateError && (
-                            <div className="mb-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
-                              {bookCreateError}
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-12 gap-3">
-                            <div className="col-span-12">
-                              <MiniLabel>Title *</MiniLabel>
-                              <input
-                                value={bookForm.title}
-                                onChange={(e) => setBookForm((p) => ({ ...p, title: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                placeholder="Book name"
-                              />
-                            </div>
-                            <div className="col-span-12">
-                              <MiniLabel>Publisher *</MiniLabel>
-                              <select
-                                value={(bookForm as any).publisher_id}
-                                onChange={(e) => setBookForm((p) => ({ ...p, publisher_id: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                              >
-                                <option value="">Select publisher</option>
-                                {publishers.map((p) => (
-                                  <option key={p.id} value={String(p.id)}>
-                                    {p.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                             {/* ✅ ADD MRP HERE */}
-                              <div className="col-span-12 md:col-span-4">
-                                <MiniLabel>MRP *</MiniLabel>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  value={(bookForm as any).mrp}
-                                  onChange={(e) => setBookForm((p) => ({ ...p, mrp: e.target.value }))}
-                                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                  placeholder="e.g. 250"
-                                />
-                              </div>
-
-
-                            <div className="col-span-12 md:col-span-4">
-                              <MiniLabel>Class</MiniLabel>
-                              <input
-                                value={bookForm.class_name}
-                                onChange={(e) => setBookForm((p) => ({ ...p, class_name: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                placeholder="e.g. 6"
-                              />
-                            </div>
-
-                            <div className="col-span-12 md:col-span-4">
-                              <MiniLabel>Subject</MiniLabel>
-                              <input
-                                value={bookForm.subject}
-                                onChange={(e) => setBookForm((p) => ({ ...p, subject: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                placeholder="e.g. English"
-                              />
-                            </div>
-
-                            <div className="col-span-12 md:col-span-4">
-                              <MiniLabel>Code</MiniLabel>
-                              <input
-                                value={bookForm.code}
-                                onChange={(e) => setBookForm((p) => ({ ...p, code: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                placeholder="optional"
-                              />
-                            </div>
-
-                            <div className="col-span-12">
-                              <MiniLabel>ISBN</MiniLabel>
-                              <input
-                                value={bookForm.isbn}
-                                onChange={(e) => setBookForm((p) => ({ ...p, isbn: e.target.value }))}
-                                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                                placeholder="optional"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="mt-4 flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => setBookCreateOpen(false)}
-                              className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                            >
-                              Cancel
-                            </button>
-
-                            <button
-                              onClick={submitCreateBook}
-                              disabled={bookCreating}
-                              className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                            >
-                              {bookCreating ? "Creating..." : "Create & Add"}
-                            </button>
-                          </div>
-
-                          <div className="mt-2 text-[11px] text-slate-500">
-                            Book will be created and automatically added as a line item.
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </div>
+    </div>
+  </div>
+)}
+
 
       {/* ---------------- View Modal ---------------- */}
       {viewOpen && (
@@ -2689,49 +2760,181 @@ const specimenPayload = existingItems
                               </tr>
                             </thead>
                             <tbody>
-                              {(viewTotals?.items || []).map((it) => {
-                                const title = it.book?.title || `Book #${it.book_id}`;
-                                const rec = Math.max(0, num(it.qty ?? it.received_qty));
-                                const rate = Math.max(0, num(it.rate ?? it.unit_price));
-                                const discAmt = Math.max(0, num((it as any).discount_amt));
-                                const discPct = Math.max(0, num((it as any).discount_pct));
-                                const netUnit = Math.max(0, num(it.net_unit_price) || (rate - discAmt));
-                                const amount = Math.max(0, num(it.line_amount));
+  {items.map((it, idx) => {
+    const qty = Math.max(0, Math.floor(num(it.qty)));
+    const up = Math.max(0, num(it.unit_price));
+    const discAmt = Math.max(0, num(it.disc_amt));
 
-                                const discText = discAmt > 0 ? `₹${fmtMoney(discAmt)}` : discPct > 0 ? `${fmtMoney(discPct)}%` : "-";
+    // totals ONLY for paid qty
+    const row = computeRow(qty, up, discAmt);
 
-                                return (
-                                  <tr key={`${it.book_id}-${it.id || ""}`} className="hover:bg-slate-50">
-                                    <td className="border-b border-slate-200 px-3 py-2">
-                                      <div className="font-medium text-slate-900">{title}</div>
-                                      {(it as any).is_specimen ? (
-                                        <div className="text-[11px] text-amber-700">
-                                          Specimen{(it as any).specimen_reason ? ` • ${(it as any).specimen_reason}` : ""}
-                                        </div>
-                                      ) : null}
+    const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
 
-                                      <div className="text-[11px] text-slate-500">
-                                        {[it.book?.class_name ? `C:${it.book.class_name}` : null, it.book?.subject ? `S:${it.book.subject}` : null, it.book?.code ? `Code:${it.book.code}` : null]
-                                          .filter(Boolean)
-                                          .join(" • ")}
-                                      </div>
-                                    </td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right font-semibold">{rec}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">{rate > 0 ? `₹${fmtMoney(rate)}` : "-"}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">{discText}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right">₹{fmtMoney(netUnit)}</td>
-                                    <td className="border-b border-slate-200 px-3 py-2 text-right font-extrabold">₹{fmtMoney(amount)}</td>
-                                  </tr>
-                                );
-                              })}
-                              {!viewTotals?.items?.length ? (
-                                <tr>
-                                  <td colSpan={6} className="px-3 py-6 text-center text-sm text-slate-500">
-                                    No line items found.
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </tbody>
+    // ✅ compact "excel-like" input style (NO borders, small width)
+    const cell =
+      "bg-transparent border-0 outline-none focus:ring-0 px-1 py-0.5 text-[12px] text-right";
+
+    // ✅ widths (tiny)
+    const wQty = "w-12";     // Qty
+    const wSpec = "w-12";    // Spec
+    const wRate = "w-16";    // Rate
+    const wPct = "w-14";     // %Disc
+    const wAmt = "w-16";     // Disc₹
+
+    // ✅ book dropdown style (no full border, only bottom line)
+    const bookSelect =
+      "w-full bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 px-1 py-1 text-[12px]";
+
+    return (
+      <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
+        {/* ✅ Book select + New Book (+) */}
+       <td className="border-b border-slate-200 px-2 py-1.5">
+            <div className="flex items-start gap-2">
+              <div className="flex-1">
+                <select
+                  value={it.book_id ? String(it.book_id) : ""}
+                  onChange={(e) => setRowBook(idx, e.target.value)}
+                  className="w-full bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 px-1 py-1 text-[12px]"
+                >
+                  <option value="">Select a book</option>
+                  {books.map((b) => (
+                    <option key={b.id} value={String(b.id)}>
+                      {b.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => openCreateBookForRow(idx)}
+                className="mt-1 px-2 text-[14px] font-bold text-slate-600 hover:text-slate-900"
+                title="Add new book"
+              >
+                +
+              </button>
+            </div>
+          </td>
+
+
+        {/* Qty */}
+        <td className="border-b border-slate-200 px-1 py-0.5">
+          <input
+            ref={(el) => {
+              cellRefs.current[cellKey(idx, "qty")] = el;
+            }}
+            type="number"
+            min={0}
+            value={it.qty}
+            onChange={(e) => setRowQty(idx, e.target.value)}
+            onWheel={preventWheelChange}
+            onKeyDown={(e) => onCellEnter(e, idx, "qty")}
+            className={`${cell} ${wQty}`}
+            title="Qty"
+          />
+        </td>
+
+        {/* Spec Qty */}
+        <td className="border-b border-slate-200 px-1 py-0.5">
+          <input
+            type="number"
+            min={0}
+            value={it.spec_qty || ""}
+            onChange={(e) => setRowSpecQty(idx, e.target.value)}
+            onWheel={preventWheelChange}
+            className={`${cell} ${wSpec}`}
+            title="Specimen Qty (free)"
+          />
+        </td>
+
+        {/* Rate */}
+        <td className={`border-b border-slate-200 px-1 py-0.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
+          <input
+            ref={(el) => {
+              cellRefs.current[cellKey(idx, "mrp")] = el;
+            }}
+            type="number"
+            min={0}
+            value={it.unit_price}
+            onChange={(e) => setRowUnit(idx, e.target.value)}
+            onWheel={preventWheelChange}
+            onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+            className={`${cell} ${wRate} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
+            title={isInvoice ? "Rate (required)" : "Rate (optional)"}
+          />
+        </td>
+
+        {/* %Disc */}
+        <td className="border-b border-slate-200 px-1 py-0.5">
+          <input
+            ref={(el) => {
+              cellRefs.current[cellKey(idx, "pct")] = el;
+            }}
+            type="number"
+            min={0}
+            max={100}
+            value={it.disc_pct}
+            onChange={(e) => setRowDiscPct(idx, e.target.value)}
+            onWheel={preventWheelChange}
+            onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+            className={`${cell} ${wPct}`}
+            title="% discount (auto sync Disc₹)"
+          />
+        </td>
+
+        {/* Disc₹ */}
+        <td className="border-b border-slate-200 px-1 py-0.5">
+          <input
+            ref={(el) => {
+              cellRefs.current[cellKey(idx, "amt")] = el;
+            }}
+            type="number"
+            min={0}
+            value={it.disc_amt}
+            onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+            onWheel={preventWheelChange}
+            onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+            className={`${cell} ${wAmt}`}
+            title="Fixed discount per unit (auto sync %)"
+          />
+        </td>
+
+        {/* Gross / Net */}
+        <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
+          ₹{fmtMoney(row.grossLine)}
+        </td>
+
+        <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
+          ₹{fmtMoney(row.netLine)}
+        </td>
+
+        {/* Actions */}
+        <td className="border-b border-slate-200 px-2 py-1.5 text-right">
+          <div className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => addRowAfter(idx)}
+              className="inline-flex items-center justify-center p-1.5 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100"
+              title="Add next row"
+            >
+              <PlusCircle className="w-4 h-4 text-indigo-700" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+              className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+              title="Remove line"
+            >
+              <Trash2 className="w-4 h-4 text-rose-600" />
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  })}
+</tbody>
+
                           </table>
                         </div>
                       </div>
@@ -2772,26 +2975,13 @@ const specimenPayload = existingItems
                           Close
                         </button>
                       </div>
-                      {/* ✅ Allocations Modal */}
-                        {viewRow && (
-                          <SupplierReceiptAllocationsModal
-                            open={allocOpen}
-                            onClose={() => setAllocOpen(false)}
-                            receiptId={viewRow.id}
-                            receiptNo={viewRow.receipt_no}
-                            receiptStatus={viewRow.status}
-                            postedAt={(viewRow as any)?.posted_at ?? null}
-                            schools={schools}
-                            items={(viewRow.items || []) as any}
-                            onSaved={async () => {
-                              await fetchReceipts(); // refresh list
-                              if (viewId) await openView(viewId); // refresh current view
-                            }}
-                          />
-                        )}
+               
+                        
 
                     </>
                   )}
+
+
                 </div>
               </div>
 
@@ -2911,6 +3101,8 @@ const specimenPayload = existingItems
                               const da = Math.max(0, num(l.disc_amt));
                               const row = computeRow(q, up, da);
                               const rateMissing = up <= 0;
+                            
+
 
                               return (
                                 <tr key={`${l.book_id}-${idx}`} className="hover:bg-slate-50">
@@ -3018,6 +3210,57 @@ const specimenPayload = existingItems
           )}
         </div>
       )}
+
+      {/* ✅ Allocations Modal (GLOBAL - keep outside tables/modals loops) */}
+        {allocReceiptId && (
+          <SupplierReceiptAllocationsModal
+            key={String(allocReceiptId)}
+            open={allocOpen}
+            onClose={() => setAllocOpen(false)}
+            receiptId={allocReceiptId}
+            receiptNo={allocReceiptNo}
+            receiptStatus={allocReceiptStatus}
+            postedAt={allocPostedAt}
+            schools={schools}
+            items={allocItems as any}
+            onSaved={async () => {
+              await fetchReceipts();
+              if (viewOpen && viewId) await openView(viewId);
+            }}
+          />
+        )}
+
     </div>
   );
 }
+
+const MiniLabel = ({ children }: { children: React.ReactNode }) => (
+  <div className="text-[10px] text-slate-500 leading-none mb-1">{children}</div>
+);
+
+const BigPill = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 border border-slate-200">
+    <div className="text-[10px] text-slate-600">{label}</div>
+    <div className="text-[14px] font-extrabold text-slate-900">{value}</div>
+  </div>
+);
+
+// ✅ Excel-like bottom bar inputs
+const bottomInput =
+  "bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 outline-none px-0.5 py-0.5 text-[11px] text-right";
+
+
+const w80 = "w-[80px]";    // % , Ship, Other, Round
+const w90 = "w-[90px]";    // Disc ₹
+
+  // ✅ COMMON cell styles (Create + View tables)
+  const cellInput =
+    "bg-transparent border-0 outline-none focus:ring-0 px-1 py-0.5 text-[12px] text-right";
+
+  // ✅ width helpers
+  const wQty = "w-12";   // Qty
+  const wSpec = "w-12";  // Spec Qty
+  const wRate = "w-16";  // Rate
+  const wPct = "w-14";   // %Disc
+  const wAmt = "w-16";   // Disc₹
+
