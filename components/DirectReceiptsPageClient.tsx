@@ -388,6 +388,7 @@ export default function DirectReceiptsPageClient() {
     const t = todayISO();
     return {
       supplier_id: "",
+      school_id: "", // ✅ add thiss
   
 
       receive_doc_type: "INVOICE" as ReceiveDocType,
@@ -1076,7 +1077,8 @@ const anyMissingRatePaid = useMemo(() => {
       school_order_id: null,
 
       supplier_id,
-     school_id: null,
+   school_id: form.school_id ? Number(form.school_id) : null,
+
 
       receive_doc_type: docType,
       doc_no: docNo,
