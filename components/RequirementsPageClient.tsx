@@ -208,6 +208,46 @@ const RequirementsPageClient: React.FC = () => {
 
   const [filterSchoolId, setFilterSchoolId] = useState<string>("");
   const [filterSession, setFilterSession] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>(""); // "", "draft", "confirmed"
+  const [filterClass, setFilterClass] = useState<string>("");
+  const [filterPublisher, setFilterPublisher] = useState<string>("");
+
+
+  const confirmDraftByIds = async (ids: number[]) => {
+    if (!ids.length) return;
+
+    const confirm = await Swal.fire({
+      title: `Confirm ${ids.length} requirement(s)?`,
+      text: "Draft requirements will be marked as Confirmed.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Yes, Confirm",
+      cancelButtonText: "Cancel",
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    setLoading(true);
+    try {
+      // ✅ Option A (BEST): if your backend supports bulk confirm
+      // await api.post("/api/requirements/confirm-bulk", { ids });
+
+      // ✅ Option B (works always): update one by one
+      for (const id of ids) {
+        await api.patch(`/api/requirements/${id}/confirm`);
+        // if you don't have this route, use PUT with existing data from row (harder)
+      }
+
+      setToast({ message: `Confirmed ${ids.length} requirement(s).`, type: "success" });
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || "Failed to confirm drafts.";
+      setToast({ message: msg, type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const [importLoading, setImportLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
@@ -548,24 +588,42 @@ const RequirementsPageClient: React.FC = () => {
       console.error(err);
     }
   };
-
-  const fetchRequirements = async (query?: string, schoolId?: string, session?: string) => {
+const fetchRequirements = async (
+  query: string = search,
+  schoolId: string = filterSchoolId,
+  session: string = filterSession,
+  status: string = filterStatus,
+  className: string = filterClass,
+  publisherName: string = filterPublisher
+) => {
   setListLoading(true);
   setError(null);
 
   try {
-    const params: any = {
-      limit: 10000, // 👈 SHOW ALL ITEMS
-    };
+    const params: any = {};
 
     if (query && query.trim()) params.q = query.trim();
     if (schoolId && schoolId !== "all") params.schoolId = schoolId;
     if (session && session.trim()) params.academic_session = session.trim();
+    if (status && status.trim()) params.status = status.trim();
+
+    // ✅ Class: send both name + id (backend may support either)
+    if (className && className.trim()) {
+      params.class_name = className.trim();
+      const cls = classes.find((c) => ciEq(c.class_name, className));
+      if (cls?.id) params.class_id = cls.id;
+    }
+
+    // ✅ Publisher: send both name + id (backend may support either)
+    if (publisherName && publisherName.trim()) {
+      params.publisher = publisherName.trim();
+      const pub = publishers.find((p) => ciEq(p.name, publisherName));
+      if (pub?.id) params.publisher_id = pub.id;
+    }
 
     const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
-
     setRequirements(normalizeRequirements(res.data));
-  } catch (err: any) {
+  } catch (err) {
     console.error(err);
     setError("Failed to load requirements.");
   } finally {
@@ -580,7 +638,7 @@ const RequirementsPageClient: React.FC = () => {
     fetchClasses();
     fetchPublishers();
     fetchSuppliers();
-    fetchRequirements();
+    fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
 
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -851,7 +909,7 @@ const RequirementsPageClient: React.FC = () => {
 
       setToast({ message: "Requirement updated successfully.", type: "success" });
       closeEditModal();
-      await fetchRequirements(search, filterSchoolId, filterSession);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -965,7 +1023,7 @@ const RequirementsPageClient: React.FC = () => {
         status: "confirmed",
       }));
 
-      await fetchRequirements(search, filterSchoolId, filterSession);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
 
       setToast({ message: `Saved ${count} requirement(s) successfully.`, type: "success" });
 
@@ -1016,7 +1074,7 @@ const RequirementsPageClient: React.FC = () => {
     try {
       await api.delete(`/api/requirements/${id}`);
       if (editingId === id) closeEditModal();
-      await fetchRequirements(search, filterSchoolId, filterSession);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
       setToast({ message: "Requirement deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
@@ -1030,21 +1088,22 @@ const RequirementsPageClient: React.FC = () => {
 
   /* ------------ SEARCH & FILTERS ------------ */
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setSearch(value);
+const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const value = e.target.value;
+  setSearch(value);
 
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-    searchTimeoutRef.current = setTimeout(() => {
-      fetchRequirements(value, filterSchoolId, filterSession);
-    }, 400);
-  };
+  searchTimeoutRef.current = setTimeout(() => {
+    fetchRequirements(value, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
+  }, 400);
+};
+
 
   const handleSchoolFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setFilterSchoolId(value);
-    fetchRequirements(search, value, filterSession);
+    fetchRequirements(search, value, filterSession, filterStatus, filterClass, filterPublisher);
   };
 
   const handleSessionFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -1052,7 +1111,8 @@ const RequirementsPageClient: React.FC = () => {
     setFilterSession(value);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
-      fetchRequirements(search, filterSchoolId, value);
+      fetchRequirements(search, filterSchoolId, value, filterStatus, filterClass, filterPublisher);
+
     }, 400);
   };
 
@@ -1089,7 +1149,7 @@ const RequirementsPageClient: React.FC = () => {
         type: "success",
       });
 
-      await fetchRequirements(search, filterSchoolId, filterSession);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
       await fetchSuppliers();
       await fetchPublishers();
       await fetchSchools();
@@ -1809,6 +1869,62 @@ const RequirementsPageClient: React.FC = () => {
                     </option>
                   ))}
                 </select>
+
+                {/* ✅ ADD STATUS FILTER HERE */}
+              <select
+                value={filterStatus}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setFilterStatus(v);
+
+                  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+                  searchTimeoutRef.current = setTimeout(() => {
+                    fetchRequirements(search, filterSchoolId, filterSession, v, filterClass, filterPublisher);
+
+                  }, 300);
+                }}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[140px] shadow-sm"
+              >
+                <option value="">All status</option>
+                <option value="draft">Draft</option>
+                <option value="confirmed">Confirmed</option>
+              </select>
+              <select
+                value={filterClass}
+                onChange={(e) => {
+                  const v = e.target.value;
+                 setFilterClass(v);
+                  fetchRequirements(search, filterSchoolId, filterSession, filterStatus, v, filterPublisher);
+
+                }}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
+              >
+                <option value="">All classes</option>
+                {classes.map((c) => (
+                  <option key={c.id} value={c.class_name}>
+                    {c.class_name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filterPublisher}
+                onChange={(e) => {
+                  const v = e.target.value;
+                setFilterPublisher(v);
+                fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, v);
+
+                }}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[160px] shadow-sm"
+              >
+                <option value="">All publishers</option>
+                {uniquePublishers.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+
+
               </div>
 
               <input
@@ -1839,6 +1955,18 @@ const RequirementsPageClient: React.FC = () => {
                   <Download className="w-3.5 h-3.5" />
                   <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
                 </button>
+                {/* ✅ ADD CONFIRM DRAFTS BUTTON HERE */}
+              <button
+                type="button"
+                disabled={loading || requirements.filter(r => r.status === "draft").length === 0}
+                onClick={() => {
+                  const ids = requirements.filter(r => r.status === "draft").map(r => r.id);
+                  confirmDraftByIds(ids);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+              >
+                Confirm Drafts
+              </button>
 
                 <button
                   type="button"

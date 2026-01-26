@@ -223,55 +223,65 @@ const canEditItems = (r?: DirectReceipt | null) => {
   return true;
 };
 
-const normalizeItemForView = (it: DirectReceiptItem) => {
-  const isSpec = !!it.is_specimen;
+type Bool01 = 0 | 1;
 
-  // ✅ IMPORTANT:
-  // - for specimen: received_qty should be 0 (so it won't be treated as received/paid anywhere)
-  // - keep qty as actual qty (specimen qty is still stored in qty)
-  const received_qty = isSpec
+const toBool01 = (v: any): Bool01 => {
+  if (v === true) return 1;
+  if (v === false) return 0;
+  if (v === 1 || v === "1") return 1;
+  return 0;
+};
+
+const normalizeItemForView = (it: any): DirectReceiptItem => {
+  const isSpec01: Bool01 = toBool01(it?.is_specimen);
+
+  // ✅ specimen => received_qty should be 0
+  const received_qty = isSpec01
     ? 0
-    : (it.received_qty != null && Number(it.received_qty) > 0)
+    : (it?.received_qty != null && Number(it.received_qty) > 0)
     ? Number(it.received_qty)
-    : Number(it.qty ?? it.received_qty ?? 0);
+    : Number(it?.qty ?? it?.received_qty ?? 0);
 
-  const qty = it.qty != null ? Number(it.qty) : received_qty;
+  const qty = it?.qty != null ? Number(it.qty) : received_qty;
 
-  // ✅ If unit_price is 0 but rate exists, use rate
   const unit_price =
-    (it.unit_price != null && Number(it.unit_price) > 0)
+    (it?.unit_price != null && Number(it.unit_price) > 0)
       ? Number(it.unit_price)
-      : Number(it.rate ?? it.unit_price ?? 0);
+      : Number(it?.rate ?? it?.unit_price ?? 0);
 
-  let discount_pct = Number(it.discount_pct ?? 0);
-  let discount_amt = Number(it.discount_amt ?? 0);
+  let discount_pct = Number(it?.discount_pct ?? 0);
+  let discount_amt = Number(it?.discount_amt ?? 0);
 
-  if ((discount_pct === 0 || isNaN(discount_pct)) && it.item_discount_type === "PERCENT") {
-    discount_pct = Number(it.item_discount_value ?? 0);
+  if ((discount_pct === 0 || isNaN(discount_pct)) && it?.item_discount_type === "PERCENT") {
+    discount_pct = Number(it?.item_discount_value ?? 0);
   }
-  if ((discount_amt === 0 || isNaN(discount_amt)) && it.item_discount_type === "AMOUNT") {
-    discount_amt = Number(it.item_discount_value ?? 0);
+  if ((discount_amt === 0 || isNaN(discount_amt)) && it?.item_discount_type === "AMOUNT") {
+    discount_amt = Number(it?.item_discount_value ?? 0);
   }
 
-  const line_amount = Number(it.line_amount ?? it.net_amount ?? 0);
+  const line_amount = Number(it?.line_amount ?? it?.net_amount ?? 0);
 
   const net_unit_price =
-    Number(it.net_unit_price) ||
+    Number(it?.net_unit_price) ||
     (received_qty > 0 ? line_amount / received_qty : unit_price);
 
   return {
     ...it,
-    received_qty, // ✅ specimen => 0
-    qty,          // ✅ keep original qty (specimen qty stored here)
+    received_qty,
+    qty,
     unit_price,
     discount_pct,
     discount_amt,
     net_unit_price,
     line_amount,
-    is_specimen: isSpec ? 1 : 0,
-    specimen_reason: it.specimen_reason ?? null,
+
+    // ✅ IMPORTANT: always force allowed type (0|1)
+    is_specimen: isSpec01,
+
+    specimen_reason: it?.specimen_reason ?? null,
   };
 };
+
 
 
 type UiItem = {
