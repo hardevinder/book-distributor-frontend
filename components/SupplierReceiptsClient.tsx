@@ -882,63 +882,62 @@ export default function SupplierReceiptsPageClient() {
   const buildPayload = () => {
     const supplier_id = Number(form.supplier_id);
 
-    const cleanItems = items
-      .flatMap((it) => {
-        const paidQty = Math.max(0, Math.floor(num(it.rec_qty)));
-        const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+  const cleanItems = items
+    .flatMap((it) => {
+      const paidQty = Math.max(0, Math.floor(num(it.rec_qty)));
+      const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
 
-        const ordered_qty = Math.max(0, Math.floor(num(it.ordered_qty)));
-        const unit_price = Math.max(0, num(it.unit_price)); // may be 0 for challan
+      const ordered_qty = Math.max(0, Math.floor(num(it.ordered_qty)));
+      const unit_price = Math.max(0, num(it.unit_price));
 
-        const discPct = Math.max(0, num(it.disc_pct));
-        const discAmt = Math.max(0, num(it.disc_amt));
+      const discPct = Math.max(0, num(it.disc_pct));
+      const discAmt = Math.max(0, num(it.disc_amt));
 
-        let item_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
-        let item_discount_value: number | null = null;
+      let item_discount_type: "NONE" | "PERCENT" | "AMOUNT" = "NONE";
+      let item_discount_value: number | null = null;
 
-        if (it.disc_mode === "AMOUNT" && discAmt > 0) {
-          item_discount_type = "AMOUNT";
-          item_discount_value = discAmt;
-        } else if (it.disc_mode === "PERCENT" && discPct > 0) {
-          item_discount_type = "PERCENT";
-          item_discount_value = discPct;
-        }
+      if (it.disc_mode === "AMOUNT" && discAmt > 0) {
+        item_discount_type = "AMOUNT";
+        item_discount_value = discAmt;
+      } else if (it.disc_mode === "PERCENT" && discPct > 0) {
+        item_discount_type = "PERCENT";
+        item_discount_value = discPct;
+      }
 
-        const rows: any[] = [];
+      const rows: any[] = [];
 
-        // ✅ Paid line
-        if (paidQty > 0) {
-          rows.push({
-            book_id: it.book_id,
-            ordered_qty,
-            received_qty: paidQty,
-            qty: paidQty,
-            rate: unit_price,
-            item_discount_type,
-            item_discount_value,
-            is_specimen: 0,
-            specimen_reason: null,
-          });
-        }
+      if (paidQty > 0) {
+        rows.push({
+          book_id: it.book_id,
+          ordered_qty,
+          received_qty: paidQty, // ✅ affects order received
+          qty: paidQty,
+          rate: unit_price,
+          item_discount_type,
+          item_discount_value,
+          is_specimen: 0,
+          specimen_reason: null,
+        });
+      }
 
-        // ✅ Specimen line (rate 0, no discount)
-        if (specQty > 0) {
-          rows.push({
-            book_id: it.book_id,
-            ordered_qty,
-            received_qty: specQty,
-            qty: specQty,
-            rate: 0,
-            item_discount_type: "NONE",
-            item_discount_value: null,
-            is_specimen: 1,
-            specimen_reason: null,
-          });
-        }
+      if (specQty > 0) {
+        rows.push({
+          book_id: it.book_id,
+          ordered_qty,
+          received_qty: 0, // ✅ does NOT affect order received
+          qty: specQty,    // ✅ inventory only
+          rate: 0,
+          item_discount_type: "NONE",
+          item_discount_value: null,
+          is_specimen: 1,
+          specimen_reason: it.spec_reason?.trim() || null,
+        });
+      }
 
-        return rows;
-      })
-      .filter((x) => x.book_id && x.received_qty > 0);
+      return rows;
+    })
+    .filter((x) => x.book_id && (x.is_specimen ? num(x.qty) > 0 : num(x.received_qty) > 0));
+
 
 
     const billPct = clamp(num(form.bill_disc_pct), 0, 100);

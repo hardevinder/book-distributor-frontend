@@ -550,23 +550,29 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   const fetchRequirements = async (query?: string, schoolId?: string, session?: string) => {
-    setListLoading(true);
-    setError(null);
-    try {
-      const params: any = {};
-      if (query && query.trim()) params.q = query.trim();
-      if (schoolId && schoolId !== "all") params.schoolId = schoolId;
-      if (session && session.trim()) params.academic_session = session.trim();
+  setListLoading(true);
+  setError(null);
 
-      const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
-      setRequirements(normalizeRequirements(res.data));
-    } catch (err: any) {
-      console.error(err);
-      setError("Failed to load requirements.");
-    } finally {
-      setListLoading(false);
-    }
-  };
+  try {
+    const params: any = {
+      limit: 10000, // 👈 SHOW ALL ITEMS
+    };
+
+    if (query && query.trim()) params.q = query.trim();
+    if (schoolId && schoolId !== "all") params.schoolId = schoolId;
+    if (session && session.trim()) params.academic_session = session.trim();
+
+    const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
+
+    setRequirements(normalizeRequirements(res.data));
+  } catch (err: any) {
+    console.error(err);
+    setError("Failed to load requirements.");
+  } finally {
+    setListLoading(false);
+  }
+};
+
 
   useEffect(() => {
     fetchSchools();

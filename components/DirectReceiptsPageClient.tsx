@@ -224,43 +224,55 @@ const canEditItems = (r?: DirectReceipt | null) => {
 };
 
 const normalizeItemForView = (it: DirectReceiptItem) => {
-  // ✅ If received_qty is 0 but qty exists, use qty (because backend stores qty, not received_qty)
-  const received_qty =
-    (it.received_qty == null ? null : Number(it.received_qty)) && Number(it.received_qty) > 0
-      ? it.received_qty
-      : it.qty ?? it.received_qty ?? 0;
+  const isSpec = !!it.is_specimen;
+
+  // ✅ IMPORTANT:
+  // - for specimen: received_qty should be 0 (so it won't be treated as received/paid anywhere)
+  // - keep qty as actual qty (specimen qty is still stored in qty)
+  const received_qty = isSpec
+    ? 0
+    : (it.received_qty != null && Number(it.received_qty) > 0)
+    ? Number(it.received_qty)
+    : Number(it.qty ?? it.received_qty ?? 0);
+
+  const qty = it.qty != null ? Number(it.qty) : received_qty;
 
   // ✅ If unit_price is 0 but rate exists, use rate
   const unit_price =
-    (it.unit_price == null ? null : Number(it.unit_price)) && Number(it.unit_price) > 0
-      ? it.unit_price
-      : it.rate ?? it.unit_price ?? 0;
+    (it.unit_price != null && Number(it.unit_price) > 0)
+      ? Number(it.unit_price)
+      : Number(it.rate ?? it.unit_price ?? 0);
 
+  let discount_pct = Number(it.discount_pct ?? 0);
+  let discount_amt = Number(it.discount_amt ?? 0);
 
-  let discount_pct = it.discount_pct ?? 0;
-  let discount_amt = it.discount_amt ?? 0;
-
-  if ((discount_pct == null || discount_pct === "") && it.item_discount_type === "PERCENT") {
-    discount_pct = it.item_discount_value ?? 0;
+  if ((discount_pct === 0 || isNaN(discount_pct)) && it.item_discount_type === "PERCENT") {
+    discount_pct = Number(it.item_discount_value ?? 0);
   }
-  if ((discount_amt == null || discount_amt === "") && it.item_discount_type === "AMOUNT") {
-    discount_amt = it.item_discount_value ?? 0;
+  if ((discount_amt === 0 || isNaN(discount_amt)) && it.item_discount_type === "AMOUNT") {
+    discount_amt = Number(it.item_discount_value ?? 0);
   }
 
-  const line_amount = it.line_amount ?? it.net_amount ?? 0;
+  const line_amount = Number(it.line_amount ?? it.net_amount ?? 0);
+
   const net_unit_price =
-    it.net_unit_price ?? (num(received_qty) > 0 ? num(line_amount) / num(received_qty) : num(unit_price));
+    Number(it.net_unit_price) ||
+    (received_qty > 0 ? line_amount / received_qty : unit_price);
 
   return {
     ...it,
-    received_qty,
+    received_qty, // ✅ specimen => 0
+    qty,          // ✅ keep original qty (specimen qty stored here)
     unit_price,
     discount_pct,
     discount_amt,
     net_unit_price,
     line_amount,
+    is_specimen: isSpec ? 1 : 0,
+    specimen_reason: it.specimen_reason ?? null,
   };
 };
+
 
 type UiItem = {
   book_id: number;
@@ -1499,7 +1511,10 @@ const specimenPayload = existingItems
     if (!viewRow) return null;
 
     const items2 = (viewRow.items || []).map(normalizeItemForView);
-    const itemsNetComputed = items2.reduce((sum, it) => sum + num(it.line_amount), 0);
+    const itemsNetComputed = items2
+    .filter((it: any) => !it?.is_specimen)
+    .reduce((sum, it) => sum + num(it.line_amount), 0);
+
 
     const sub_total = viewRow.sub_total != null ? num(viewRow.sub_total) : itemsNetComputed;
 
@@ -1523,7 +1538,10 @@ const specimenPayload = existingItems
 
     const grand = viewRow.grand_total != null ? num(viewRow.grand_total) : sub_total - discAmt + ship + other + ro;
 
-    const gross = items2.reduce((sum, it) => sum + num(it.unit_price) * Math.max(0, num(it.received_qty)), 0);
+    const gross = items2
+    .filter((it: any) => !it?.is_specimen)
+    .reduce((sum, it) => sum + num(it.unit_price) * Math.max(0, num(it.received_qty)), 0);
+
     const net = itemsNetComputed;
     const itemDisc = Math.max(gross - net, 0);
 
