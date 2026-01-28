@@ -163,7 +163,7 @@ const AvailabilityClient: React.FC = () => {
       setLoading(true);
       const res = await api.get("/api/school-orders/availability", {
         params: {
-          schoolId,
+          school_id: schoolId,              // ✅ was schoolId
           academic_session: session || undefined,
         },
       });
