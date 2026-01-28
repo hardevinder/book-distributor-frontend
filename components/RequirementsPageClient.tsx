@@ -2370,42 +2370,73 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
                 </div>
 
-            {/* Supplier (EDIT disabled) */}
-            <div className="space-y-1">
-              <label className="block font-medium text-slate-700">Supplier</label>
+            
+                 {/* Supplier (EDIT editable) */}
+<div className="space-y-1">
+  <label className="block font-medium text-slate-700">Supplier</label>
 
-              <div className="flex items-center gap-2">
-                <select
-                  name="supplier_name"
-                  value={currentSupplierValueEdit || ""}
-                  disabled
-                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-slate-100 text-slate-500 cursor-not-allowed"
-                  title="Supplier edit disabled"
-                >
-                  {/* Show existing supplier (saved) */}
-                  {currentSupplierValueEdit ? (
-                    <option value={currentSupplierValueEdit}>{currentSupplierValueEdit}</option>
-                  ) : (
-                    <option value="">
-                      {editForm.publisher_name ? editForm.publisher_name : "(Default = Publisher)"}
-                    </option>
-                  )}
-                </select>
+  <div className="flex items-center gap-2">
+    <select
+      name="supplier_name"
+      value={currentSupplierValueEdit || ""}
+      onChange={(e) => {
+        const v = String(e.target.value ?? "");
+        setEditForm((prev) => ({ ...prev, supplier_name: v }));
+        setEditSupplierTouched(!!v.trim());
+      }}
+      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+    >
+      {(() => {
+        const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+        if (!current) return null;
+        const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+        if (exists) return null;
+        return <option value={current}>{current} (current)</option>;
+      })()}
 
-                <button
-                  type="button"
-                  disabled
-                  className="h-9 px-3 rounded-md border border-slate-300 bg-slate-100 text-xs font-semibold opacity-60 cursor-not-allowed"
-                  title="Supplier add disabled in edit"
+      <option value="">(Default = Publisher)</option>
+
+      {uniqueSuppliers
+        .filter((s) => String(s?.name ?? "").trim())
+        .map((s) => (
+          <option key={`ed-sup-${s.id}`} value={s.name}>
+            {s.name}
+          </option>
+        ))}
+    </select>
+
+    <button
+      type="button"
+      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+      title="Add new supplier"
+      onClick={async () => {
+        const sup = await promptAddSupplier();
+        if (!sup) return;
+
+                    try {
+                      const created = await createSupplierNow(sup);
+
+                      setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
+                      setEditSupplierTouched(true);
+
+                      await fetchSuppliers();
+
+                      setToast({ message: `Supplier added: ${created.name}`, type: "success" });
+                    } catch (e: any) {
+                      const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
+                      setToast({ message: msg, type: "error" });
+                    }
+                  }}
                 >
                   ➕
                 </button>
               </div>
 
-              <p className="text-[10px] text-slate-500">
-                Supplier cannot be changed in Edit. Delete & recreate row if needed.
-              </p>
-            </div>
+  <p className="text-[10px] text-slate-500">
+    Default supplier = publisher. Select different supplier if needed.
+  </p>
+</div>
+
 
 
                 {/* Session */}

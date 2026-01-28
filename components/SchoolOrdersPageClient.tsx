@@ -128,6 +128,7 @@ const normalizeTransports = (payload: any): TransportLite[] => {
   return [];
 };
 
+
 const getOrderSchool = (order: SchoolOrder | any): School | undefined =>
   (order && (order.school || order.School)) || undefined;
 
@@ -398,10 +399,13 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [orders, setOrders] = useState<SchoolOrder[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [transports, setTransports] = useState<TransportLite[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierLite[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [sendingOrderId, setSendingOrderId] = useState<number | null>(null);
+  const [deletingOrderId, setDeletingOrderId] = useState<number | null>(null);
+
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -719,6 +723,65 @@ const SchoolOrdersPageClient: React.FC = () => {
       setGenerating(false);
     }
   };
+  const handleDeleteOrder = async (order: SchoolOrder) => {
+  if (!order?.id) return;
+
+  const label = order.order_no ? `${order.order_no}` : `#${order.id}`;
+
+  const ok = await sweetConfirm({
+    title: "Delete this order?",
+    icon: "warning",
+    html: `<div style="text-align:left;font-size:13px;">
+      <div><b>Order:</b> ${escapeHtml(label)}</div>
+      <div style="margin-top:8px;color:#64748b;">
+        This will permanently delete the order.
+        <br/>If receipts exist, deletion will be blocked.
+      </div>
+    </div>`,
+    confirmText: "Delete",
+    cancelText: "Cancel",
+  });
+
+  if (!ok) return;
+
+  setDeletingOrderId(order.id);
+  setError(null);
+  setInfo(null);
+
+  try {
+    const res = await api.delete(`/api/school-orders/${order.id}`);
+
+    // remove from list immediately (fast UI)
+    setOrders((prev) => prev.filter((o) => o.id !== order.id));
+    setOrderNoDrafts((prev) => {
+      const next = { ...prev };
+      delete next[order.id];
+      return next;
+    });
+    setEmailCounts((prev) => {
+      const next = { ...prev };
+      delete next[order.id];
+      return next;
+    });
+
+    // if currently opened in modal, close it
+    setViewOrder((prev) => (prev?.id === order.id ? null : prev));
+
+    await sweetToast({ icon: "success", title: res?.data?.message || "Order deleted" });
+  } catch (err: any) {
+    console.error(err);
+    const msg =
+      err?.response?.data?.message ||
+      err?.message ||
+      "Delete failed.";
+
+    setError(msg);
+    await sweetToast({ icon: "error", title: msg || "Delete failed" });
+  } finally {
+    setDeletingOrderId(null);
+  }
+};
+
 
 
 
@@ -1703,6 +1766,23 @@ const SchoolOrdersPageClient: React.FC = () => {
                                       <FileText className="w-3 h-3" />
                                       PDF
                                     </button>
+
+                                        {/* 🔴 DELETE (ADD EXACTLY HERE) */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteOrder(order)}
+                                          disabled={deletingOrderId === order.id}
+                                          className="inline-flex items-center justify-center p-2 rounded-md
+                                                    border border-red-200 bg-red-50 text-red-700 hover:bg-red-100
+                                                    disabled:opacity-60"
+                                          title="Delete order"
+                                        >
+                                          <Trash2
+                                            className={`w-3.5 h-3.5 ${
+                                              deletingOrderId === order.id ? "animate-pulse" : ""
+                                            }`}
+                                          />
+                                        </button>
                                   </div>
                                 </td>
                               </tr>
