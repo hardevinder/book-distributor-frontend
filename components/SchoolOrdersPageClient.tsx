@@ -13,8 +13,7 @@ import {
   Send,
   Eye,
   ChevronLeft,
-  FileText,
-  Repeat,
+  FileText,  
   X,
   Trash2,
 } from "lucide-react";
@@ -437,10 +436,8 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [orderNoDrafts, setOrderNoDrafts] = useState<Record<number, string>>({});
   const [savingOrderNoId, setSavingOrderNoId] = useState<number | null>(null);
 
-  // Reorder loading
-  const [reorderingId, setReorderingId] = useState<number | null>(null);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
 
+  
   // ✅ Reorder Copy (manual qty) modal
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyOrder, setCopyOrder] = useState<SchoolOrder | null>(null);
@@ -722,195 +719,6 @@ const SchoolOrdersPageClient: React.FC = () => {
       setGenerating(false);
     }
   };
-
-  // ✅ Pending reorder + confirm
-  const handleReorderPending = async (order: SchoolOrder) => {
-    if (!order?.id) return;
-
-    const items = getOrderItems(order);
-    const ord = totalQtyFromItems(items);
-    const rec = totalReceivedFromItems(items);
-    const re = totalReorderedFromItems(items);
-    const pending = isClosedishStatus(order.status) ? 0 : Math.max(ord - rec - re, 0);
-
-    if (pending <= 0) {
-      await sweetToast({ icon: "info", title: "No pending qty to reorder" });
-      return;
-    }
-
-    const ok = await sweetConfirm({
-      title: "Reorder Pending?",
-      icon: "warning",
-      html: `<div style="text-align:left;font-size:13px;">
-        <div><b>Order:</b> ${escapeHtml(order.order_no || `#${order.id}`)}</div>
-        <div><b>Pending Qty:</b> ${pending}</div>
-        <div style="margin-top:10px;color:#b45309;">
-          This will create a <b>NEW</b> order and update <b>reordered qty</b> in the <b>OLD</b> order.
-        </div>
-      </div>`,
-      confirmText: "Yes, Reorder",
-      cancelText: "No",
-    });
-    if (!ok) return;
-
-    setError(null);
-    setInfo(null);
-    setReorderingId(order.id);
-
-    try {
-      let res: any;
-      try {
-        res = await api.post(`/api/school-orders/${order.id}/reorder`);
-      } catch (e: any) {
-        if (e?.response?.status === 404) res = await api.post(`/api/school-orders/${order.id}/reorder-pending`);
-        else throw e;
-      }
-
-      const msg =
-        res?.data?.message ||
-        (res?.data?.new_order?.id ? `Reordered. New Order #${res.data.new_order.id}` : "Reordered.");
-      setInfo(msg);
-      await sweetToast({ icon: "success", title: "Reorder created" });
-
-      await fetchOrders();
-
-      const newOrder = (res?.data?.new_order || res?.data?.order) as SchoolOrder | undefined;
-      if (newOrder?.id) handleOpenView(newOrder);
-    } catch (err: any) {
-      console.error("reorder error:", err);
-      setError(err?.response?.data?.message || "Reorder failed.");
-      await sweetToast({ icon: "error", title: "Reorder failed" });
-    } finally {
-      setReorderingId(null);
-    }
-  };
-
-const handleSyncFromRequirements = async (order: SchoolOrder) => {
-  if (!order?.id) return;
-
-  const ok = await sweetConfirm({
-    title: "Sync items from requirements?",
-    icon: "warning",
-    html: `<div style="text-align:left;font-size:13px;">
-      <div><b>Order:</b> ${escapeHtml(order.order_no || `#${order.id}`)}</div>
-      <div style="margin-top:8px;color:#b45309;">
-        This will rebuild items to match SchoolBookRequirements.
-      </div>
-    </div>`,
-    confirmText: "Sync",
-    cancelText: "Cancel",
-  });
-  if (!ok) return;
-
-  setError(null);
-  setInfo(null);
-  setSyncingId(order.id);
-
-  try {
-    // ✅ 1) Get latest header from list (supplier might have changed)
-    const listBefore = await fetchOrders();
-    const fresh = listBefore.find((x) => x.id === order.id) || order;
-
-    if (!fresh?.academic_session || !fresh?.school_id || !fresh?.supplier_id) {
-      await sweetToast({ icon: "error", title: "Missing session/school/supplier" });
-      return;
-    }
-
-    // ✅ 2) Sync
-    const res = await api.post(`/api/school-orders/sync-from-requirements`, {
-      academic_session: fresh.academic_session,
-      school_id: fresh.school_id,
-      // supplier_id: fresh.supplier_id,
-    });
-
-    setInfo(res?.data?.message || "Synced.");
-    await sweetToast({ icon: "success", title: "Synced" });
-
-    // ✅ 3) IMPORTANT: refresh AFTER sync so quantities reflect
-    const listAfter = await fetchOrders();
-
-    // ✅ 4) Update the opened modal with latest order object from list
-    const updated = listAfter.find((x) => x.id === order.id) || fresh;
-
-    if (viewOrder?.id === updated.id) {
-      setViewOrder(updated);
-      handleOpenView(updated); // also resets meta fields correctly
-    }
-  } catch (err: any) {
-    console.error(err);
-    setError(err?.response?.data?.message || "Sync failed.");
-    await sweetToast({ icon: "error", title: "Sync failed" });
-  } finally {
-    setSyncingId(null);
-  }
-};
-
-const handleSyncSchoolSessionFromRequirements = async (schoolId: number, academicSession: string) => {
-  const ok = await sweetConfirm({
-    title: "Sync ALL suppliers from requirements?",
-    icon: "warning",
-    html: `<div style="text-align:left;font-size:13px;">
-      <div><b>School ID:</b> ${schoolId}</div>
-      <div><b>Session:</b> ${escapeHtml(academicSession || "-")}</div>
-      <div style="margin-top:8px;color:#b45309;">
-        This will run sync supplier-wise for this school/session.
-      </div>
-    </div>`,
-    confirmText: "Sync All",
-    cancelText: "Cancel",
-  });
-  if (!ok) return;
-
-  setError(null);
-  setInfo(null);
-
-  try {
-    // 1) Ensure we have latest orders in state
-    const list = await fetchOrders();
-
-    // 2) Pick orders for this school+session and extract unique supplier_ids
-    const relevant = (list || []).filter(
-      (o) => Number(o.school_id) === Number(schoolId) && (o.academic_session || "") === (academicSession || "")
-    );
-
-    const supplierIds = Array.from(
-      new Set(relevant.map((o) => Number(o.supplier_id)).filter((x) => Number.isFinite(x) && x > 0))
-    );
-
-    if (!supplierIds.length) {
-      await sweetToast({ icon: "info", title: "No supplier orders found to sync" });
-      return;
-    }
-
-    // 3) Run sync per supplier (small batches)
-    const batchSize = 4;
-    for (let i = 0; i < supplierIds.length; i += batchSize) {
-      const chunk = supplierIds.slice(i, i + batchSize);
-      await Promise.all(
-        chunk.map((sid) =>
-          api.post(`/api/school-orders/sync-from-requirements`, {
-            academic_session: academicSession,
-            school_id: schoolId,
-            supplier_id: sid,
-          })
-        )
-      );
-    }
-
-    setInfo(`Synced ${supplierIds.length} supplier(s).`);
-    await sweetToast({ icon: "success", title: `Synced ${supplierIds.length} supplier(s)` });
-
-    await fetchOrders();
-    setViewOrder(null); // safe because items may reshuffle
-  } catch (err: any) {
-    console.error(err);
-    setError(err?.response?.data?.message || "Sync failed.");
-    await sweetToast({ icon: "error", title: "Sync failed" });
-  }
-};
-
-
-
 
 
 
@@ -1729,16 +1537,7 @@ const handleSyncSchoolSessionFromRequirements = async (schoolId: number, academi
                       >
                         Bulk School
                       </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleSyncSchoolSessionFromRequirements(group.schoolId, filterSession || academicSession)}
-                        className="text-[10.5px] px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                        title="Rebuild ALL supplier orders from requirements for this school"
-                      >
-                        Sync School
-                      </button>
-
+                   
                     </div>
                   </div>
 
@@ -1778,9 +1577,7 @@ const handleSyncSchoolSessionFromRequirements = async (schoolId: number, academi
                         <tbody>
                           {group.rows.map((row) => {
                             const { order } = row;
-                            const isSending = sendingOrderId === order.id;
-                            const isReordering = reorderingId === order.id;
-
+                            const isSending = sendingOrderId === order.id;                            
                             const statusClass = statusChipClass(order.status);
 
                             const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
@@ -1868,28 +1665,6 @@ const handleSyncSchoolSessionFromRequirements = async (schoolId: number, academi
                                       View
                                     </button>
 
-                                    <button
-                                        type="button"
-                                        onClick={() => handleSyncFromRequirements(order)}
-                                        disabled={syncingId === order.id}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 disabled:opacity-60 text-[11px]"
-                                        title="Rebuild items from requirements"
-                                      >
-                                        <RefreshCcw className={`w-3 h-3 ${syncingId === order.id ? "animate-spin" : ""}`} />
-                                        {syncingId === order.id ? "..." : "Sync"}
-                                      </button>
-
-
-                                  <button
-                                      type="button"
-                                      onClick={() => handleReorderPending(order)}
-                                      disabled={isReordering}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-60 text-[11px]"
-                                      title="Reorder pending qty (updates old order reordered_qty)"
-                                    >
-                                      <Repeat className={`w-3 h-3 ${isReordering ? "animate-spin" : ""}`} />
-                                      {isReordering ? "..." : "Reorder"}
-                                    </button>
 
                                     <button
                                       type="button"
@@ -2060,28 +1835,8 @@ const handleSyncSchoolSessionFromRequirements = async (schoolId: number, academi
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              onClick={() => handleSyncFromRequirements(viewOrder)}
-                              disabled={syncingId === viewOrder.id}
-                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5 disabled:opacity-60"
-                              title="Rebuild items from requirements"
-                            >
-                              <RefreshCcw className={`w-3.5 h-3.5 ${syncingId === viewOrder.id ? "animate-spin" : ""}`} />
-                              {syncingId === viewOrder.id ? "..." : "Sync"}
-                            </button>
-
-                            <button
-                              onClick={() => handleReorderPending(viewOrder)}
-                              disabled={reorderingId === viewOrder.id}
-                              className="text-[11px] px-2.5 py-1.5 rounded-lg border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100 flex items-center gap-1.5 disabled:opacity-60"
-                              title="Reorder pending qty (updates old order reordered_qty)"
-                            >
-                              <Repeat
-                                className={`w-3.5 h-3.5 ${reorderingId === viewOrder.id ? "animate-spin" : ""}`}
-                              />
-                              {reorderingId === viewOrder.id ? "..." : "Reorder"}
-                            </button>
+                          <div className="flex items-center gap-1.5 shrink-0">                          
+                    
 
                             <button
                               onClick={() => openCopyModal(viewOrder)}
