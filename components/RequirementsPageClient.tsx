@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import SearchableSelect from "@/components/SearchableSelect";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -208,46 +209,9 @@ const RequirementsPageClient: React.FC = () => {
 
   const [filterSchoolId, setFilterSchoolId] = useState<string>("");
   const [filterSession, setFilterSession] = useState<string>("");
-  const [filterStatus, setFilterStatus] = useState<string>(""); // "", "draft", "confirmed"
+  const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterClass, setFilterClass] = useState<string>("");
   const [filterPublisher, setFilterPublisher] = useState<string>("");
-
-
-  const confirmDraftByIds = async (ids: number[]) => {
-    if (!ids.length) return;
-
-    const confirm = await Swal.fire({
-      title: `Confirm ${ids.length} requirement(s)?`,
-      text: "Draft requirements will be marked as Confirmed.",
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonText: "Yes, Confirm",
-      cancelButtonText: "Cancel",
-    });
-
-    if (!confirm.isConfirmed) return;
-
-    setLoading(true);
-    try {
-      // ✅ Option A (BEST): if your backend supports bulk confirm
-      // await api.post("/api/requirements/confirm-bulk", { ids });
-
-      // ✅ Option B (works always): update one by one
-      for (const id of ids) {
-        await api.patch(`/api/requirements/${id}/confirm`);
-        // if you don't have this route, use PUT with existing data from row (harder)
-      }
-
-      setToast({ message: `Confirmed ${ids.length} requirement(s).`, type: "success" });
-      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.message || "Failed to confirm drafts.";
-      setToast({ message: msg, type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
 
   const [importLoading, setImportLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
@@ -403,6 +367,7 @@ const RequirementsPageClient: React.FC = () => {
   const visibleBooksMain = useMemo(() => getVisibleBooks(form.publisher_name), [books, form.publisher_name]);
   const visibleBooksEdit = useMemo(() => getVisibleBooks(editForm.publisher_name), [books, editForm.publisher_name]);
 
+  // ⬇️ Part 2 continues...
   /* ------------ CREATE HELPERS ------------ */
 
   const createSupplierNow = async (
@@ -500,7 +465,10 @@ const RequirementsPageClient: React.FC = () => {
   };
 
   // ✅ now takes context (publisher_name, class_name) — no dependency on main form
-  const createBookNow = async (title: string, ctx: { publisher_name: string; class_name: string }): Promise<Book> => {
+  const createBookNow = async (
+    title: string,
+    ctx: { publisher_name: string; class_name: string }
+  ): Promise<Book> => {
     const bookTitle = String(title ?? "").trim();
     if (!bookTitle) throw new Error("Book title is required.");
 
@@ -588,49 +556,87 @@ const RequirementsPageClient: React.FC = () => {
       console.error(err);
     }
   };
-const fetchRequirements = async (
-  query: string = search,
-  schoolId: string = filterSchoolId,
-  session: string = filterSession,
-  status: string = filterStatus,
-  className: string = filterClass,
-  publisherName: string = filterPublisher
-) => {
-  setListLoading(true);
-  setError(null);
 
-  try {
-    const params: any = {};
+  const fetchRequirements = async (
+    query: string = search,
+    schoolId: string = filterSchoolId,
+    session: string = filterSession,
+    status: string = filterStatus,
+    className: string = filterClass,
+    publisherName: string = filterPublisher
+  ) => {
+    setListLoading(true);
+    setError(null);
 
-    if (query && query.trim()) params.q = query.trim();
-    if (schoolId && schoolId !== "all") params.schoolId = schoolId;
-    if (session && session.trim()) params.academic_session = session.trim();
-    if (status && status.trim()) params.status = status.trim();
+    try {
+      const params: any = {};
 
-    // ✅ Class: send both name + id (backend may support either)
-    if (className && className.trim()) {
-      params.class_name = className.trim();
-      const cls = classes.find((c) => ciEq(c.class_name, className));
-      if (cls?.id) params.class_id = cls.id;
+      if (query && query.trim()) params.q = query.trim();
+      if (schoolId && schoolId !== "all") params.schoolId = schoolId;
+      if (session && session.trim()) params.academic_session = session.trim();
+      if (status && status.trim()) params.status = status.trim();
+
+      // ✅ Class: send both name + id (backend may support either)
+      if (className && className.trim()) {
+        params.class_name = className.trim();
+        const cls = classes.find((c) => ciEq(c.class_name, className));
+        if (cls?.id) params.class_id = cls.id;
+      }
+
+      // ✅ Publisher: send both name + id (backend may support either)
+      if (publisherName && publisherName.trim()) {
+        params.publisher = publisherName.trim();
+        const pub = publishers.find((p) => ciEq(p.name, publisherName));
+        if (pub?.id) params.publisher_id = pub.id;
+      }
+
+      const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
+      setRequirements(normalizeRequirements(res.data));
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load requirements.");
+    } finally {
+      setListLoading(false);
     }
+  };
 
-    // ✅ Publisher: send both name + id (backend may support either)
-    if (publisherName && publisherName.trim()) {
-      params.publisher = publisherName.trim();
-      const pub = publishers.find((p) => ciEq(p.name, publisherName));
-      if (pub?.id) params.publisher_id = pub.id;
+  /* ------------ BULK CONFIRM DRAFTS ------------ */
+
+  const confirmDraftByIds = async (ids: number[]) => {
+    if (!ids.length) return;
+
+    const confirm = await Swal.fire({
+      title: `Confirm ${ids.length} requirement(s)?`,
+      text: "Draft requirements will be marked as Confirmed.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Yes, Confirm",
+      cancelButtonText: "Cancel",
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    setLoading(true);
+    try {
+      // ✅ Option A (BEST): if your backend supports bulk confirm
+      // await api.post("/api/requirements/confirm-bulk", { ids });
+
+      // ✅ Option B (works always): update one by one
+      for (const id of ids) {
+        await api.patch(`/api/requirements/${id}/confirm`);
+      }
+
+      setToast({ message: `Confirmed ${ids.length} requirement(s).`, type: "success" });
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || "Failed to confirm drafts.";
+      setToast({ message: msg, type: "error" });
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const res = await api.get<RequirementsListResponse>("/api/requirements", { params });
-    setRequirements(normalizeRequirements(res.data));
-  } catch (err) {
-    console.error(err);
-    setError("Failed to load requirements.");
-  } finally {
-    setListLoading(false);
-  }
-};
-
+  /* ------------ EFFECTS ------------ */
 
   useEffect(() => {
     fetchSchools();
@@ -843,6 +849,7 @@ const fetchRequirements = async (
     };
   };
 
+  // ⬇️ Part 3 continues...
   /* ------------ FORM HANDLERS (MAIN) ------------ */
 
   const handleChange = (
@@ -900,17 +907,16 @@ const fetchRequirements = async (
     setLoading(true);
 
     try {
-    const payload = await prepareRequirementPayload({
-      ...editForm,
-      supplier_name: String(editForm.supplier_name ?? "").trim(), // keep existing supplier
-    });
-
+      const payload = await prepareRequirementPayload({
+        ...editForm,
+        supplier_name: String(editForm.supplier_name ?? "").trim(), // keep existing supplier
+      });
 
       await api.put(`/api/requirements/${editingId}`, payload);
 
       setToast({ message: "Requirement updated successfully.", type: "success" });
       closeEditModal();
-      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
     } catch (err: any) {
       console.error(err);
       const msg =
@@ -1024,7 +1030,7 @@ const fetchRequirements = async (
         status: "confirmed",
       }));
 
-      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
 
       setToast({ message: `Saved ${count} requirement(s) successfully.`, type: "success" });
 
@@ -1046,11 +1052,13 @@ const fetchRequirements = async (
 
   const handleEdit = (r: Requirement) => {
     setError(null);
-    setPendingItems([]); // keep as your behaviour
+    setPendingItems([]);
 
     setEditingId(r.id);
     setEditOpen(true);
-    setEditSupplierTouched(true); // because existing row has supplier already
+
+    // ✅ existing row has supplier already, so treat as touched
+    setEditSupplierTouched(true);
 
     setEditForm({
       school_name: r.school?.name || "",
@@ -1075,7 +1083,7 @@ const fetchRequirements = async (
     try {
       await api.delete(`/api/requirements/${id}`);
       if (editingId === id) closeEditModal();
-      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
       setToast({ message: "Requirement deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
@@ -1089,17 +1097,16 @@ const fetchRequirements = async (
 
   /* ------------ SEARCH & FILTERS ------------ */
 
-const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const value = e.target.value;
-  setSearch(value);
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearch(value);
 
-  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
-  searchTimeoutRef.current = setTimeout(() => {
-    fetchRequirements(value, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
-  }, 400);
-};
-
+    searchTimeoutRef.current = setTimeout(() => {
+      fetchRequirements(value, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
+    }, 400);
+  };
 
   const handleSchoolFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
@@ -1110,10 +1117,10 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
   const handleSessionFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
     setFilterSession(value);
+
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
       fetchRequirements(search, filterSchoolId, value, filterStatus, filterClass, filterPublisher);
-
     }, 400);
   };
 
@@ -1150,7 +1157,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         type: "success",
       });
 
-      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus);
+      await fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, filterPublisher);
       await fetchSuppliers();
       await fetchPublishers();
       await fetchSchools();
@@ -1240,6 +1247,77 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 
   const currentSupplierValueMain = String((form.supplier_name || form.publisher_name) ?? "").trim();
   const currentSupplierValueEdit = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+  const currentPublisherValueMain = String(form.publisher_name ?? "").trim();
+    const currentPublisherValueEdit = String(editForm.publisher_name ?? "").trim();
+
+  const publisherOptions = useMemo(() => {
+    const list = uniquePublishers
+      .filter((p) => String(p?.name ?? "").trim())
+      .map((p) => ({ label: p.name, value: p.name }));
+
+    return [{ label: "Select publisher", value: "" }, ...list];
+  }, [uniquePublishers]);
+
+  const currentBookValueMain = String(form.book_title ?? "").trim();
+
+  const bookOptionsMain = useMemo(() => {
+    const current = String(form.book_title ?? "").trim();
+
+    const base = visibleBooksMain
+      .filter((b) => String(b?.title ?? "").trim())
+      .map((b) => ({ label: b.title, value: b.title }));
+
+    const exists = current
+      ? base.some((o) => o.value.toLowerCase() === current.toLowerCase())
+      : true;
+
+    return [
+      { label: "Select book", value: "" },
+      ...(current && !exists ? [{ label: `${current} (current)`, value: current }] : []),
+      ...base,
+    ];
+  }, [visibleBooksMain, form.book_title]);
+
+    // ---------------- EDIT: Options ----------------
+
+  const currentSchoolValueEdit = String(editForm.school_name ?? "").trim();
+  const currentBookValueEdit = String(editForm.book_title ?? "").trim();
+  const currentSupplierValueEditOnly = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+
+  const schoolOptions = useMemo(() => {
+    const list = uniqueSchools
+      .filter((s) => String(s?.name ?? "").trim())
+      .map((s) => ({ label: s.name, value: s.name }));
+    return [{ label: "Select school", value: "" }, ...list];
+  }, [uniqueSchools]);
+
+  const supplierOptions = useMemo(() => {
+    const list = uniqueSuppliers
+      .filter((s) => String(s?.name ?? "").trim())
+      .map((s) => ({ label: s.name, value: s.name }));
+    return [{ label: "(Default = Publisher)", value: "" }, ...list];
+  }, [uniqueSuppliers]);
+
+  const bookOptionsEdit = useMemo(() => {
+    const current = String(editForm.book_title ?? "").trim();
+
+    const base = visibleBooksEdit
+      .filter((b) => String(b?.title ?? "").trim())
+      .map((b) => ({ label: b.title, value: b.title }));
+
+    const exists = current
+      ? base.some((o) => o.value.toLowerCase() === current.toLowerCase())
+      : true;
+
+    return [
+      { label: "Select book", value: "" },
+      ...(current && !exists ? [{ label: `${current} (current)`, value: current }] : []),
+      ...base,
+    ];
+  }, [visibleBooksEdit, editForm.book_title]);
+
+
+
 
   /**
    * ✅ group listing by School name (heading row per school)
@@ -1273,6 +1351,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     return Array.from(map.entries()).map(([schoolName, items]) => ({ schoolName, items }));
   }, [requirements]);
 
+  // ⬇️ Part 4 continues with full JSX return (main UI + edit modal + toast + styles)
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
       {/* Animated Background Elements */}
@@ -1293,15 +1372,19 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
             <span>Back to Dashboard</span>
           </Link>
         </div>
+
         <div className="font-bold flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
             <BookOpen className="w-4 h-4" />
           </div>
           <div className="flex flex-col">
             <span className="text-sm sm:text-base tracking-tight">School Book Requirements</span>
-            <span className="text-[11px] text-slate-500 font-medium">School-wise & class-wise requirement entry</span>
+            <span className="text-[11px] text-slate-500 font-medium">
+              School-wise & class-wise requirement entry
+            </span>
           </div>
         </div>
+
         <div className="flex items-center gap-4 text-sm">
           <div className="flex flex-col items-end">
             <span className="font-semibold text-slate-800 text-xs sm:text-sm">{user?.name || "User"}</span>
@@ -1419,33 +1502,37 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                     placeholder="Type or select class"
                   />
                 </div>
-
-                {/* Publisher (dropdown + add) */}
+                {/* Publisher (searchable dropdown + add) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Publisher</label>
+
                   <div className="flex items-center gap-2">
-                    <select
-                      name="publisher_name"
-                      value={form.publisher_name}
-                      onChange={(e) => {
-                        const v = String(e.target.value ?? "");
-                        if (!supplierTouched && v.trim()) {
-                          setForm((prev) => ({ ...prev, publisher_name: v, supplier_name: v }));
+                    <SearchableSelect
+                      value={currentPublisherValueMain || ""}
+                      options={[
+                        { label: "Select publisher", value: "" },
+                        ...(() => {
+                          const current = String(form.publisher_name ?? "").trim();
+                          if (!current) return [];
+                          const exists = uniquePublishers.some((p) => ciEq(p.name, current));
+                          if (exists) return [];
+                          return [{ label: `${current} (current)`, value: current }];
+                        })(),
+                        ...uniquePublishers
+                          .filter((p) => String(p?.name ?? "").trim())
+                          .map((p) => ({ label: p.name, value: p.name })),
+                      ]}
+                      placeholder="Search publisher..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        // keep your existing behavior: default supplier = publisher if supplier not touched
+                        if (!supplierTouched && val.trim()) {
+                          setForm((prev) => ({ ...prev, publisher_name: val, supplier_name: val }));
                         } else {
-                          setForm((prev) => ({ ...prev, publisher_name: v }));
+                          setForm((prev) => ({ ...prev, publisher_name: val }));
                         }
                       }}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="">Select publisher</option>
-                      {uniquePublishers
-                        .filter((p) => String(p?.name ?? "").trim())
-                        .map((p) => (
-                          <option key={`pub-${p.id}`} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
-                    </select>
+                    />
 
                     <button
                       type="button"
@@ -1493,35 +1580,21 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   </div>
                 </div>
 
-                {/* Book (dropdown + add) */}
+
+                             {/* Book (searchable dropdown + add) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Book</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      name="book_title"
-                      value={form.book_title}
-                      onChange={handleChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      {(() => {
-                        const current = String(form.book_title ?? "").trim();
-                        if (!current) return null;
-                        const exists = visibleBooksMain.some(
-                          (b) => String(b?.title ?? "").trim().toLowerCase() === current.toLowerCase()
-                        );
-                        if (exists) return null;
-                        return <option value={current}>{current} (current)</option>;
-                      })()}
 
-                      <option value="">Select book</option>
-                      {visibleBooksMain
-                        .filter((b) => String(b?.title ?? "").trim())
-                        .map((b) => (
-                          <option key={`book-${b.id}`} value={b.title}>
-                            {b.title}
-                          </option>
-                        ))}
-                    </select>
+                  <div className="flex items-center gap-2">
+                    <SearchableSelect
+                      value={currentBookValueMain || ""}
+                      options={bookOptionsMain}
+                      placeholder="Search book..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        setForm((prev) => ({ ...prev, book_title: val }));
+                      }}
+                    />
 
                     <button
                       type="button"
@@ -1547,42 +1620,38 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                       ➕
                     </button>
                   </div>
+
                   <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
                 </div>
+
 
                 {/* Supplier (dropdown + add) */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Supplier</label>
 
                   <div className="flex items-center gap-2">
-                    <select
-                      name="supplier_name"
+                    <SearchableSelect
                       value={currentSupplierValueMain || ""}
-                      onChange={(e) => {
-                        const v = String(e.target.value ?? "");
-                        setForm((prev) => ({ ...prev, supplier_name: v }));
-                        setSupplierTouched(!!v.trim());
+                      options={[
+                        { label: "(Default = Publisher)", value: "" },
+                        ...(() => {
+                          const current = String((form.supplier_name || form.publisher_name) ?? "").trim();
+                          if (!current) return [];
+                          const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+                          if (exists) return [];
+                          return [{ label: `${current} (current)`, value: current }];
+                        })(),
+                        ...uniqueSuppliers
+                          .filter((s) => String(s?.name ?? "").trim())
+                          .map((s) => ({ label: s.name, value: s.name })),
+                      ]}
+                      placeholder="Search supplier..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        setForm((prev) => ({ ...prev, supplier_name: val }));
+                        setSupplierTouched(!!val.trim());
                       }}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      {(() => {
-                        const current = String((form.supplier_name || form.publisher_name) ?? "").trim();
-                        if (!current) return null;
-                        const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
-                        if (exists) return null;
-                        return <option value={current}>{current} (current)</option>;
-                      })()}
-
-                      <option value="">(Default = Publisher)</option>
-
-                      {uniqueSuppliers
-                        .filter((s) => String(s?.name ?? "").trim())
-                        .map((s) => (
-                          <option key={`sup-${s.id}`} value={s.name}>
-                            {s.name}
-                          </option>
-                        ))}
-                    </select>
+                    />
 
                     <button
                       type="button"
@@ -1707,7 +1776,9 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">Selected Books (Pending)</h4>
+                        <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">
+                          Selected Books (Pending)
+                        </h4>
                         <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
                           {pendingItems.length} item{pendingItems.length > 1 ? "s" : ""}
                         </span>
@@ -1871,60 +1942,108 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   ))}
                 </select>
 
-                {/* ✅ ADD STATUS FILTER HERE */}
-              <select
-                value={filterStatus}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFilterStatus(v);
+                {/* Status */}
+                <select
+                  value={filterStatus}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFilterStatus(v);
 
-                  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-                  searchTimeoutRef.current = setTimeout(() => {
-                    fetchRequirements(search, filterSchoolId, filterSession, v, filterClass, filterPublisher);
+                    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+                    searchTimeoutRef.current = setTimeout(() => {
+                      fetchRequirements(search, filterSchoolId, filterSession, v, filterClass, filterPublisher);
+                    }, 300);
+                  }}
+                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[140px] shadow-sm"
+                >
+                  <option value="">All status</option>
+                  <option value="draft">Draft</option>
+                  <option value="confirmed">Confirmed</option>
+                </select>
 
-                  }, 300);
-                }}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[140px] shadow-sm"
-              >
-                <option value="">All status</option>
-                <option value="draft">Draft</option>
-                <option value="confirmed">Confirmed</option>
-              </select>
-              <select
-                value={filterClass}
-                onChange={(e) => {
-                  const v = e.target.value;
-                 setFilterClass(v);
-                  fetchRequirements(search, filterSchoolId, filterSession, filterStatus, v, filterPublisher);
+                {/* Class */}
+                <select
+                  value={filterClass}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFilterClass(v);
+                    fetchRequirements(search, filterSchoolId, filterSession, filterStatus, v, filterPublisher);
+                  }}
+                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
+                >
+                  <option value="">All classes</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.class_name}>
+                      {c.class_name}
+                    </option>
+                  ))}
+                </select>
 
-                }}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
-              >
-                <option value="">All classes</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={c.class_name}>
-                    {c.class_name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filterPublisher}
-                onChange={(e) => {
-                  const v = e.target.value;
-                setFilterPublisher(v);
-                fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, v);
+                            {/* Publisher (searchable) */}
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Publisher</label>
 
-                }}
-                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[160px] shadow-sm"
-              >
-                <option value="">All publishers</option>
-                {uniquePublishers.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                  <div className="flex items-center gap-2">
+                    <SearchableSelect
+                      value={currentPublisherValueEdit || ""}
+                      options={publisherOptions}
+                      placeholder="Search publisher..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        // ✅ keep your existing behavior: default supplier = publisher if not touched
+                        if (!editSupplierTouched && val.trim()) {
+                          setEditForm((prev) => ({ ...prev, publisher_name: val, supplier_name: val }));
+                        } else {
+                          setEditForm((prev) => ({ ...prev, publisher_name: val }));
+                        }
+                      }}
+                    />
 
+                    <button
+                      type="button"
+                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                      title="Add new publisher (with phone/email/address + auto supplier)"
+                      onClick={async () => {
+                        const pub = await promptAddPublisher();
+                        if (!pub) return;
+
+                        try {
+                          const createdPub = await createPublisherNow(pub);
+
+                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
+                          const createdSup = existingSup
+                            ? existingSup
+                            : await createSupplierNow({
+                                name: createdPub.name,
+                                phone: createdPub.phone || undefined,
+                                email: createdPub.email || undefined,
+                                address: createdPub.address || undefined,
+                              });
+
+                          setEditForm((prev) => ({
+                            ...prev,
+                            publisher_name: createdPub.name,
+                            supplier_name: createdSup.name,
+                          }));
+                          setEditSupplierTouched(true);
+
+                          setToast({
+                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
+                            type: "success",
+                          });
+
+                          await fetchPublishers();
+                          await fetchSuppliers();
+                        } catch (e: any) {
+                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
+                          setToast({ message: msg, type: "error" });
+                        }
+                      }}
+                    >
+                      ➕
+                    </button>
+                  </div>
+                </div>
 
               </div>
 
@@ -1956,18 +2075,19 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   <Download className="w-3.5 h-3.5" />
                   <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
                 </button>
-                {/* ✅ ADD CONFIRM DRAFTS BUTTON HERE */}
-              <button
-                type="button"
-                disabled={loading || requirements.filter(r => r.status === "draft").length === 0}
-                onClick={() => {
-                  const ids = requirements.filter(r => r.status === "draft").map(r => r.id);
-                  confirmDraftByIds(ids);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-              >
-                Confirm Drafts
-              </button>
+
+                {/* Confirm Drafts */}
+                <button
+                  type="button"
+                  disabled={loading || requirements.filter((r) => r.status === "draft").length === 0}
+                  onClick={() => {
+                    const ids = requirements.filter((r) => r.status === "draft").map((r) => r.id);
+                    confirmDraftByIds(ids);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+                >
+                  Confirm Drafts
+                </button>
 
                 <button
                   type="button"
@@ -2045,7 +2165,10 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   {groupedRequirements.map((group) => (
                     <React.Fragment key={`grp-${group.schoolName}`}>
                       <tr className="bg-slate-50">
-                        <td colSpan={10} className="border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800">
+                        <td
+                          colSpan={10}
+                          className="border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800"
+                        >
                           <span className="inline-flex items-center gap-2">
                             <span className="h-2 w-2 rounded-full bg-indigo-500" />
                             {group.schoolName}
@@ -2073,7 +2196,9 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                           </td>
 
                           <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="font-semibold truncate max-w-[260px] text-slate-800">{r.book?.title || "-"}</div>
+                            <div className="font-semibold truncate max-w-[260px] text-slate-800">
+                              {r.book?.title || "-"}
+                            </div>
                           </td>
 
                           <td className="border-b border-slate-200 px-3 py-2 align-top">
@@ -2083,12 +2208,18 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                           </td>
 
                           <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">{r.supplier?.name || "-"}</div>
+                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
+                              {r.supplier?.name || "-"}
+                            </div>
                           </td>
 
-                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">{r.academic_session || "-"}</td>
+                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">
+                            {r.academic_session || "-"}
+                          </td>
 
-                          <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">{formatNumber(r.required_copies)}</td>
+                          <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">
+                            {formatNumber(r.required_copies)}
+                          </td>
 
                           <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
                             <span
@@ -2159,14 +2290,11 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         </section>
       </main>
 
-      {/* ✅ EDIT MODAL (same dropdown + add functionality) */}
+      {/* ✅ EDIT MODAL */}
       {editOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={closeEditModal}
-            aria-hidden="true"
-          />
+          <div className="absolute inset-0 bg-black/40" onClick={closeEditModal} aria-hidden="true" />
+
           <div className="relative w-[95vw] max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-2xl border border-slate-200">
             {/* header */}
             <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-3 flex items-center justify-between">
@@ -2204,6 +2332,7 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                         </option>
                       ))}
                     </select>
+
                     <button
                       type="button"
                       className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
@@ -2244,28 +2373,32 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Publisher</label>
                   <div className="flex items-center gap-2">
-                    <select
-                      name="publisher_name"
-                      value={editForm.publisher_name}
-                      onChange={(e) => {
-                        const v = String(e.target.value ?? "");
-                        if (!editSupplierTouched && v.trim()) {
-                          setEditForm((prev) => ({ ...prev, publisher_name: v, supplier_name: v }));
+                <SearchableSelect
+                      value={String(editForm.publisher_name ?? "").trim()}
+                      options={[
+                        { label: "Select publisher", value: "" },
+                        ...(() => {
+                          const current = String(editForm.publisher_name ?? "").trim();
+                          if (!current) return [];
+                          const exists = uniquePublishers.some((p) => ciEq(p.name, current));
+                          if (exists) return [];
+                          return [{ label: `${current} (current)`, value: current }];
+                        })(),
+                        ...uniquePublishers
+                          .filter((p) => String(p?.name ?? "").trim())
+                          .map((p) => ({ label: p.name, value: p.name })),
+                      ]}
+                      placeholder="Search publisher..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        if (!editSupplierTouched && val.trim()) {
+                          setEditForm((prev) => ({ ...prev, publisher_name: val, supplier_name: val }));
                         } else {
-                          setEditForm((prev) => ({ ...prev, publisher_name: v }));
+                          setEditForm((prev) => ({ ...prev, publisher_name: val }));
                         }
                       }}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="">Select publisher</option>
-                      {uniquePublishers
-                        .filter((p) => String(p?.name ?? "").trim())
-                        .map((p) => (
-                          <option key={`ed-pub-${p.id}`} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
-                    </select>
+                    />
+
 
                     <button
                       type="button"
@@ -2313,35 +2446,37 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                   </div>
                 </div>
 
-                {/* Book */}
+               {/* Book */}
                 <div className="space-y-1">
                   <label className="block font-medium text-slate-700">Book</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      name="book_title"
-                      value={editForm.book_title}
-                      onChange={handleEditChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      {(() => {
-                        const current = String(editForm.book_title ?? "").trim();
-                        if (!current) return null;
-                        const exists = visibleBooksEdit.some(
-                          (b) => String(b?.title ?? "").trim().toLowerCase() === current.toLowerCase()
-                        );
-                        if (exists) return null;
-                        return <option value={current}>{current} (current)</option>;
-                      })()}
 
-                      <option value="">Select book</option>
-                      {visibleBooksEdit
-                        .filter((b) => String(b?.title ?? "").trim())
-                        .map((b) => (
-                          <option key={`ed-book-${b.id}`} value={b.title}>
-                            {b.title}
-                          </option>
-                        ))}
-                    </select>
+                  <div className="flex items-center gap-2">
+                    <SearchableSelect
+                      value={String(editForm.book_title ?? "").trim()}
+                      options={[
+                        { label: "Select book", value: "" },
+
+                        // ✅ show current even if it's not in visibleBooksEdit
+                        ...(() => {
+                          const current = String(editForm.book_title ?? "").trim();
+                          if (!current) return [];
+                          const exists = visibleBooksEdit.some(
+                            (b) => String(b?.title ?? "").trim().toLowerCase() === current.toLowerCase()
+                          );
+                          if (exists) return [];
+                          return [{ label: `${current} (current)`, value: current }];
+                        })(),
+
+                        ...visibleBooksEdit
+                          .filter((b) => String(b?.title ?? "").trim())
+                          .map((b) => ({ label: b.title, value: b.title })),
+                      ]}
+                      placeholder="Search book..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        setEditForm((prev) => ({ ...prev, book_title: val }));
+                      }}
+                    />
 
                     <button
                       type="button"
@@ -2367,76 +2502,73 @@ const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
                       ➕
                     </button>
                   </div>
+
                   <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
                 </div>
 
-            
-                 {/* Supplier (EDIT editable) */}
-<div className="space-y-1">
-  <label className="block font-medium text-slate-700">Supplier</label>
 
-  <div className="flex items-center gap-2">
-    <select
-      name="supplier_name"
-      value={currentSupplierValueEdit || ""}
-      onChange={(e) => {
-        const v = String(e.target.value ?? "");
-        setEditForm((prev) => ({ ...prev, supplier_name: v }));
-        setEditSupplierTouched(!!v.trim());
-      }}
-      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-    >
-      {(() => {
-        const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
-        if (!current) return null;
-        const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
-        if (exists) return null;
-        return <option value={current}>{current} (current)</option>;
-      })()}
+        {/* Supplier (EDIT editable) */}
+          <div className="space-y-1">
+            <label className="block font-medium text-slate-700">Supplier</label>
 
-      <option value="">(Default = Publisher)</option>
+            <div className="flex items-center gap-2">
+              <SearchableSelect
+                value={String((editForm.supplier_name || editForm.publisher_name) ?? "").trim()}
+                options={[
+                  { label: "(Default = Publisher)", value: "" },
 
-      {uniqueSuppliers
-        .filter((s) => String(s?.name ?? "").trim())
-        .map((s) => (
-          <option key={`ed-sup-${s.id}`} value={s.name}>
-            {s.name}
-          </option>
-        ))}
-    </select>
+                  // ✅ show current even if not in uniqueSuppliers
+                  ...(() => {
+                    const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+                    if (!current) return [];
+                    const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+                    if (exists) return [];
+                    return [{ label: `${current} (current)`, value: current }];
+                  })(),
 
-    <button
-      type="button"
-      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-      title="Add new supplier"
-      onClick={async () => {
-        const sup = await promptAddSupplier();
-        if (!sup) return;
+                  ...uniqueSuppliers
+                    .filter((s) => String(s?.name ?? "").trim())
+                    .map((s) => ({ label: s.name, value: s.name })),
+                ]}
+                placeholder="Search supplier..."
+                onChange={(v) => {
+                  const val = String(v ?? "");
+                  setEditForm((prev) => ({ ...prev, supplier_name: val }));
+                  setEditSupplierTouched(!!val.trim());
+                }}
+              />
 
-                    try {
-                      const created = await createSupplierNow(sup);
+              <button
+                type="button"
+                className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                title="Add new supplier"
+                onClick={async () => {
+                  const sup = await promptAddSupplier();
+                  if (!sup) return;
 
-                      setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
-                      setEditSupplierTouched(true);
+                  try {
+                    const created = await createSupplierNow(sup);
 
-                      await fetchSuppliers();
+                    setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
+                    setEditSupplierTouched(true);
 
-                      setToast({ message: `Supplier added: ${created.name}`, type: "success" });
-                    } catch (e: any) {
-                      const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
-                      setToast({ message: msg, type: "error" });
-                    }
-                  }}
-                >
-                  ➕
-                </button>
-              </div>
+                    await fetchSuppliers();
 
-  <p className="text-[10px] text-slate-500">
-    Default supplier = publisher. Select different supplier if needed.
-  </p>
-</div>
+                    setToast({ message: `Supplier added: ${created.name}`, type: "success" });
+                  } catch (e: any) {
+                    const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
+                    setToast({ message: msg, type: "error" });
+                  }
+                }}
+              >
+                ➕
+              </button>
+            </div>
 
+            <p className="text-[10px] text-slate-500">
+              Default supplier = publisher. Select different supplier if needed.
+            </p>
+          </div>
 
 
                 {/* Session */}

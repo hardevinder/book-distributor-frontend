@@ -18,6 +18,9 @@ import {
   AlertTriangle,
   PackagePlus,
   Lock,
+  BookOpen,
+  Boxes,
+  ShieldCheck,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -40,7 +43,7 @@ type ProductLite = {
   name?: string | null;
   uom?: string | null;
   is_active?: boolean;
-  book?: BookLite | null; // if backend includes it
+  book?: BookLite | null;
 };
 
 type BundleItemRow = {
@@ -72,6 +75,34 @@ type BundleRow = {
 };
 
 type ProductsApiStatus = "idle" | "ok" | "missing" | "unauthorized" | "error";
+
+/* ---- Availability API Types ---- */
+
+type AvailabilityBookRow = {
+  book_id: number;
+  title: string;
+  subject?: string | null;
+  code?: string | null;
+  publisher?: { id: number; name: string } | null;
+  supplier?: { id: number; name: string } | null;
+
+  required_qty: number;
+  available_qty: number;
+  reserved_qty: number;
+  issued_qty: number;
+  free_qty: number;
+
+  source?: "REQ" | "DIRECT" | "BOTH";
+};
+
+type AvailabilityClassRow = { class_name: string; books: AvailabilityBookRow[] };
+
+type AvailabilityResponse = {
+  mode?: string;
+  school?: { id: number; name: string };
+  academic_session?: string | null;
+  classes?: AvailabilityClassRow[];
+};
 
 /* ---------------- Helpers ---------------- */
 
@@ -143,13 +174,24 @@ const BundlesPageClient: React.FC = () => {
   const [savingBundle, setSavingBundle] = useState(false);
   const [savingItems, setSavingItems] = useState(false);
 
-  // picker
+  // picker - products
   const [productsApiStatus, setProductsApiStatus] = useState<ProductsApiStatus>("idle");
   const [products, setProducts] = useState<ProductLite[]>([]);
-  const [booksFallback, setBooksFallback] = useState<BookLite[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerQ, setPickerQ] = useState("");
   const [pickerType, setPickerType] = useState<"ALL" | "BOOK" | "MATERIAL">("ALL");
+
+  // picker - school availability
+  const [avLoading, setAvLoading] = useState(false);
+  const [availability, setAvailability] = useState<AvailabilityResponse | null>(null);
+  const [avQ, setAvQ] = useState("");
+  const [avClass, setAvClass] = useState<string>("ALL");
+
+  // picker tab
+  const [pickerTab, setPickerTab] = useState<"SCHOOL_BOOKS" | "ADD_PRODUCTS">("SCHOOL_BOOKS");
+
+  // ensure-books action
+  const [ensuringBooks, setEnsuringBooks] = useState(false);
 
   // notifications
   const [error, setError] = useState<string | null>(null);
@@ -193,7 +235,7 @@ const BundlesPageClient: React.FC = () => {
         params: {
           school_id: Number(schoolId),
           academic_session: session || undefined,
-          is_active: undefined, // keep all
+          is_active: undefined,
         },
       });
 
@@ -231,71 +273,84 @@ const BundlesPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- Products picker ---------------- */
+  /* ---------------- Load Products ---------------- */
 
-  const loadProductsOrFallback = async () => {
+  const loadProducts = async (opts?: { ensure_books?: boolean }) => {
     if (!schoolId) return;
 
     setPickerLoading(true);
     setProductsApiStatus("idle");
 
     try {
-      // ✅ load ALL products (BOOK + MATERIAL), include book details for BOOK products
       const pRes = await api.get("/api/products", {
-        params: { is_active: 1, include_book: 1 },
+        params: {
+          is_active: 1,
+          include_book: 1,
+          ensure_books: opts?.ensure_books ? 1 : undefined, // ✅ Option-A: auto create BOOK products
+        },
       });
 
       const arr = normalizeProducts(pRes?.data);
       setProducts(arr);
-      setBooksFallback([]);
       setProductsApiStatus("ok");
     } catch (e: any) {
       const status = e?.response?.status;
 
-      // Important: differentiate 401 vs 404
       if (status === 401) {
         setProducts([]);
-        setBooksFallback([]);
         setProductsApiStatus("unauthorized");
-        // show a clean message, not "API not found"
         setError("You are not authorized to load products. Please login again (token missing/expired).");
         return;
       }
 
-      if (status === 404) {
-        setProductsApiStatus("missing");
-      } else {
-        setProductsApiStatus("error");
-      }
+      if (status === 404) setProductsApiStatus("missing");
+      else setProductsApiStatus("error");
 
-      // fallback to books list (only when products route missing / error)
-      try {
-        const bRes = await api.get("/api/books", { params: { limit: 5000 } });
-        const rows = Array.isArray(bRes?.data?.data)
-          ? (bRes.data.data as any[])
-          : Array.isArray(bRes?.data?.rows)
-          ? bRes.data.rows
-          : Array.isArray(bRes?.data)
-          ? bRes.data
-          : [];
-
-        const lite: BookLite[] = rows.map((x: any) => ({
-          id: num(x.id),
-          title: safeStr(x.title),
-          subject: x.subject ?? null,
-          code: x.code ?? null,
-          class_name: x.class_name ?? null,
-        }));
-
-        setBooksFallback(lite);
-        setProducts([]);
-      } catch (err) {
-        console.error(err);
-        setProducts([]);
-        setBooksFallback([]);
-      }
+      setProducts([]);
     } finally {
       setPickerLoading(false);
+    }
+  };
+
+  const ensureBookProductsNow = async () => {
+    if (!schoolId) return;
+    setError(null);
+    setSuccess(null);
+
+    setEnsuringBooks(true);
+    try {
+      // ✅ safest: call listProducts with ensure_books=1 (works even if /ensure-books not wired)
+      await loadProducts({ ensure_books: true });
+      setSuccess("BOOK products ensured ✅ (Books are now addable in kits)");
+    } catch (e: any) {
+      // loadProducts already sets errors
+    } finally {
+      setEnsuringBooks(false);
+    }
+  };
+
+  /* ---------------- Load Availability ---------------- */
+
+  const loadAvailability = async () => {
+    if (!schoolId) return;
+
+    setAvLoading(true);
+    try {
+      const res = await api.get("/api/school-orders/availability", {
+        params: {
+          school_id: Number(schoolId),
+          academic_session: session || undefined,
+        },
+      });
+
+      const data: AvailabilityResponse = res?.data || null;
+      setAvailability(data);
+    } catch (e: any) {
+      console.error(e);
+      setAvailability(null);
+      setError(e?.response?.data?.message || "Failed to load school availability.");
+    } finally {
+      setAvLoading(false);
     }
   };
 
@@ -305,15 +360,19 @@ const BundlesPageClient: React.FC = () => {
       setActive(null);
       setActiveId(null);
       setProducts([]);
-      setBooksFallback([]);
+      setAvailability(null);
       setProductsApiStatus("idle");
+      setPickerQ("");
+      setPickerType("ALL");
+      setAvQ("");
+      setAvClass("ALL");
+      setPickerTab("SCHOOL_BOOKS");
       return;
     }
 
     setError(null);
     setSuccess(null);
 
-    // reset selection on change
     setActive(null);
     setActiveId(null);
     setBundleName("");
@@ -321,68 +380,92 @@ const BundlesPageClient: React.FC = () => {
     setClassName("");
     setSortOrder(0);
     setIsActive(true);
-    setPickerQ("");
-    setPickerType("ALL");
 
     loadBundles();
-    loadProductsOrFallback();
+    loadProducts();
+    loadAvailability();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, session]);
 
-  /* ---------------- Picker filtering ---------------- */
+  /* ---------------- Maps ---------------- */
 
-  const filteredPickerRows = useMemo(() => {
+  // book_id -> product (BOOK)
+  const bookProductByBookId = useMemo(() => {
+    const m = new Map<number, ProductLite>();
+    for (const p of products) {
+      if (p.type === "BOOK" && p.book_id) m.set(Number(p.book_id), p);
+    }
+    return m;
+  }, [products]);
+
+  /* ---------------- Picker Filtering: Products ---------------- */
+
+  const filteredProductRows = useMemo(() => {
     const q = safeStr(pickerQ).toLowerCase();
 
-    // products api available
-    if (products.length) {
-      let rows = products.map((p) => {
-        const isBook = p.type === "BOOK";
-        const title = isBook ? p.book?.title || `Book #${p.book_id ?? ""}` : p.name || `Material #${p.id}`;
-        const subject = isBook ? p.book?.subject || "" : "MATERIAL";
-        const code = isBook ? p.book?.code || "" : (p.uom || "");
-        const cls = isBook ? p.book?.class_name || "" : "";
+    let rows = products.map((p) => {
+      const isBook = p.type === "BOOK";
+      const title = isBook
+        ? p.book?.title || (p.book_id ? `Book #${p.book_id}` : `Book Product #${p.id}`)
+        : p.name || `Material #${p.id}`;
+      const subject = isBook ? p.book?.subject || "" : "MATERIAL";
+      const code = isBook ? p.book?.code || "" : p.uom || "";
+      const cls = isBook ? p.book?.class_name || "" : "";
 
-        return {
-          key: `p:${p.id}`,
-          type: p.type,
-          product_id: p.id,
-          title,
-          subject,
-          code,
-          class_name: cls,
-        };
-      });
+      return {
+        key: `p:${p.id}`,
+        type: p.type,
+        product_id: p.id,
+        title,
+        subject,
+        code,
+        class_name: cls,
+      };
+    });
 
-      if (pickerType !== "ALL") {
-        rows = rows.filter((r) => r.type === pickerType);
+    if (pickerType !== "ALL") rows = rows.filter((r) => r.type === pickerType);
+
+    if (!q) return rows.slice(0, 120);
+
+    return rows
+      .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q))
+      .slice(0, 120);
+  }, [products, pickerQ, pickerType]);
+
+  /* ---------------- Picker Filtering: Availability ---------------- */
+
+  const availabilityClassOptions = useMemo(() => {
+    const cls = (availability?.classes || []).map((c) => safeStr(c.class_name)).filter(Boolean);
+    const uniq = Array.from(new Set(cls)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return ["ALL", ...uniq];
+  }, [availability]);
+
+  const flattenedAvailability = useMemo(() => {
+    const q = safeStr(avQ).toLowerCase();
+    const wantClass = safeStr(avClass);
+
+    const out: Array<AvailabilityBookRow & { class_name: string }> = [];
+    for (const c of availability?.classes || []) {
+      const clsName = safeStr(c.class_name) || "Unknown";
+      if (wantClass !== "ALL" && clsName !== wantClass) continue;
+
+      for (const b of c.books || []) {
+        const hay = `${b.title} ${b.subject ?? ""} ${b.code ?? ""} ${clsName}`.toLowerCase();
+        if (q && !hay.includes(q)) continue;
+        out.push({ ...b, class_name: clsName });
       }
-
-      if (!q) return rows.slice(0, 80);
-
-      return rows
-        .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q))
-        .slice(0, 80);
     }
 
-    // fallback books list (API missing/error)
-    let rows = booksFallback.map((b) => ({
-      key: `b:${b.id}`,
-      type: "BOOK" as const,
-      product_id: b.id, // fallback assumption
-      title: b.title,
-      subject: b.subject || "",
-      code: b.code || "",
-      class_name: b.class_name || "",
-    }));
+    out.sort(
+      (a, b) =>
+        num(b.required_qty) - num(a.required_qty) ||
+        num(b.free_qty) - num(a.free_qty) ||
+        safeStr(a.title).localeCompare(safeStr(b.title))
+    );
+    return out;
+  }, [availability, avQ, avClass]);
 
-    if (pickerType === "MATERIAL") rows = []; // no materials in fallback
-
-    if (!q) return rows.slice(0, 80);
-    return rows.filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q)).slice(0, 80);
-  }, [products, booksFallback, pickerQ, pickerType]);
-
-  /* ---------------- Create bundle ---------------- */
+  /* ---------------- Bundle CRUD ---------------- */
 
   const canCreateBundle = !!schoolId && safeStr(bundleName) && !!(session || "").trim() && !savingBundle;
 
@@ -411,9 +494,7 @@ const BundlesPageClient: React.FC = () => {
       setSuccess("Bundle created ✅");
       await loadBundles();
 
-      if (created?.id) {
-        await loadBundleById(created.id);
-      }
+      if (created?.id) await loadBundleById(created.id);
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Failed to create bundle.");
@@ -421,8 +502,6 @@ const BundlesPageClient: React.FC = () => {
       setSavingBundle(false);
     }
   };
-
-  /* ---------------- Save bundle details ---------------- */
 
   const canSaveBundle = !!activeId && !savingBundle;
 
@@ -462,8 +541,6 @@ const BundlesPageClient: React.FC = () => {
     }
   };
 
-  /* ---------------- Delete bundle ---------------- */
-
   const deleteBundle = async () => {
     if (!activeId) return;
     setError(null);
@@ -494,7 +571,7 @@ const BundlesPageClient: React.FC = () => {
 
   const activeItems = useMemo(() => {
     const items = (active?.items || []).slice();
-    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(b.id));
+    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(a.id));
     return items;
   }, [active]);
 
@@ -541,6 +618,16 @@ const BundlesPageClient: React.FC = () => {
     });
 
     setSuccess("Item added (save to apply) ✅");
+  };
+
+  // Add a SCHOOL BOOK: convert book_id -> product_id (BOOK product)
+  const addSchoolBookToKit = (book_id: number) => {
+    const p = bookProductByBookId.get(Number(book_id));
+    if (!p?.id) {
+      setError(`No BOOK product for book_id=${book_id}. Click “Ensure Book Products” once.`);
+      return;
+    }
+    addItemLocal(p.id);
   };
 
   const removeItem = async (itemId: number) => {
@@ -611,9 +698,19 @@ const BundlesPageClient: React.FC = () => {
     if (!schoolId) return;
     setSuccess(null);
     setError(null);
-    await Promise.all([loadBundles(), loadProductsOrFallback()]);
+    await Promise.all([loadBundles(), loadProducts(), loadAvailability()]);
     if (activeId) await loadBundleById(activeId);
   };
+
+  const schoolBooksCount = flattenedAvailability.length;
+  const bookProductsCount = products.filter((p) => p.type === "BOOK").length;
+  const missingBookProductsCount = useMemo(() => {
+    let missing = 0;
+    for (const row of flattenedAvailability) {
+      if (!bookProductByBookId.get(Number(row.book_id))) missing++;
+    }
+    return missing;
+  }, [flattenedAvailability, bookProductByBookId]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -635,7 +732,7 @@ const BundlesPageClient: React.FC = () => {
               </div>
 
               <div className="min-w-0">
-                <div className="text-base font-bold truncate">Bundles / Kits (Template Builder)</div>
+                <div className="text-base font-bold truncate">Bundles / Kits (School-wise)</div>
                 <div className="text-xs text-slate-500 truncate">
                   {selectedSchool?.name ? (
                     <>
@@ -654,10 +751,10 @@ const BundlesPageClient: React.FC = () => {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={refreshAll}
-              disabled={!schoolId || loadingBundles || pickerLoading}
+              disabled={!schoolId || loadingBundles || pickerLoading || avLoading}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
             >
-              <RefreshCcw className={`w-4 h-4 ${loadingBundles || pickerLoading ? "animate-spin" : ""}`} />
+              <RefreshCcw className={`w-4 h-4 ${loadingBundles || pickerLoading || avLoading ? "animate-spin" : ""}`} />
               Refresh
             </button>
 
@@ -701,7 +798,8 @@ const BundlesPageClient: React.FC = () => {
 
             <div className="col-span-12 sm:col-span-6 md:col-span-4">
               <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                Tip: Create a bundle, then add items + prices. POS will use this kit template.
+                School Books: <b>{schoolBooksCount}</b> • Missing BOOK products: <b>{missingBookProductsCount}</b> •
+                Book Products: <b>{bookProductsCount}</b> • Products: <b>{products.length}</b>
               </div>
             </div>
           </div>
@@ -720,26 +818,10 @@ const BundlesPageClient: React.FC = () => {
             </div>
           )}
 
-          {/* Products API status hints */}
-          {schoolId && productsApiStatus === "missing" && booksFallback.length > 0 && (
-            <div className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-              Products API route not found (404) — using books list as fallback. For perfect kit builder (books + stationery),
-              add <b className="ml-1">/api/products</b>.
-            </div>
-          )}
-
           {schoolId && productsApiStatus === "unauthorized" && (
             <div className="mt-3 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex items-center gap-2">
               <Lock className="w-5 h-5 flex-shrink-0" />
               Products API is protected (401). Ensure frontend sends JWT Authorization header for <b>/api/products</b>.
-            </div>
-          )}
-
-          {schoolId && productsApiStatus === "error" && (
-            <div className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-              Could not load products due to an error — using books fallback for now.
             </div>
           )}
         </div>
@@ -904,7 +986,6 @@ const BundlesPageClient: React.FC = () => {
                       </option>
                     ))}
                   </select>
-                  <div className="mt-1 text-[11px] text-slate-500">If you don’t have class table, use Class Name field.</div>
                 </div>
 
                 <div className="col-span-12 md:col-span-6">
@@ -947,7 +1028,9 @@ const BundlesPageClient: React.FC = () => {
 
                 <div className="col-span-12 md:col-span-4">
                   <label className="block text-xs font-medium text-slate-600 mb-1.5">Session</label>
-                  <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">{session}</div>
+                  <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">
+                    {session}
+                  </div>
                 </div>
               </div>
             )}
@@ -974,7 +1057,7 @@ const BundlesPageClient: React.FC = () => {
                 <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
                   Create/select a bundle to edit items.
                 </div>
-              ) : activeItems.length === 0 ? (
+              ) : (active?.items || []).length === 0 ? (
                 <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
                   No items yet — add from right side.
                 </div>
@@ -1002,7 +1085,10 @@ const BundlesPageClient: React.FC = () => {
                           const meta =
                             it.product?.type === "MATERIAL"
                               ? `MATERIAL${it.product?.uom ? ` • ${it.product.uom}` : ""}`
-                              : it.product?.book?.class_name || it.product?.book?.code || it.product?.book?.subject || "";
+                              : it.product?.book?.class_name ||
+                                it.product?.book?.code ||
+                                it.product?.book?.subject ||
+                                "";
 
                           return (
                             <tr key={it.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
@@ -1020,7 +1106,9 @@ const BundlesPageClient: React.FC = () => {
                                   min={0}
                                   className="w-16 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.qty}
-                                  onChange={(e) => updateItemLocal(it.id, { qty: Math.max(0, num(e.target.value)) })}
+                                  onChange={(e) =>
+                                    updateItemLocal(it.id, { qty: Math.max(0, num(e.target.value)) })
+                                  }
                                 />
                               </td>
 
@@ -1030,7 +1118,9 @@ const BundlesPageClient: React.FC = () => {
                                   min={0}
                                   className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.mrp}
-                                  onChange={(e) => updateItemLocal(it.id, { mrp: Math.max(0, num(e.target.value)) })}
+                                  onChange={(e) =>
+                                    updateItemLocal(it.id, { mrp: Math.max(0, num(e.target.value)) })
+                                  }
                                 />
                               </td>
 
@@ -1040,7 +1130,11 @@ const BundlesPageClient: React.FC = () => {
                                   min={0}
                                   className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.sale_price}
-                                  onChange={(e) => updateItemLocal(it.id, { sale_price: Math.max(0, num(e.target.value)) })}
+                                  onChange={(e) =>
+                                    updateItemLocal(it.id, {
+                                      sale_price: Math.max(0, num(e.target.value)),
+                                    })
+                                  }
                                 />
                               </td>
 
@@ -1077,7 +1171,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
               )}
 
-              <div className="mt-3 text-xs text-slate-500">Tip: Keep MRP for reference; POS will use Sale Price for billing.</div>
+              <div className="mt-3 text-xs text-slate-500">Tip: POS will use Sale Price for billing.</div>
             </div>
           </div>
         </section>
@@ -1088,137 +1182,321 @@ const BundlesPageClient: React.FC = () => {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-bold">Add Items</div>
-                <div className="text-xs text-slate-500">Search and add books + stationery</div>
+                <div className="text-xs text-slate-500">First school books, then extra products</div>
               </div>
               <button
                 type="button"
-                onClick={loadProductsOrFallback}
-                disabled={!schoolId || pickerLoading}
+                onClick={refreshAll}
+                disabled={!schoolId || pickerLoading || avLoading}
                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-medium disabled:opacity-50"
               >
-                <RefreshCcw className={`w-4 h-4 ${pickerLoading ? "animate-spin" : ""}`} />
+                <RefreshCcw className={`w-4 h-4 ${pickerLoading || avLoading ? "animate-spin" : ""}`} />
                 Reload
               </button>
             </div>
 
-            <div className="mt-3 grid grid-cols-12 gap-2">
-              <div className="col-span-8">
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                  <input
-                    className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
-                      pickerQ ? "pr-10" : "pr-4"
-                    }`}
-                    placeholder="Title / name / subject / code…"
-                    value={pickerQ}
-                    onChange={(e) => setPickerQ(e.target.value)}
-                    disabled={!schoolId}
-                  />
-                  {pickerQ && (
-                    <button
-                      type="button"
-                      onClick={() => setPickerQ("")}
-                      className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="col-span-4">
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Type</label>
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                  value={pickerType}
-                  onChange={(e) => setPickerType(e.target.value as any)}
-                  disabled={!schoolId}
-                >
-                  <option value="ALL">All</option>
-                  <option value="BOOK">Books</option>
-                  <option value="MATERIAL">Material</option>
-                </select>
-              </div>
+            {/* Tabs */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPickerTab("SCHOOL_BOOKS")}
+                className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold border transition ${
+                  pickerTab === "SCHOOL_BOOKS"
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-800"
+                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                School Books
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerTab("ADD_PRODUCTS")}
+                className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold border transition ${
+                  pickerTab === "ADD_PRODUCTS"
+                    ? "bg-indigo-50 border-indigo-200 text-indigo-800"
+                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <Boxes className="w-4 h-4" />
+                Extra Products
+              </button>
             </div>
+
+            {/* Ensure BOOK products banner (only when needed) */}
+            {schoolId && pickerTab === "SCHOOL_BOOKS" && missingBookProductsCount > 0 && (
+              <div className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-3">
+                <div className="font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  {missingBookProductsCount} books have <b>No BOOK product</b>
+                </div>
+                <div className="mt-1 text-amber-900/90">
+                  Click once to auto-create BOOK products from books (no manual entry).
+                </div>
+                <button
+                  type="button"
+                  onClick={ensureBookProductsNow}
+                  disabled={ensuringBooks || pickerLoading}
+                  className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 text-xs font-bold disabled:opacity-60"
+                >
+                  <ShieldCheck className={`w-4 h-4 ${ensuringBooks ? "animate-spin" : ""}`} />
+                  {ensuringBooks ? "Ensuring…" : "Ensure Book Products"}
+                </button>
+              </div>
+            )}
 
             {!schoolId ? (
               <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
                 Select school first.
               </div>
-            ) : pickerLoading ? (
-              <div className="mt-3 space-y-3">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-10 bg-slate-100 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : filteredPickerRows.length === 0 ? (
-              <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                No results.
-              </div>
-            ) : (
-              <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
-                <div className="max-h-[70vh] overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-100 sticky top-0 z-10">
-                      <tr>
-                        <th className="px-3 py-3 text-left font-bold text-slate-800">Item</th>
-                        <th className="px-3 py-3 text-center font-bold text-slate-800 w-20">Add</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPickerRows.map((r) => {
-                        const already = (active?.items || []).some((it) => num(it.product_id) === num(r.product_id));
-                        const metaLine = [r.class_name, r.subject, r.code].filter(Boolean).join(" • ");
+            ) : pickerTab === "SCHOOL_BOOKS" ? (
+              <>
+                {/* School availability controls */}
+                <div className="mt-3 grid grid-cols-12 gap-2">
+                  <div className="col-span-7">
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                      <input
+                        className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                          avQ ? "pr-10" : "pr-4"
+                        }`}
+                        placeholder="Title / subject / code…"
+                        value={avQ}
+                        onChange={(e) => setAvQ(e.target.value)}
+                      />
+                      {avQ && (
+                        <button
+                          type="button"
+                          onClick={() => setAvQ("")}
+                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-                        return (
-                          <tr key={r.key} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                            <td className="px-3 py-3">
-                              <div className="font-semibold text-slate-900">{r.title}</div>
-                              {metaLine ? <div className="text-xs text-slate-500 mt-0.5">{metaLine}</div> : null}
-                              <div className="text-[11px] text-slate-400 mt-1">
-                                product_id: <b>{r.product_id}</b>
-                              </div>
-                            </td>
-
-                            <td className="px-3 py-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => addItemLocal(r.product_id)}
-                                disabled={!activeId || already}
-                                className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition border ${
-                                  !activeId
-                                    ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                                    : already
-                                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
-                                    : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
-                                }`}
-                              >
-                                {already ? (
-                                  <>
-                                    <CheckCircle2 className="w-4 h-4" />
-                                    Added
-                                  </>
-                                ) : (
-                                  <>
-                                    <Plus className="w-4 h-4" />
-                                    Add
-                                  </>
-                                )}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <div className="col-span-5">
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Class</label>
+                    <select
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                      value={avClass}
+                      onChange={(e) => setAvClass(e.target.value)}
+                    >
+                      {availabilityClassOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
-            )}
 
-            <div className="mt-3 text-xs text-slate-500">
-              Books + Materials are supported when <b>/api/products</b> works. If you still see 401, fix JWT in apiClient.
-            </div>
+                {avLoading ? (
+                  <div className="mt-3 space-y-3">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="h-10 bg-slate-100 rounded-xl animate-pulse" />
+                    ))}
+                  </div>
+                ) : flattenedAvailability.length === 0 ? (
+                  <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    No school books found in availability.
+                    <div className="text-xs text-slate-500 mt-1">
+                      Check: requirements for this school/session OR availability API returning data.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
+                    <div className="max-h-[70vh] overflow-y-auto">
+                      <table className="w-full text-sm">
+                        
+                      <thead className="bg-slate-100 sticky top-0 z-10">
+                          <tr>
+                            <th className="px-3 py-3 text-left font-bold text-slate-800">Book</th>
+                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-12">+</th>
+                          </tr>
+                        </thead>
+
+                        
+                        <tbody>
+                          {flattenedAvailability.map((b) => {
+                            const bookProd = bookProductByBookId.get(Number(b.book_id));
+                            const already = (active?.items || []).some((it) => num(it.product_id) === num(bookProd?.id));
+                            const canAdd = !!activeId && !!bookProd?.id && !already;
+
+                            const metaLine = [b.class_name, b.subject, b.code].filter(Boolean).join(" • ");
+
+                           return (
+                                <tr
+                                  key={`av:${b.book_id}`}
+                                  className="border-b border-slate-100 hover:bg-slate-50 transition"
+                                >
+                                  {/* Book name */}
+                                  <td className="px-3 py-3">
+                                    <div className="font-semibold text-slate-900 truncate">{b.title}</div>
+                                  </td>
+
+                                  {/* + Button */}
+                                  <td className="px-2 py-3 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => addSchoolBookToKit(Number(b.book_id))}
+                                      disabled={!canAdd}
+                                      className={`inline-flex items-center justify-center w-9 h-9 rounded-xl border transition ${
+                                        !activeId
+                                          ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                                          : already
+                                          ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
+                                          : !bookProd?.id
+                                          ? "border-rose-200 bg-rose-50 text-rose-800 cursor-not-allowed"
+                                          : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
+                                      }`}
+                                      title={
+                                        !activeId
+                                          ? "Select bundle first"
+                                          : already
+                                          ? "Already added"
+                                          : !bookProd?.id
+                                          ? "No BOOK product"
+                                          : "Add"
+                                      }
+                                    >
+                                      {already ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+
+
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 text-xs text-slate-500">
+                  If you see “No BOOK product”, click <b>Ensure Book Products</b> once (auto).
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Products controls */}
+                <div className="mt-3 grid grid-cols-12 gap-2">
+                  <div className="col-span-8">
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                      <input
+                        className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                          pickerQ ? "pr-10" : "pr-4"
+                        }`}
+                        placeholder="Title / name / subject / code…"
+                        value={pickerQ}
+                        onChange={(e) => setPickerQ(e.target.value)}
+                      />
+                      {pickerQ && (
+                        <button
+                          type="button"
+                          onClick={() => setPickerQ("")}
+                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="col-span-4">
+                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Type</label>
+                    <select
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                      value={pickerType}
+                      onChange={(e) => setPickerType(e.target.value as any)}
+                    >
+                      <option value="ALL">All</option>
+                      <option value="BOOK">Books</option>
+                      <option value="MATERIAL">Material</option>
+                    </select>
+                  </div>
+                </div>
+
+                {pickerLoading ? (
+                  <div className="mt-3 space-y-3">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="h-10 bg-slate-100 rounded-xl animate-pulse" />
+                    ))}
+                  </div>
+                ) : filteredProductRows.length === 0 ? (
+                  <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    No products.
+                  </div>
+                ) : (
+                  <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
+                    <div className="max-h-[70vh] overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-100 sticky top-0 z-10">
+                          <tr>
+                            <th className="px-3 py-3 text-left font-bold text-slate-800">Item</th>
+                            <th className="px-3 py-3 text-center font-bold text-slate-800 w-20">Add</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredProductRows.map((r) => {
+                            const already = (active?.items || []).some((it) => num(it.product_id) === num(r.product_id));
+                            const metaLine = [r.class_name, r.subject, r.code].filter(Boolean).join(" • ");
+
+                            return (
+                              <tr key={r.key} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                                <td className="px-3 py-3">
+                                  <div className="font-semibold text-slate-900">{r.title}</div>
+                                  {metaLine ? <div className="text-xs text-slate-500 mt-0.5">{metaLine}</div> : null}
+                                  <div className="text-[11px] text-slate-400 mt-1">
+                                    product_id: <b>{r.product_id}</b>
+                                  </div>
+                                </td>
+
+                                <td className="px-3 py-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => addItemLocal(r.product_id)}
+                                    disabled={!activeId || already}
+                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition border ${
+                                      !activeId
+                                        ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                                        : already
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
+                                        : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
+                                    }`}
+                                  >
+                                    {already ? (
+                                      <>
+                                        <CheckCircle2 className="w-4 h-4" />
+                                        Added
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Plus className="w-4 h-4" />
+                                        Add
+                                      </>
+                                    )}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 text-xs text-slate-500">
+                  Use “Extra Products” for stationery / additional items. Use “School Books” for requirement-wise books.
+                </div>
+              </>
+            )}
           </div>
         </section>
       </main>
