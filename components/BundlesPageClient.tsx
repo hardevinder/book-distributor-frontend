@@ -274,19 +274,35 @@ const BundlesPageClient: React.FC = () => {
   };
 
   /* ---------------- Load Products ---------------- */
-
-  const loadProducts = async (opts?: { ensure_books?: boolean }) => {
+  /**
+   * ✅ Backend behavior you requested:
+   * - section=books  -> BOOK products only from REQUIREMENTS (school_id + academic_session)
+   * - section=extras -> only DIRECT PURCHASED items (typically MATERIAL products)
+   */
+  const loadProducts = async (opts?: { ensure_books?: boolean; section?: "books" | "extras" }) => {
     if (!schoolId) return;
 
     setPickerLoading(true);
     setProductsApiStatus("idle");
 
     try {
+      const section: "books" | "extras" =
+        opts?.section ?? (pickerTab === "ADD_PRODUCTS" ? "extras" : "books");
+
       const pRes = await api.get("/api/products", {
         params: {
+          section, // ✅ NEW
+          school_id: Number(schoolId), // ✅ needed for books section
+          academic_session: session || undefined, // ✅ needed for books section
+
           is_active: 1,
           include_book: 1,
-          ensure_books: opts?.ensure_books ? 1 : undefined, // ✅ Option-A: auto create BOOK products
+
+          // ✅ Option-A: auto create BOOK products (only makes sense for books)
+          ensure_books: section === "books" && opts?.ensure_books ? 1 : undefined,
+
+          // If your backend supports it, you can also force extras to "direct-only received"
+          // only_received: section === "extras" ? 1 : undefined,
         },
       });
 
@@ -319,11 +335,11 @@ const BundlesPageClient: React.FC = () => {
 
     setEnsuringBooks(true);
     try {
-      // ✅ safest: call listProducts with ensure_books=1 (works even if /ensure-books not wired)
-      await loadProducts({ ensure_books: true });
+      // ✅ Ensure books, then reload BOOK section
+      await loadProducts({ ensure_books: true, section: "books" });
       setSuccess("BOOK products ensured ✅ (Books are now addable in kits)");
     } catch (e: any) {
-      // loadProducts already sets errors
+      // loadProducts handles error state
     } finally {
       setEnsuringBooks(false);
     }
@@ -354,6 +370,7 @@ const BundlesPageClient: React.FC = () => {
     }
   };
 
+  // When school/session changes: reload everything
   useEffect(() => {
     if (!schoolId) {
       setBundles([]);
@@ -382,10 +399,26 @@ const BundlesPageClient: React.FC = () => {
     setIsActive(true);
 
     loadBundles();
-    loadProducts();
+    loadProducts({ section: pickerTab === "ADD_PRODUCTS" ? "extras" : "books" });
     loadAvailability();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, session]);
+
+  // When tab changes: reload products for that tab + set a sensible default type
+  useEffect(() => {
+    if (!schoolId) return;
+
+    if (pickerTab === "ADD_PRODUCTS") {
+      // ✅ Extras = direct purchased items (usually MATERIAL)
+      setPickerType("MATERIAL");
+      loadProducts({ section: "extras" });
+    } else {
+      // Books tab: show all (mostly BOOK)
+      setPickerType("ALL");
+      loadProducts({ section: "books" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerTab]);
 
   /* ---------------- Maps ---------------- */
 
@@ -423,14 +456,20 @@ const BundlesPageClient: React.FC = () => {
       };
     });
 
-    if (pickerType !== "ALL") rows = rows.filter((r) => r.type === pickerType);
+    // ✅ For "Extra Products", we want direct purchased items => generally MATERIAL only
+    if (pickerTab === "ADD_PRODUCTS") {
+      rows = rows.filter((r) => r.type === "MATERIAL");
+    } else {
+      // normal filter dropdown behavior
+      if (pickerType !== "ALL") rows = rows.filter((r) => r.type === pickerType);
+    }
 
     if (!q) return rows.slice(0, 120);
 
     return rows
       .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q))
       .slice(0, 120);
-  }, [products, pickerQ, pickerType]);
+  }, [products, pickerQ, pickerType, pickerTab]);
 
   /* ---------------- Picker Filtering: Availability ---------------- */
 
@@ -698,7 +737,11 @@ const BundlesPageClient: React.FC = () => {
     if (!schoolId) return;
     setSuccess(null);
     setError(null);
-    await Promise.all([loadBundles(), loadProducts(), loadAvailability()]);
+    await Promise.all([
+      loadBundles(),
+      loadProducts({ section: pickerTab === "ADD_PRODUCTS" ? "extras" : "books" }),
+      loadAvailability(),
+    ]);
     if (activeId) await loadBundleById(activeId);
   };
 
@@ -902,6 +945,9 @@ const BundlesPageClient: React.FC = () => {
             )}
           </div>
         </section>
+
+        {/* MIDDLE: Bundle editor */}
+        {/* (UNCHANGED below — your editor + items table is same) */}
 
         {/* MIDDLE: Bundle editor */}
         <section className="col-span-12 lg:col-span-6">
@@ -1310,65 +1356,56 @@ const BundlesPageClient: React.FC = () => {
                   <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                     <div className="max-h-[70vh] overflow-y-auto">
                       <table className="w-full text-sm">
-                        
-                      <thead className="bg-slate-100 sticky top-0 z-10">
+                        <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
                             <th className="px-3 py-3 text-left font-bold text-slate-800">Book</th>
                             <th className="px-2 py-3 text-center font-bold text-slate-800 w-12">+</th>
                           </tr>
                         </thead>
 
-                        
                         <tbody>
                           {flattenedAvailability.map((b) => {
                             const bookProd = bookProductByBookId.get(Number(b.book_id));
-                            const already = (active?.items || []).some((it) => num(it.product_id) === num(bookProd?.id));
+                            const already = (active?.items || []).some(
+                              (it) => num(it.product_id) === num(bookProd?.id)
+                            );
                             const canAdd = !!activeId && !!bookProd?.id && !already;
 
-                            const metaLine = [b.class_name, b.subject, b.code].filter(Boolean).join(" • ");
+                            return (
+                              <tr key={`av:${b.book_id}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                                <td className="px-3 py-3">
+                                  <div className="font-semibold text-slate-900 truncate">{b.title}</div>
+                                </td>
 
-                           return (
-                                <tr
-                                  key={`av:${b.book_id}`}
-                                  className="border-b border-slate-100 hover:bg-slate-50 transition"
-                                >
-                                  {/* Book name */}
-                                  <td className="px-3 py-3">
-                                    <div className="font-semibold text-slate-900 truncate">{b.title}</div>
-                                  </td>
-
-                                  {/* + Button */}
-                                  <td className="px-2 py-3 text-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => addSchoolBookToKit(Number(b.book_id))}
-                                      disabled={!canAdd}
-                                      className={`inline-flex items-center justify-center w-9 h-9 rounded-xl border transition ${
-                                        !activeId
-                                          ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                                          : already
-                                          ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
-                                          : !bookProd?.id
-                                          ? "border-rose-200 bg-rose-50 text-rose-800 cursor-not-allowed"
-                                          : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
-                                      }`}
-                                      title={
-                                        !activeId
-                                          ? "Select bundle first"
-                                          : already
-                                          ? "Already added"
-                                          : !bookProd?.id
-                                          ? "No BOOK product"
-                                          : "Add"
-                                      }
-                                    >
-                                      {already ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-
-
+                                <td className="px-2 py-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => addSchoolBookToKit(Number(b.book_id))}
+                                    disabled={!canAdd}
+                                    className={`inline-flex items-center justify-center w-9 h-9 rounded-xl border transition ${
+                                      !activeId
+                                        ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
+                                        : already
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
+                                        : !bookProd?.id
+                                        ? "border-rose-200 bg-rose-50 text-rose-800 cursor-not-allowed"
+                                        : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
+                                    }`}
+                                    title={
+                                      !activeId
+                                        ? "Select bundle first"
+                                        : already
+                                        ? "Already added"
+                                        : !bookProd?.id
+                                        ? "No BOOK product"
+                                        : "Add"
+                                    }
+                                  >
+                                    {already ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
                           })}
                         </tbody>
                       </table>
@@ -1382,43 +1419,28 @@ const BundlesPageClient: React.FC = () => {
               </>
             ) : (
               <>
-                {/* Products controls */}
-                <div className="mt-3 grid grid-cols-12 gap-2">
-                  <div className="col-span-8">
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                      <input
-                        className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
-                          pickerQ ? "pr-10" : "pr-4"
-                        }`}
-                        placeholder="Title / name / subject / code…"
-                        value={pickerQ}
-                        onChange={(e) => setPickerQ(e.target.value)}
-                      />
-                      {pickerQ && (
-                        <button
-                          type="button"
-                          onClick={() => setPickerQ("")}
-                          className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="col-span-4">
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Type</label>
-                    <select
-                      className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      value={pickerType}
-                      onChange={(e) => setPickerType(e.target.value as any)}
-                    >
-                      <option value="ALL">All</option>
-                      <option value="BOOK">Books</option>
-                      <option value="MATERIAL">Material</option>
-                    </select>
+                {/* Extras = DIRECT PURCHASED items only */}
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                    <input
+                      className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                        pickerQ ? "pr-10" : "pr-4"
+                      }`}
+                      placeholder="Search direct purchased items…"
+                      value={pickerQ}
+                      onChange={(e) => setPickerQ(e.target.value)}
+                    />
+                    {pickerQ && (
+                      <button
+                        type="button"
+                        onClick={() => setPickerQ("")}
+                        className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1430,7 +1452,10 @@ const BundlesPageClient: React.FC = () => {
                   </div>
                 ) : filteredProductRows.length === 0 ? (
                   <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                    No products.
+                    No direct purchased items found.
+                    <div className="text-xs text-slate-500 mt-1">
+                      Add some direct purchase receipts first (extras are built from direct purchases).
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
@@ -1493,7 +1518,7 @@ const BundlesPageClient: React.FC = () => {
                 )}
 
                 <div className="mt-3 text-xs text-slate-500">
-                  Use “Extra Products” for stationery / additional items. Use “School Books” for requirement-wise books.
+                  “Extra Products” shows only <b>Direct Purchased</b> items (not requirement books).
                 </div>
               </>
             )}

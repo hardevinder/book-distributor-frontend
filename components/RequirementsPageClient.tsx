@@ -1248,7 +1248,8 @@ const RequirementsPageClient: React.FC = () => {
   const currentSupplierValueMain = String((form.supplier_name || form.publisher_name) ?? "").trim();
   const currentSupplierValueEdit = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
   const currentPublisherValueMain = String(form.publisher_name ?? "").trim();
-    const currentPublisherValueEdit = String(editForm.publisher_name ?? "").trim();
+  const currentPublisherValueEdit = String(editForm.publisher_name ?? "").trim();
+
 
   const publisherOptions = useMemo(() => {
     const list = uniquePublishers
@@ -1352,161 +1353,164 @@ const RequirementsPageClient: React.FC = () => {
   }, [requirements]);
 
   // ⬇️ Part 4 continues with full JSX return (main UI + edit modal + toast + styles)
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
-      {/* Animated Background Elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000"></div>
+return (
+  <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 relative">
+    {/* Animated Background Elements */}
+    <div className="fixed inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob" />
+      <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000" />
+      <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000" />
+    </div>
+
+    {/* Top bar */}
+    <header className="relative z-10 flex items-center justify-between px-4 sm:px-6 py-3 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-lg">
+      <div className="font-bold flex items-center gap-3">
+        <Link
+          href="/"
+          className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors text-sm"
+        >
+          <ChevronLeft className="w-5 h-5" />
+          <span className="hidden sm:inline">Back to Dashboard</span>
+          <span className="sm:hidden">Back</span>
+        </Link>
       </div>
 
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-3 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-lg">
-        <div className="font-bold flex items-center gap-3">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors text-sm"
-          >
-            <ChevronLeft className="w-5 h-5" />
-            <span>Back to Dashboard</span>
-          </Link>
+      <div className="font-bold flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
+          <BookOpen className="w-4 h-4" />
         </div>
-
-        <div className="font-bold flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg">
-            <BookOpen className="w-4 h-4" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm sm:text-base tracking-tight">School Book Requirements</span>
-            <span className="text-[11px] text-slate-500 font-medium">
-              School-wise & class-wise requirement entry
-            </span>
-          </div>
+        <div className="hidden sm:flex flex-col">
+          <span className="text-sm sm:text-base tracking-tight">School Book Requirements</span>
+          <span className="text-[11px] text-slate-500 font-medium">
+            School-wise & class-wise requirement entry
+          </span>
         </div>
+      </div>
 
-        <div className="flex items-center gap-4 text-sm">
-          <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800 text-xs sm:text-sm">{user?.name || "User"}</span>
-            {user?.role && (
-              <span className="text-[10px] rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2 py-0.5 border border-indigo-200 text-indigo-700 font-medium">
-                {user.role}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
-
-      <main className="relative z-10 p-4 lg:p-6 space-y-4">
-        {/* Current school strip */}
-        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-xl px-4 py-2 flex items-center justify-between text-[11px] sm:text-xs shadow-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">Current school:</span>
-            <span className="text-slate-900 font-medium">
-              {currentSchoolName ? currentSchoolName : "Not locked. You can still select school in form below."}
-            </span>
-          </div>
-          {currentSchoolName && (
-            <span className="text-slate-500 hidden sm:block">
-              Keep changing Book / Copies and click Add to List. Finally, use Save All on the right side.
+      <div className="flex items-center gap-3 sm:gap-4 text-sm">
+        <div className="hidden sm:flex flex-col items-end">
+          <span className="font-semibold text-slate-800 text-xs sm:text-sm">{user?.name || "User"}</span>
+          {user?.role && (
+            <span className="text-[10px] rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2 py-0.5 border border-indigo-200 text-indigo-700 font-medium">
+              {user.role}
             </span>
           )}
-        </section>
+        </div>
+        <button
+          onClick={logout}
+          className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
+        >
+          Logout
+        </button>
+      </div>
+    </header>
 
-        {/* Error alert */}
-        {error && (
-          <section>
-            <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs sm:text-sm text-red-700 flex items-center gap-2">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">!</div>
-              <span>{error}</span>
-            </div>
-          </section>
+    <main className="relative z-10 p-3 sm:p-4 lg:p-6 space-y-4">
+      {/* Current school strip */}
+      <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-xl px-4 py-2 flex items-center justify-between text-[11px] sm:text-xs shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-700">Current school:</span>
+          <span className="text-slate-900 font-medium">
+            {currentSchoolName ? currentSchoolName : "Not locked. You can still select school in form below."}
+          </span>
+        </div>
+        {currentSchoolName && (
+          <span className="text-slate-500 hidden sm:block">
+            Keep changing Book / Copies and click Add to List. Finally, use Save All on the right side.
+          </span>
         )}
+      </section>
 
-        {/* MAIN: BUFFER FORM */}
-        <section className="space-y-4">
-          <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex flex-col gap-0.5">
-                <h3 className="text-sm sm:text-base font-semibold text-slate-800">Add Requirements (buffer)</h3>
-                <p className="text-[11px] text-slate-500">
-                  Select School, Class, Book, Publisher, Supplier & Copies. Use Add to List to add multiple books.
-                </p>
-              </div>
+      {/* Error alert */}
+      {error && (
+        <section>
+          <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm text-xs sm:text-sm text-red-700 flex items-center gap-2">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600 font-bold">
+              !
             </div>
+            <span>{error}</span>
+          </div>
+        </section>
+      )}
 
-            <div className="flex flex-col lg:flex-row gap-4">
-              <div className="w-full lg:w-5/12 space-y-3 text-[11px] sm:text-xs">
-                {/* School (dropdown + add) */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">School</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      name="school_name"
-                      value={form.school_name}
-                      onChange={handleChange}
-                      disabled={isSchoolLockedToFilter}
-                      className={`w-full border rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
-                        isSchoolLockedToFilter ? "bg-slate-100 text-slate-500" : "border-slate-300"
-                      }`}
-                    >
-                      <option value="">
-                        {isSchoolLockedToFilter ? "Using selected school" : "Select school"}
-                      </option>
-                      {uniqueSchools.map((s) => (
-                        <option key={`sch-${s.id}`} value={s.name}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+      {/* MAIN: BUFFER FORM */}
+      <section className="space-y-4">
+        <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-col gap-0.5">
+              <h3 className="text-sm sm:text-base font-semibold text-slate-800">Add Requirements (buffer)</h3>
+              <p className="text-[11px] text-slate-500">
+                Select School, Class, Book, Publisher, Supplier & Copies. Use Add to List to add multiple books.
+              </p>
+            </div>
+          </div>
 
-                    <button
-                      type="button"
-                      disabled={isSchoolLockedToFilter}
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold disabled:opacity-50"
-                      title="Add new school"
-                      onClick={async () => {
-                        const nm = await promptAddName("Add School", "Enter school name");
-                        if (!nm) return;
-                        try {
-                          const created = await createSchoolNow(nm);
-                          setForm((prev) => ({ ...prev, school_name: created.name }));
-                          setToast({ message: `School added: ${created.name}`, type: "success" });
-                          await fetchSchools();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
-                  </div>
-                </div>
-
-                {/* Class */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Class</label>
-                  <input
-                    list="classOptions"
-                    name="class_name"
-                    value={form.class_name}
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="w-full lg:w-5/12 space-y-3 text-[11px] sm:text-xs">
+              {/* School (dropdown + add) */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">School</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    name="school_name"
+                    value={form.school_name}
                     onChange={handleChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select class"
-                  />
-                </div>
-                {/* Publisher (searchable dropdown + add) */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Publisher</label>
+                    disabled={isSchoolLockedToFilter}
+                    className={`w-full border rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${
+                      isSchoolLockedToFilter ? "bg-slate-100 text-slate-500" : "border-slate-300"
+                    }`}
+                  >
+                    <option value="">{isSchoolLockedToFilter ? "Using selected school" : "Select school"}</option>
+                    {uniqueSchools.map((s) => (
+                      <option key={`sch-${s.id}`} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
 
-                  <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSchoolLockedToFilter}
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold disabled:opacity-50"
+                    title="Add new school"
+                    onClick={async () => {
+                      const nm = await promptAddName("Add School", "Enter school name");
+                      if (!nm) return;
+                      try {
+                        const created = await createSchoolNow(nm);
+                        setForm((prev) => ({ ...prev, school_name: created.name }));
+                        setToast({ message: `School added: ${created.name}`, type: "success" });
+                        await fetchSchools();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
+                </div>
+              </div>
+
+              {/* Class */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Class</label>
+                <input
+                  list="classOptions"
+                  name="class_name"
+                  value={form.class_name}
+                  onChange={handleChange}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Type or select class"
+                />
+              </div>
+
+              {/* Publisher (searchable dropdown + add) */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Publisher</label>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9999] w-full">
                     <SearchableSelect
                       value={currentPublisherValueMain || ""}
                       options={[
@@ -1525,7 +1529,6 @@ const RequirementsPageClient: React.FC = () => {
                       placeholder="Search publisher..."
                       onChange={(v) => {
                         const val = String(v ?? "");
-                        // keep your existing behavior: default supplier = publisher if supplier not touched
                         if (!supplierTouched && val.trim()) {
                           setForm((prev) => ({ ...prev, publisher_name: val, supplier_name: val }));
                         } else {
@@ -1533,59 +1536,60 @@ const RequirementsPageClient: React.FC = () => {
                         }
                       }}
                     />
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new publisher (with phone/email/address + auto supplier)"
-                      onClick={async () => {
-                        const pub = await promptAddPublisher();
-                        if (!pub) return;
-
-                        try {
-                          const createdPub = await createPublisherNow(pub);
-
-                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
-                          const createdSup = existingSup
-                            ? existingSup
-                            : await createSupplierNow({
-                                name: createdPub.name,
-                                phone: createdPub.phone || undefined,
-                                email: createdPub.email || undefined,
-                                address: createdPub.address || undefined,
-                              });
-
-                          setForm((prev) => ({
-                            ...prev,
-                            publisher_name: createdPub.name,
-                            supplier_name: createdSup.name,
-                          }));
-                          setSupplierTouched(true);
-
-                          setToast({
-                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
-                            type: "success",
-                          });
-
-                          await fetchPublishers();
-                          await fetchSuppliers();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
                   </div>
+
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold shrink-0"
+                    title="Add new publisher (with phone/email/address + auto supplier)"
+                    onClick={async () => {
+                      const pub = await promptAddPublisher();
+                      if (!pub) return;
+
+                      try {
+                        const createdPub = await createPublisherNow(pub);
+
+                        const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
+                        const createdSup = existingSup
+                          ? existingSup
+                          : await createSupplierNow({
+                              name: createdPub.name,
+                              phone: createdPub.phone || undefined,
+                              email: createdPub.email || undefined,
+                              address: createdPub.address || undefined,
+                            });
+
+                        setForm((prev) => ({
+                          ...prev,
+                          publisher_name: createdPub.name,
+                          supplier_name: createdSup.name,
+                        }));
+                        setSupplierTouched(true);
+
+                        setToast({
+                          message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
+                          type: "success",
+                        });
+
+                        await fetchPublishers();
+                        await fetchSuppliers();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
                 </div>
+              </div>
 
+              {/* Book (searchable dropdown + add) */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Book</label>
 
-                             {/* Book (searchable dropdown + add) */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Book</label>
-
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9998] w-full">
                     <SearchableSelect
                       value={currentBookValueMain || ""}
                       options={bookOptionsMain}
@@ -1595,41 +1599,42 @@ const RequirementsPageClient: React.FC = () => {
                         setForm((prev) => ({ ...prev, book_title: val }));
                       }}
                     />
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new book"
-                      onClick={async () => {
-                        const nm = await promptAddName("Add Book", "Enter book title");
-                        if (!nm) return;
-                        try {
-                          const created = await createBookNow(nm, {
-                            publisher_name: form.publisher_name,
-                            class_name: form.class_name,
-                          });
-                          setForm((prev) => ({ ...prev, book_title: created.title }));
-                          setToast({ message: `Book added: ${created.title}`, type: "success" });
-                          await fetchBooks();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
                   </div>
 
-                  <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold shrink-0"
+                    title="Add new book"
+                    onClick={async () => {
+                      const nm = await promptAddName("Add Book", "Enter book title");
+                      if (!nm) return;
+                      try {
+                        const created = await createBookNow(nm, {
+                          publisher_name: form.publisher_name,
+                          class_name: form.class_name,
+                        });
+                        setForm((prev) => ({ ...prev, book_title: created.title }));
+                        setToast({ message: `Book added: ${created.title}`, type: "success" });
+                        await fetchBooks();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
                 </div>
 
+                <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
+              </div>
 
-                {/* Supplier (dropdown + add) */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Supplier</label>
+              {/* Supplier (dropdown + add) */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Supplier</label>
 
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9997] w-full">
                     <SearchableSelect
                       value={currentSupplierValueMain || ""}
                       options={[
@@ -1652,728 +1657,689 @@ const RequirementsPageClient: React.FC = () => {
                         setSupplierTouched(!!val.trim());
                       }}
                     />
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new supplier"
-                      onClick={async () => {
-                        const sup = await promptAddSupplier();
-                        if (!sup) return;
-
-                        try {
-                          const created = await createSupplierNow(sup);
-
-                          setForm((prev) => ({ ...prev, supplier_name: created.name }));
-                          setSupplierTouched(true);
-
-                          await fetchSuppliers();
-
-                          setToast({ message: `Supplier added: ${created.name}`, type: "success" });
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
                   </div>
-
-                  <p className="text-[10px] text-slate-500">Default supplier = publisher. If missing, click ➕ to add.</p>
-                </div>
-
-                {/* Session + Copies */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">Session</label>
-                    <select
-                      name="academic_session"
-                      value={form.academic_session}
-                      onChange={handleChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="">Select session</option>
-                      {SESSION_OPTIONS.map((session) => (
-                        <option key={session} value={session}>
-                          {session}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">Required copies</label>
-                    <input
-                      name="required_copies"
-                      type="number"
-                      min={0}
-                      value={form.required_copies}
-                      onChange={handleChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-
-                {/* Status + Lock */}
-                <div className="grid grid-cols-2 gap-3 items-center">
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700">Status</label>
-                    <select
-                      name="status"
-                      value={form.status}
-                      onChange={handleChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="draft">Draft</option>
-                      <option value="confirmed">Confirmed</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2 mt-5">
-                    <input
-                      type="checkbox"
-                      name="is_locked"
-                      checked={form.is_locked}
-                      onChange={handleChange}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
-                  </div>
-                </div>
-
-                {/* Buttons */}
-                <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={handleAddPending}
-                    className="inline-flex items-center justify-center flex-1 h-9 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
-                  >
-                    Add to List
-                  </button>
 
                   <button
                     type="button"
-                    onClick={resetMainForm}
-                    className="inline-flex items-center justify-center h-9 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
-                  >
-                    Clear
-                  </button>
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold shrink-0"
+                    title="Add new supplier"
+                    onClick={async () => {
+                      const sup = await promptAddSupplier();
+                      if (!sup) return;
 
-                  {pendingItems.length > 0 && (
-                    <span className="text-[11px] text-slate-500">
-                      {pendingItems.length} book(s) in list. Use{" "}
-                      <span className="font-semibold text-emerald-600">Save All</span> on the Selected Books panel.
-                    </span>
-                  )}
+                      try {
+                        const created = await createSupplierNow(sup);
+
+                        setForm((prev) => ({ ...prev, supplier_name: created.name }));
+                        setSupplierTouched(true);
+
+                        await fetchSuppliers();
+
+                        setToast({ message: `Supplier added: ${created.name}`, type: "success" });
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
+                </div>
+
+                <p className="text-[10px] text-slate-500">Default supplier = publisher. If missing, click ➕ to add.</p>
+              </div>
+
+              {/* Session + Copies */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Session</label>
+                  <select
+                    name="academic_session"
+                    value={form.academic_session}
+                    onChange={handleChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="">Select session</option>
+                    {SESSION_OPTIONS.map((session) => (
+                      <option key={session} value={session}>
+                        {session}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Required copies</label>
+                  <input
+                    name="required_copies"
+                    type="number"
+                    min={0}
+                    value={form.required_copies}
+                    onChange={handleChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder="0"
+                  />
                 </div>
               </div>
 
-              {/* Pending panel */}
-              {pendingItems.length > 0 && (
-                <div className="w-full lg:w-7/12">
-                  <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">
-                          Selected Books (Pending)
-                        </h4>
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
-                          {pendingItems.length} item{pendingItems.length > 1 ? "s" : ""}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={loading || pendingItems.length === 0}
-                          onClick={saveAllPending}
-                          className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[10px] sm:text-[11px] font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
-                        >
-                          {loading ? "Saving..." : `Save All (${pendingItems.length})`}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={loading || pendingItems.length === 0}
-                          onClick={handleClearPending}
-                          className="hidden sm:inline-flex items-center justify-center h-8 px-2.5 rounded-full border border-slate-300 bg-white text-[10px] text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                        >
-                          Clear List
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="overflow-auto max-h-60 rounded-lg border border-slate-200/80 bg-slate-50">
-                      <table className="w-full text-[10px] sm:text-[11px] border-collapse">
-                        <thead className="bg-slate-100 sticky top-0 z-10">
-                          <tr>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[60px]">Class</th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Book</th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">Pub</th>
-                            <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Sup</th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Sess</th>
-                            <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[50px]">Copies</th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Status</th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">Lock</th>
-                            <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">Del</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pendingItems.map((item) => (
-                            <tr key={item.tempId} className="bg-white">
-                              <td className="px-1 py-1 border-b border-slate-200 truncate">{item.class_name || "-"}</td>
-                              <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="font-semibold truncate inline-block max-w-[140px]">
-                                  {item.book_title}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="truncate inline-block max-w-[100px] text-slate-700">
-                                  {item.publisher_name || "-"}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200">
-                                <span className="truncate inline-block max-w-[140px] text-slate-700">
-                                  {item.supplier_name || "-"}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200 text-center">
-                                {item.academic_session || "-"}
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200 text-right">
-                                {item.required_copies || "0"}
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200 text-center">
-                                <span
-                                  className={`inline-flex items-center px-1 py-0.5 rounded-full text-[8px] ${
-                                    item.status === "confirmed"
-                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                      : "bg-amber-50 text-amber-700 border border-amber-200"
-                                  }`}
-                                >
-                                  {item.status === "confirmed" ? "Conf" : "Draft"}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200 text-center">
-                                <span
-                                  className={`inline-flex items-center px-1 py-0.5 rounded-full text-[8px] ${
-                                    item.is_locked
-                                      ? "bg-slate-900 text-white"
-                                      : "bg-slate-50 text-slate-600 border border-slate-200"
-                                  }`}
-                                >
-                                  {item.is_locked ? "L" : "O"}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1 border-b border-slate-200 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemovePending(item.tempId)}
-                                  className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow hover:shadow-md hover:scale-110 transition-all"
-                                >
-                                  <Trash2 className="w-2.5 h-2.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+              {/* Status + Lock */}
+              <div className="grid grid-cols-2 gap-3 items-center">
+                <div className="space-y-1">
+                  <label className="block font-medium text-slate-700">Status</label>
+                  <select
+                    name="status"
+                    value={form.status}
+                    onChange={handleChange}
+                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  >
+                    <option value="draft">Draft</option>
+                    <option value="confirmed">Confirmed</option>
+                  </select>
                 </div>
-              )}
+                <div className="flex items-center gap-2 mt-5">
+                  <input
+                    type="checkbox"
+                    name="is_locked"
+                    checked={form.is_locked}
+                    onChange={handleChange}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
+                </div>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handleAddPending}
+                  className="inline-flex items-center justify-center flex-1 h-9 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                >
+                  Add to List
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetMainForm}
+                  className="inline-flex items-center justify-center h-9 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
+                >
+                  Clear
+                </button>
+
+                {pendingItems.length > 0 && (
+                  <span className="text-[11px] text-slate-500">
+                    {pendingItems.length} book(s) in list. Use{" "}
+                    <span className="font-semibold text-emerald-600">Save All</span> on the Selected Books panel.
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* class datalist only */}
-            <datalist id="classOptions">
-              {classes.map((c) => (
-                <option key={`class-${c.id}`} value={c.class_name} />
-              ))}
-            </datalist>
+            {/* Pending panel */}
+            {pendingItems.length > 0 && (
+              <div className="w-full lg:w-7/12">
+                <div className="border-t lg:border-t-0 lg:border-l border-slate-200 pt-3 lg:pl-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-[11px] sm:text-xs font-semibold text-slate-700">
+                        Selected Books (Pending)
+                      </h4>
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 border border-slate-200">
+                        {pendingItems.length} item{pendingItems.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={loading || pendingItems.length === 0}
+                        onClick={saveAllPending}
+                        className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[10px] sm:text-[11px] font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                      >
+                        {loading ? "Saving..." : `Save All (${pendingItems.length})`}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={loading || pendingItems.length === 0}
+                        onClick={handleClearPending}
+                        className="hidden sm:inline-flex items-center justify-center h-8 px-2.5 rounded-full border border-slate-300 bg-white text-[10px] text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                      >
+                        Clear List
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="overflow-auto max-h-60 rounded-lg border border-slate-200/80 bg-slate-50">
+                    <table className="w-full text-[10px] sm:text-[11px] border-collapse">
+                      <thead className="bg-slate-100 sticky top-0 z-10">
+                        <tr>
+                          <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[60px]">Class</th>
+                          <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Book</th>
+                          <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[90px]">Pub</th>
+                          <th className="px-1 py-1 text-left border-b border-slate-200 min-w-[120px]">Sup</th>
+                          <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Sess</th>
+                          <th className="px-1 py-1 text-right border-b border-slate-200 min-w-[50px]">Copies</th>
+                          <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[60px]">Status</th>
+                          <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[50px]">Lock</th>
+                          <th className="px-1 py-1 text-center border-b border-slate-200 min-w-[40px]">Del</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingItems.map((item) => (
+                          <tr key={item.tempId} className="bg-white">
+                            <td className="px-1 py-1 border-b border-slate-200 truncate">{item.class_name || "-"}</td>
+                            <td className="px-1 py-1 border-b border-slate-200">
+                              <span className="font-semibold truncate inline-block max-w-[140px]">
+                                {item.book_title}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200">
+                              <span className="truncate inline-block max-w-[100px] text-slate-700">
+                                {item.publisher_name || "-"}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200">
+                              <span className="truncate inline-block max-w-[140px] text-slate-700">
+                                {item.supplier_name || "-"}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200 text-center">
+                              {item.academic_session || "-"}
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200 text-right">
+                              {item.required_copies || "0"}
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200 text-center">
+                              <span
+                                className={`inline-flex items-center px-1 py-0.5 rounded-full text-[8px] ${
+                                  item.status === "confirmed"
+                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    : "bg-amber-50 text-amber-700 border border-amber-200"
+                                }`}
+                              >
+                                {item.status === "confirmed" ? "Conf" : "Draft"}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200 text-center">
+                              <span
+                                className={`inline-flex items-center px-1 py-0.5 rounded-full text-[8px] ${
+                                  item.is_locked
+                                    ? "bg-slate-900 text-white"
+                                    : "bg-slate-50 text-slate-600 border border-slate-200"
+                                }`}
+                              >
+                                {item.is_locked ? "L" : "O"}
+                              </span>
+                            </td>
+                            <td className="px-1 py-1 border-b border-slate-200 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePending(item.tempId)}
+                                className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow hover:shadow-md hover:scale-110 transition-all"
+                                aria-label="Remove pending item"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* FILTERS + EXCEL */}
-          <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-md px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow">
-                <Sparkles className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold text-slate-800">Filters & Excel</span>
-                <span className="text-[11px] text-slate-500">
-                  Filter requirements below or import / export Excel / print PDF.
-                </span>
-              </div>
+          {/* class datalist only */}
+          <datalist id="classOptions">
+            {classes.map((c) => (
+              <option key={`class-${c.id}`} value={c.class_name} />
+            ))}
+          </datalist>
+        </div>
+
+        {/* FILTERS + EXCEL */}
+        <section className="bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-2xl shadow-md px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow">
+              <Sparkles className="w-3.5 h-3.5" />
             </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-800">Filters & Excel</span>
+              <span className="text-[11px] text-slate-500">
+                Filter requirements below or import / export Excel / print PDF.
+              </span>
+            </div>
+          </div>
 
-            <div className="flex flex-col gap-2 text-xs sm:text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={handleSearchChange}
-                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm min-w-[180px] bg-white shadow-sm"
-                  placeholder="Search by school / book..."
-                />
+          <div className="flex flex-col gap-2 text-xs sm:text-sm">
+            <div className="flex flex-wrap items-center gap-2 overflow-visible">
+              <input
+                type="text"
+                value={search}
+                onChange={handleSearchChange}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm min-w-[180px] bg-white shadow-sm"
+                placeholder="Search by school / book..."
+              />
 
+              <select
+                value={filterSchoolId}
+                onChange={handleSchoolFilterChange}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[180px] shadow-sm"
+              >
+                <option value="">All schools / Select school</option>
+                {schools.map((s) => (
+                  <option key={`fsch-${s.id}`} value={s.id.toString()}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={filterSession}
+                onChange={handleSessionFilterChange}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
+              >
+                <option value="">All sessions</option>
+                {SESSION_OPTIONS.map((session) => (
+                  <option key={session} value={session}>
+                    {session}
+                  </option>
+                ))}
+              </select>
+
+              {/* Status */}
+              <select
+                value={filterStatus}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setFilterStatus(v);
+
+                  if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+                  searchTimeoutRef.current = setTimeout(() => {
+                    fetchRequirements(search, filterSchoolId, filterSession, v, filterClass, filterPublisher);
+                  }, 300);
+                }}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[140px] shadow-sm"
+              >
+                <option value="">All status</option>
+                <option value="draft">Draft</option>
+                <option value="confirmed">Confirmed</option>
+              </select>
+
+              {/* Class */}
+              <select
+                value={filterClass}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setFilterClass(v);
+                  fetchRequirements(search, filterSchoolId, filterSession, filterStatus, v, filterPublisher);
+                }}
+                className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
+              >
+                <option value="">All classes</option>
+                {classes.map((c) => (
+                  <option key={c.id} value={c.class_name}>
+                    {c.class_name}
+                  </option>
+                ))}
+              </select>
+
+            {/* Publisher (FILTER - normal dropdown) */}
                 <select
-                  value={filterSchoolId}
-                  onChange={handleSchoolFilterChange}
-                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[180px] shadow-sm"
-                >
-                  <option value="">All schools / Select school</option>
-                  {schools.map((s) => (
-                    <option key={`fsch-${s.id}`} value={s.id.toString()}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={filterSession}
-                  onChange={handleSessionFilterChange}
-                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
-                >
-                  <option value="">All sessions</option>
-                  {SESSION_OPTIONS.map((session) => (
-                    <option key={session} value={session}>
-                      {session}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Status */}
-                <select
-                  value={filterStatus}
+                  value={filterPublisher}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    setFilterStatus(v);
+                    const val = e.target.value;
+                    setFilterPublisher(val);
 
                     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
                     searchTimeoutRef.current = setTimeout(() => {
-                      fetchRequirements(search, filterSchoolId, filterSession, v, filterClass, filterPublisher);
-                    }, 300);
+                      fetchRequirements(search, filterSchoolId, filterSession, filterStatus, filterClass, val);
+                    }, 250);
                   }}
-                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[140px] shadow-sm"
+                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[180px] shadow-sm"
                 >
-                  <option value="">All status</option>
-                  <option value="draft">Draft</option>
-                  <option value="confirmed">Confirmed</option>
+                  <option value="">All publishers</option>
+                  {uniquePublishers
+                    .filter((p) => String(p?.name ?? "").trim())
+                    .map((p) => (
+                      <option key={`fp-${p.id}`} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
                 </select>
 
-                {/* Class */}
-                <select
-                  value={filterClass}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setFilterClass(v);
-                    fetchRequirements(search, filterSchoolId, filterSession, filterStatus, v, filterPublisher);
-                  }}
-                  className="px-3 py-1.5 border border-slate-300 rounded-full text-xs sm:text-sm bg-white min-w-[120px] shadow-sm"
-                >
-                  <option value="">All classes</option>
-                  {classes.map((c) => (
-                    <option key={c.id} value={c.class_name}>
-                      {c.class_name}
-                    </option>
-                  ))}
-                </select>
-
-                            {/* Publisher (searchable) */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Publisher</label>
-
-                  <div className="flex items-center gap-2">
-                    <SearchableSelect
-                      value={currentPublisherValueEdit || ""}
-                      options={publisherOptions}
-                      placeholder="Search publisher..."
-                      onChange={(v) => {
-                        const val = String(v ?? "");
-                        // ✅ keep your existing behavior: default supplier = publisher if not touched
-                        if (!editSupplierTouched && val.trim()) {
-                          setEditForm((prev) => ({ ...prev, publisher_name: val, supplier_name: val }));
-                        } else {
-                          setEditForm((prev) => ({ ...prev, publisher_name: val }));
-                        }
-                      }}
-                    />
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new publisher (with phone/email/address + auto supplier)"
-                      onClick={async () => {
-                        const pub = await promptAddPublisher();
-                        if (!pub) return;
-
-                        try {
-                          const createdPub = await createPublisherNow(pub);
-
-                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
-                          const createdSup = existingSup
-                            ? existingSup
-                            : await createSupplierNow({
-                                name: createdPub.name,
-                                phone: createdPub.phone || undefined,
-                                email: createdPub.email || undefined,
-                                address: createdPub.address || undefined,
-                              });
-
-                          setEditForm((prev) => ({
-                            ...prev,
-                            publisher_name: createdPub.name,
-                            supplier_name: createdSup.name,
-                          }));
-                          setEditSupplierTouched(true);
-
-                          setToast({
-                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
-                            type: "success",
-                          });
-
-                          await fetchPublishers();
-                          await fetchSuppliers();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                ref={importInputRef}
-                onChange={handleImportFileChange}
-                className="hidden"
-              />
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={triggerImport}
-                  disabled={importLoading}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{importLoading ? "Importing..." : "Import Excel"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  disabled={exportLoading}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
-                </button>
-
-                {/* Confirm Drafts */}
-                <button
-                  type="button"
-                  disabled={loading || requirements.filter((r) => r.status === "draft").length === 0}
-                  onClick={() => {
-                    const ids = requirements.filter((r) => r.status === "draft").map((r) => r.id);
-                    confirmDraftByIds(ids);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-                >
-                  Confirm Drafts
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePrintPdf}
-                  disabled={printLoading || !filterSchoolId}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
-                  title={filterSchoolId ? "Open printable PDF in new tab" : "Select a school first to print PDF"}
-                >
-                  <Download className="w-3.5 h-3.5 rotate-90" />
-                  <span>{printLoading ? "Generating..." : "Print PDF"}</span>
-                </button>
-              </div>
-            </div>
-          </section>
-
-          {/* LISTING */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-indigo-500" />
-                Requirements ({requirements.length})
-              </h2>
-              <span className="text-[11px] text-slate-500 hidden sm:block">Tip: click any row to edit.</span>
             </div>
 
-            {listLoading ? (
-              <div className="flex items-center justify-center py-8 text-xs sm:text-sm text-slate-600">
-                <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
-                Loading requirements...
-              </div>
-            ) : requirements.length === 0 ? (
-              <div className="text-xs sm:text-sm text-slate-500 py-3 mb-2">
-                No requirements yet. Select a school & use the form above to add your first record.
-              </div>
-            ) : null}
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              ref={importInputRef}
+              onChange={handleImportFileChange}
+              className="hidden"
+            />
 
-            <div className="overflow-auto max-h-[520px] rounded-xl border border-slate-200/80 shadow-inner">
-              <table className="w-full text-[11px] sm:text-sm border-collapse bg-white">
-                <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-20">
-                  <tr>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      School
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Class
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Book
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Publisher
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
-                      Supplier
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                      Session
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
-                      Copies
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                      Status
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                      Lock
-                    </th>
-                    <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
+            <div className="flex flex-wrap items-center gap-2 overflow-visible">
+              <button
+                type="button"
+                onClick={triggerImport}
+                disabled={importLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>{importLoading ? "Importing..." : "Import Excel"}</span>
+              </button>
 
-                <tbody>
-                  {groupedRequirements.map((group) => (
-                    <React.Fragment key={`grp-${group.schoolName}`}>
-                      <tr className="bg-slate-50">
-                        <td
-                          colSpan={10}
-                          className="border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800"
-                        >
-                          <span className="inline-flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-indigo-500" />
-                            {group.schoolName}
-                            <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">
-                              ({group.items.length} item{group.items.length > 1 ? "s" : ""})
-                            </span>
-                          </span>
-                        </td>
-                      </tr>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={exportLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{exportLoading ? "Exporting..." : "Export Excel"}</span>
+              </button>
 
-                      {group.items.map((r) => (
-                        <tr
-                          key={r.id}
-                          onClick={() => handleEdit(r)}
-                          className="hover:bg-slate-50 transition-colors cursor-pointer"
-                          title="Click to edit"
-                          role="button"
-                        >
-                          <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="font-semibold truncate max-w-[220px] text-slate-400">—</div>
-                          </td>
+              {/* Confirm Drafts */}
+              <button
+                type="button"
+                disabled={loading || requirements.filter((r) => r.status === "draft").length === 0}
+                onClick={() => {
+                  const ids = requirements.filter((r) => r.status === "draft").map((r) => r.id);
+                  confirmDraftByIds(ids);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+              >
+                Confirm Drafts
+              </button>
 
-                          <td className="border-b border-slate-200 px-3 py-2 align-top text-slate-700">
-                            {r.class?.class_name || "-"}
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="font-semibold truncate max-w-[260px] text-slate-800">
-                              {r.book?.title || "-"}
-                            </div>
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
-                              {r.book?.publisher?.name || "-"}
-                            </div>
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
-                              {r.supplier?.name || "-"}
-                            </div>
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">
-                            {r.academic_session || "-"}
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">
-                            {formatNumber(r.required_copies)}
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
-                                r.status === "confirmed"
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                  : "bg-amber-50 text-amber-700 border border-amber-200"
-                              }`}
-                            >
-                              {r.status === "confirmed" ? "Confirmed" : "Draft"}
-                            </span>
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
-                            <span
-                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
-                                r.is_locked
-                                  ? "bg-slate-900 text-white"
-                                  : "bg-slate-50 text-slate-600 border border-slate-200"
-                              }`}
-                            >
-                              {r.is_locked ? "Locked" : "Open"}
-                            </span>
-                          </td>
-
-                          <td className="border-b border-slate-200 px-3 py-2 align-top">
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEdit(r);
-                                }}
-                                className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
-                                aria-label="Edit requirement"
-                                title="Edit"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDelete(r.id);
-                                }}
-                                disabled={deletingId === r.id}
-                                className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
-                                aria-label="Delete requirement"
-                                title="Delete"
-                              >
-                                {deletingId === r.id ? (
-                                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                )}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
+              <button
+                type="button"
+                onClick={handlePrintPdf}
+                disabled={printLoading || !filterSchoolId}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-xs sm:text-sm font-medium shadow-sm"
+                title={filterSchoolId ? "Open printable PDF in new tab" : "Select a school first to print PDF"}
+              >
+                <Download className="w-3.5 h-3.5 rotate-90" />
+                <span>{printLoading ? "Generating..." : "Print PDF"}</span>
+              </button>
             </div>
           </div>
         </section>
-      </main>
 
-      {/* ✅ EDIT MODAL */}
-      {editOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={closeEditModal} aria-hidden="true" />
+        {/* LISTING */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 sm:p-5 shadow-lg border border-slate-200/60">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-indigo-500" />
+              Requirements ({requirements.length})
+            </h2>
+            <span className="text-[11px] text-slate-500 hidden sm:block">Tip: click any row to edit.</span>
+          </div>
 
-          <div className="relative w-[95vw] max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-2xl border border-slate-200">
-            {/* header */}
-            <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-3 flex items-center justify-between">
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold text-slate-800">Edit Requirement</span>
-                <span className="text-[11px] text-slate-500">Same controls as main form (dropdown + ➕ add).</span>
-              </div>
-              <button
-                type="button"
-                onClick={closeEditModal}
-                className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50"
-                title="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          {listLoading ? (
+            <div className="flex items-center justify-center py-8 text-xs sm:text-sm text-slate-600">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
+              Loading requirements...
             </div>
+          ) : requirements.length === 0 ? (
+            <div className="text-xs sm:text-sm text-slate-500 py-3 mb-2">
+              No requirements yet. Select a school & use the form above to add your first record.
+            </div>
+          ) : null}
 
-            {/* body */}
-            <div className="p-4 space-y-3 text-[11px] sm:text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* School */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">School</label>
-                  <div className="flex items-center gap-2">
-                    <select
-                      name="school_name"
-                      value={editForm.school_name}
-                      onChange={handleEditChange}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    >
-                      <option value="">Select school</option>
-                      {uniqueSchools.map((s) => (
-                        <option key={`ed-sch-${s.id}`} value={s.name}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+          <div className="overflow-auto max-h-[520px] rounded-xl border border-slate-200/80 shadow-inner">
+            <table className="w-full text-[11px] sm:text-sm border-collapse bg-white">
+              <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-20">
+                <tr>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    School
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Class
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Book
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Publisher
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Supplier
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Session
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    Copies
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Status
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Lock
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-center font-semibold text-slate-700">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
 
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new school"
-                      onClick={async () => {
-                        const nm = await promptAddName("Add School", "Enter school name");
-                        if (!nm) return;
-                        try {
-                          const created = await createSchoolNow(nm);
-                          setEditForm((prev) => ({ ...prev, school_name: created.name }));
-                          setToast({ message: `School added: ${created.name}`, type: "success" });
-                          await fetchSchools();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
-                  </div>
-                </div>
+              <tbody>
+                {groupedRequirements.map((group) => (
+                  <React.Fragment key={`grp-${group.schoolName}`}>
+                    <tr className="bg-slate-50">
+                      <td
+                        colSpan={10}
+                        className="border-b border-slate-200 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-indigo-500" />
+                          {group.schoolName}
+                          <span className="text-[10px] sm:text-[11px] font-medium text-slate-500">
+                            ({group.items.length} item{group.items.length > 1 ? "s" : ""})
+                          </span>
+                        </span>
+                      </td>
+                    </tr>
 
-                {/* Class */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Class</label>
-                  <input
-                    list="classOptions"
-                    name="class_name"
-                    value={editForm.class_name}
+                    {group.items.map((r) => (
+                      <tr
+                        key={r.id}
+                        onClick={() => handleEdit(r)}
+                        className="hover:bg-slate-50 transition-colors cursor-pointer"
+                        title="Click to edit"
+                        role="button"
+                      >
+                        <td className="border-b border-slate-200 px-3 py-2 align-top">
+                          <div className="font-semibold truncate max-w-[220px] text-slate-400">—</div>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 align-top text-slate-700">
+                          {r.class?.class_name || "-"}
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 align-top">
+                          <div className="font-semibold truncate max-w-[260px] text-slate-800">
+                            {r.book?.title || "-"}
+                          </div>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 align-top">
+                          <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
+                            {r.book?.publisher?.name || "-"}
+                          </div>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 align-top">
+                          <div className="text-[11px] text-slate-700 truncate max-w-[160px]">
+                            {r.supplier?.name || "-"}
+                          </div>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 text-center align-top text-slate-700">
+                          {r.academic_session || "-"}
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 text-right align-top text-slate-800">
+                          {formatNumber(r.required_copies)}
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
+                              r.status === "confirmed"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : "bg-amber-50 text-amber-700 border border-amber-200"
+                            }`}
+                          >
+                            {r.status === "confirmed" ? "Confirmed" : "Draft"}
+                          </span>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 text-center align-top">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] ${
+                              r.is_locked
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-50 text-slate-600 border border-slate-200"
+                            }`}
+                          >
+                            {r.is_locked ? "Locked" : "Open"}
+                          </span>
+                        </td>
+
+                        <td className="border-b border-slate-200 px-3 py-2 align-top">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEdit(r);
+                              }}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all"
+                              aria-label="Edit requirement"
+                              title="Edit"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(r.id);
+                              }}
+                              disabled={deletingId === r.id}
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all disabled:opacity-60"
+                              aria-label="Delete requirement"
+                              title="Delete"
+                            >
+                              {deletingId === r.id ? (
+                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    {/* ✅ EDIT MODAL */}
+    {editOpen && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/40" onClick={closeEditModal} aria-hidden="true" />
+
+        <div className="relative w-[95vw] max-w-3xl max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-2xl border border-slate-200">
+          {/* header */}
+          <div className="sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-slate-800">Edit Requirement</span>
+              <span className="text-[11px] text-slate-500">Same controls as main form (dropdown + ➕ add).</span>
+            </div>
+            <button
+              type="button"
+              onClick={closeEditModal}
+              className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* body */}
+          <div className="p-4 space-y-3 text-[11px] sm:text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* School */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">School</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    name="school_name"
+                    value={editForm.school_name}
                     onChange={handleEditChange}
                     className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="Type or select class"
-                  />
-                </div>
+                  >
+                    <option value="">Select school</option>
+                    {uniqueSchools.map((s) => (
+                      <option key={`ed-sch-${s.id}`} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
 
-                {/* Publisher */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Publisher</label>
-                  <div className="flex items-center gap-2">
-                <SearchableSelect
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                    title="Add new school"
+                    onClick={async () => {
+                      const nm = await promptAddName("Add School", "Enter school name");
+                      if (!nm) return;
+                      try {
+                        const created = await createSchoolNow(nm);
+                        setEditForm((prev) => ({ ...prev, school_name: created.name }));
+                        setToast({ message: `School added: ${created.name}`, type: "success" });
+                        await fetchSchools();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add school.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
+                </div>
+              </div>
+
+              {/* Class */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Class</label>
+                <input
+                  list="classOptions"
+                  name="class_name"
+                  value={editForm.class_name}
+                  onChange={handleEditChange}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Type or select class"
+                />
+              </div>
+
+              {/* Publisher */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Publisher</label>
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9999] w-full">
+                    <SearchableSelect
                       value={String(editForm.publisher_name ?? "").trim()}
                       options={[
                         { label: "Select publisher", value: "" },
@@ -2398,65 +2364,64 @@ const RequirementsPageClient: React.FC = () => {
                         }
                       }}
                     />
-
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new publisher (with phone/email/address + auto supplier)"
-                      onClick={async () => {
-                        const pub = await promptAddPublisher();
-                        if (!pub) return;
-
-                        try {
-                          const createdPub = await createPublisherNow(pub);
-
-                          const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
-                          const createdSup = existingSup
-                            ? existingSup
-                            : await createSupplierNow({
-                                name: createdPub.name,
-                                phone: createdPub.phone || undefined,
-                                email: createdPub.email || undefined,
-                                address: createdPub.address || undefined,
-                              });
-
-                          setEditForm((prev) => ({
-                            ...prev,
-                            publisher_name: createdPub.name,
-                            supplier_name: createdSup.name,
-                          }));
-                          setEditSupplierTouched(true);
-
-                          setToast({
-                            message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
-                            type: "success",
-                          });
-
-                          await fetchPublishers();
-                          await fetchSuppliers();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
                   </div>
+
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                    title="Add new publisher (with phone/email/address + auto supplier)"
+                    onClick={async () => {
+                      const pub = await promptAddPublisher();
+                      if (!pub) return;
+
+                      try {
+                        const createdPub = await createPublisherNow(pub);
+
+                        const existingSup = suppliers.find((s) => ciEq(s.name, createdPub.name));
+                        const createdSup = existingSup
+                          ? existingSup
+                          : await createSupplierNow({
+                              name: createdPub.name,
+                              phone: createdPub.phone || undefined,
+                              email: createdPub.email || undefined,
+                              address: createdPub.address || undefined,
+                            });
+
+                        setEditForm((prev) => ({
+                          ...prev,
+                          publisher_name: createdPub.name,
+                          supplier_name: createdSup.name,
+                        }));
+                        setEditSupplierTouched(true);
+
+                        setToast({
+                          message: `Publisher added: ${createdPub.name} (Supplier auto-created/selected)`,
+                          type: "success",
+                        });
+
+                        await fetchPublishers();
+                        await fetchSuppliers();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add publisher.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
                 </div>
+              </div>
 
-               {/* Book */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Book</label>
+              {/* Book */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Book</label>
 
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9998] w-full">
                     <SearchableSelect
                       value={String(editForm.book_title ?? "").trim()}
                       options={[
                         { label: "Select book", value: "" },
-
-                        // ✅ show current even if it's not in visibleBooksEdit
                         ...(() => {
                           const current = String(editForm.book_title ?? "").trim();
                           if (!current) return [];
@@ -2466,7 +2431,6 @@ const RequirementsPageClient: React.FC = () => {
                           if (exists) return [];
                           return [{ label: `${current} (current)`, value: current }];
                         })(),
-
                         ...visibleBooksEdit
                           .filter((b) => String(b?.title ?? "").trim())
                           .map((b) => ({ label: b.title, value: b.title })),
@@ -2477,220 +2441,217 @@ const RequirementsPageClient: React.FC = () => {
                         setEditForm((prev) => ({ ...prev, book_title: val }));
                       }}
                     />
-
-                    <button
-                      type="button"
-                      className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                      title="Add new book"
-                      onClick={async () => {
-                        const nm = await promptAddName("Add Book", "Enter book title");
-                        if (!nm) return;
-                        try {
-                          const created = await createBookNow(nm, {
-                            publisher_name: editForm.publisher_name,
-                            class_name: editForm.class_name,
-                          });
-                          setEditForm((prev) => ({ ...prev, book_title: created.title }));
-                          setToast({ message: `Book added: ${created.title}`, type: "success" });
-                          await fetchBooks();
-                        } catch (e: any) {
-                          const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
-                          setToast({ message: msg, type: "error" });
-                        }
-                      }}
-                    >
-                      ➕
-                    </button>
                   </div>
 
-                  <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                    title="Add new book"
+                    onClick={async () => {
+                      const nm = await promptAddName("Add Book", "Enter book title");
+                      if (!nm) return;
+                      try {
+                        const created = await createBookNow(nm, {
+                          publisher_name: editForm.publisher_name,
+                          class_name: editForm.class_name,
+                        });
+                        setEditForm((prev) => ({ ...prev, book_title: created.title }));
+                        setToast({ message: `Book added: ${created.title}`, type: "success" });
+                        await fetchBooks();
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add book.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
                 </div>
 
+                <p className="text-[10px] text-slate-500">For new book, Publisher must be selected.</p>
+              </div>
 
-        {/* Supplier (EDIT editable) */}
-          <div className="space-y-1">
-            <label className="block font-medium text-slate-700">Supplier</label>
+              {/* Supplier (EDIT editable) */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Supplier</label>
 
-            <div className="flex items-center gap-2">
-              <SearchableSelect
-                value={String((editForm.supplier_name || editForm.publisher_name) ?? "").trim()}
-                options={[
-                  { label: "(Default = Publisher)", value: "" },
+                <div className="flex items-center gap-2">
+                  <div className="relative z-[9997] w-full">
+                    <SearchableSelect
+                      value={String((editForm.supplier_name || editForm.publisher_name) ?? "").trim()}
+                      options={[
+                        { label: "(Default = Publisher)", value: "" },
+                        ...(() => {
+                          const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
+                          if (!current) return [];
+                          const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
+                          if (exists) return [];
+                          return [{ label: `${current} (current)`, value: current }];
+                        })(),
+                        ...uniqueSuppliers
+                          .filter((s) => String(s?.name ?? "").trim())
+                          .map((s) => ({ label: s.name, value: s.name })),
+                      ]}
+                      placeholder="Search supplier..."
+                      onChange={(v) => {
+                        const val = String(v ?? "");
+                        setEditForm((prev) => ({ ...prev, supplier_name: val }));
+                        setEditSupplierTouched(!!val.trim());
+                      }}
+                    />
+                  </div>
 
-                  // ✅ show current even if not in uniqueSuppliers
-                  ...(() => {
-                    const current = String((editForm.supplier_name || editForm.publisher_name) ?? "").trim();
-                    if (!current) return [];
-                    const exists = uniqueSuppliers.some((s) => ciEq(s.name, current));
-                    if (exists) return [];
-                    return [{ label: `${current} (current)`, value: current }];
-                  })(),
+                  <button
+                    type="button"
+                    className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
+                    title="Add new supplier"
+                    onClick={async () => {
+                      const sup = await promptAddSupplier();
+                      if (!sup) return;
 
-                  ...uniqueSuppliers
-                    .filter((s) => String(s?.name ?? "").trim())
-                    .map((s) => ({ label: s.name, value: s.name })),
-                ]}
-                placeholder="Search supplier..."
-                onChange={(v) => {
-                  const val = String(v ?? "");
-                  setEditForm((prev) => ({ ...prev, supplier_name: val }));
-                  setEditSupplierTouched(!!val.trim());
-                }}
-              />
+                      try {
+                        const created = await createSupplierNow(sup);
 
+                        setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
+                        setEditSupplierTouched(true);
+
+                        await fetchSuppliers();
+
+                        setToast({ message: `Supplier added: ${created.name}`, type: "success" });
+                      } catch (e: any) {
+                        const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
+                        setToast({ message: msg, type: "error" });
+                      }
+                    }}
+                  >
+                    ➕
+                  </button>
+                </div>
+
+                <p className="text-[10px] text-slate-500">Default supplier = publisher. Select different supplier if needed.</p>
+              </div>
+
+              {/* Session */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Session</label>
+                <select
+                  name="academic_session"
+                  value={editForm.academic_session}
+                  onChange={handleEditChange}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="">Select session</option>
+                  {SESSION_OPTIONS.map((session) => (
+                    <option key={`ed-sess-${session}`} value={session}>
+                      {session}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Copies */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Required copies</label>
+                <input
+                  name="required_copies"
+                  type="number"
+                  min={0}
+                  value={editForm.required_copies}
+                  onChange={handleEditChange}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="0"
+                />
+              </div>
+
+              {/* Status */}
+              <div className="space-y-1">
+                <label className="block font-medium text-slate-700">Status</label>
+                <select
+                  name="status"
+                  value={editForm.status}
+                  onChange={handleEditChange}
+                  className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="draft">Draft</option>
+                  <option value="confirmed">Confirmed</option>
+                </select>
+              </div>
+
+              {/* Lock */}
+              <div className="flex items-center gap-2 mt-6">
+                <input
+                  type="checkbox"
+                  name="is_locked"
+                  checked={editForm.is_locked}
+                  onChange={handleEditChange}
+                  className="h-4 w-4"
+                />
+                <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
+              </div>
+            </div>
+
+            {/* footer buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
               <button
                 type="button"
-                className="h-9 px-3 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold"
-                title="Add new supplier"
-                onClick={async () => {
-                  const sup = await promptAddSupplier();
-                  if (!sup) return;
-
-                  try {
-                    const created = await createSupplierNow(sup);
-
-                    setEditForm((prev) => ({ ...prev, supplier_name: created.name }));
-                    setEditSupplierTouched(true);
-
-                    await fetchSuppliers();
-
-                    setToast({ message: `Supplier added: ${created.name}`, type: "success" });
-                  } catch (e: any) {
-                    const msg = e?.response?.data?.error || e?.message || "Failed to add supplier.";
-                    setToast({ message: msg, type: "error" });
-                  }
-                }}
+                onClick={closeEditModal}
+                className="h-9 px-4 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-xs font-semibold"
               >
-                ➕
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={saveEditRequirement}
+                className="h-9 px-5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+              >
+                {loading ? "Saving..." : "Save Changes"}
               </button>
             </div>
-
-            <p className="text-[10px] text-slate-500">
-              Default supplier = publisher. Select different supplier if needed.
-            </p>
-          </div>
-
-
-                {/* Session */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Session</label>
-                  <select
-                    name="academic_session"
-                    value={editForm.academic_session}
-                    onChange={handleEditChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  >
-                    <option value="">Select session</option>
-                    {SESSION_OPTIONS.map((session) => (
-                      <option key={`ed-sess-${session}`} value={session}>
-                        {session}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Copies */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Required copies</label>
-                  <input
-                    name="required_copies"
-                    type="number"
-                    min={0}
-                    value={editForm.required_copies}
-                    onChange={handleEditChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white text-right focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="0"
-                  />
-                </div>
-
-                {/* Status */}
-                <div className="space-y-1">
-                  <label className="block font-medium text-slate-700">Status</label>
-                  <select
-                    name="status"
-                    value={editForm.status}
-                    onChange={handleEditChange}
-                    className="w-full border border-slate-300 rounded-md px-2 py-1.5 outline-none bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  >
-                    <option value="draft">Draft</option>
-                    <option value="confirmed">Confirmed</option>
-                  </select>
-                </div>
-
-                {/* Lock */}
-                <div className="flex items-center gap-2 mt-6">
-                  <input
-                    type="checkbox"
-                    name="is_locked"
-                    checked={editForm.is_locked}
-                    onChange={handleEditChange}
-                    className="h-4 w-4"
-                  />
-                  <span className="text-[11px] text-slate-700">Lock this row (freeze for order)</span>
-                </div>
-              </div>
-
-              {/* footer buttons */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={closeEditModal}
-                  className="h-9 px-4 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 text-xs font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={saveEditRequirement}
-                  className="h-9 px-5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
-                >
-                  {loading ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
-      )}
+      </div>
+    )}
 
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
+    {/* Toast */}
+    {toast && (
+      <div
+        className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
+          toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+        }`}
+      >
+        {toast.message}
+      </div>
+    )}
 
-      <style jsx>{`
-        @keyframes blob {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(30px, -50px) scale(1.1);
-          }
-          66% {
-            transform: translate(-20px, 20px) scale(0.9);
-          }
-          100% {
-            transform: translate(0px, 0px) scale(1);
-          }
+    <style jsx>{`
+      @keyframes blob {
+        0% {
+          transform: translate(0px, 0px) scale(1);
         }
-        .animate-blob {
-          animation: blob 7s infinite;
+        33% {
+          transform: translate(30px, -50px) scale(1.1);
         }
-        .animation-delay-2000 {
-          animation-delay: 2s;
+        66% {
+          transform: translate(-20px, 20px) scale(0.9);
         }
-        .animation-delay-4000 {
-          animation-delay: 4s;
+        100% {
+          transform: translate(0px, 0px) scale(1);
         }
-      `}</style>
-    </div>
-  );
+      }
+      .animate-blob {
+        animation: blob 7s infinite;
+      }
+      .animation-delay-2000 {
+        animation-delay: 2s;
+      }
+      .animation-delay-4000 {
+        animation-delay: 4s;
+      }
+    `}</style>
+  </div>
+);
+
 };
 
 export default RequirementsPageClient;

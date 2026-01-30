@@ -25,6 +25,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
+import SearchableSelect from "@/components/SearchableSelect";
 import SupplierReceiptAllocationsModal from "@/components/SupplierReceiptAllocationsModal";
 import {
   ChevronLeft,
@@ -952,6 +953,7 @@ const openAllocationForReceipt = async (receiptId: number) => {
 
     return { gross, itemDisc, net };
   }, [items]);
+  
 
   const syncBillDiscFromPct = (pctStr: string) => {
     const pct = clamp(num(pctStr), 0, 100);
@@ -963,6 +965,26 @@ const openAllocationForReceipt = async (receiptId: number) => {
       bill_disc_amt: pct > 0 ? String(Math.round(amt * 100) / 100) : "",
     }));
   };
+
+    const bookOptions = useMemo(
+    () =>
+      (books || []).map((b) => ({
+        value: String(b.id),
+        label: b.title,
+        meta: [b.class_name, b.subject, b.code].filter(Boolean).join(" • "),
+      })),
+    [books]
+  );
+
+  const publisherOptions = useMemo(
+    () =>
+      (publishers || []).map((p) => ({
+        value: String(p.id),
+        label: p.name,
+      })),
+    [publishers]
+  );
+
 
   const syncBillDiscFromAmt = (amtStr: string) => {
     const net = totalsBase.net;
@@ -2020,19 +2042,14 @@ const specimenPayload = existingItems
                       <td className="border-b border-slate-200 px-2 py-1.5">
                         <div className="flex items-start gap-2">
                           <div className="flex-1">
-                            <select
+                           <SearchableSelect
                               value={it.book_id ? String(it.book_id) : ""}
-                              onChange={(e) => setRowBook(idx, e.target.value)}
-                              className="w-full bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 px-1 py-1 text-[12px]"
-                              title="Select book"
-                            >
-                              <option value="">Select a book</option>
-                              {books.map((b) => (
-                                <option key={b.id} value={String(b.id)}>
-                                  {b.title}
-                                </option>
-                              ))}
-                            </select>
+                              onChange={(val) => setRowBook(idx, val)}
+                              placeholder={booksLoading ? "Loading..." : "Search book..."}
+                              options={bookOptions}
+                              disabled={booksLoading}
+                            />
+
 
                           </div>
 
@@ -2498,18 +2515,13 @@ const specimenPayload = existingItems
 
                       <div className="col-span-12">
                         <MiniLabel>Publisher *</MiniLabel>
-                        <select
-                          value={(bookForm as any).publisher_id}
-                          onChange={(e) => setBookForm((p) => ({ ...p, publisher_id: e.target.value }))}
-                          className="w-full border border-slate-300 rounded-xl px-3 py-2 text-[12px] bg-white"
-                        >
-                          <option value="">Select publisher</option>
-                          {publishers.map((p) => (
-                            <option key={p.id} value={String(p.id)}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
+                        <SearchableSelect
+                            value={String((bookForm as any).publisher_id || "")}
+                            onChange={(val) => setBookForm((p) => ({ ...p, publisher_id: val }))}
+                            placeholder="Search publisher..."
+                            options={publisherOptions}
+                          />
+
                       </div>
 
                       <div className="col-span-12 md:col-span-4">
