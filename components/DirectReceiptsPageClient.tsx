@@ -591,37 +591,46 @@ const openCreateBookForRow = (rowIdx: number) => {
 };
 
 
-  const fetchBooks = async () => {
-    setBooksLoading(true);
-    try {
-      const tries = ["/api/books", "/api/book-masters", "/api/inventory/books"];
-      let got: any[] | null = null;
+const fetchBooks = async () => {
+  setBooksLoading(true);
+  try {
+    const tries = [
+      "/api/books?limit=5000",
+      "/api/books?perPage=5000",
+      "/api/books?size=5000",
+      "/api/book-masters?limit=5000",
+      "/api/inventory/books?limit=5000",
+    ];
 
-      for (const url of tries) {
-        try {
-          const res = await api.get(url);
-          const list =
-            (res.data as any)?.books ||
-            (res.data as any)?.data ||
-            (res.data as any)?.rows ||
-            (Array.isArray(res.data) ? res.data : []);
-          if (Array.isArray(list) && list.length) {
-            got = list;
-            break;
-          }
-        } catch {
-          // keep trying
+    let got: any[] | null = null;
+
+    for (const url of tries) {
+      try {
+        const res = await api.get(url);
+        const list =
+          (res.data as any)?.books ||
+          (res.data as any)?.data ||
+          (res.data as any)?.rows ||
+          (Array.isArray(res.data) ? res.data : []);
+
+        if (Array.isArray(list) && list.length) {
+          got = list;
+          break;
         }
+      } catch {
+        // keep trying next url
       }
-
-      setBooks(Array.isArray(got) ? (got as BookLite[]) : []);
-    } catch (e) {
-      console.error("books load error:", e);
-      setBooks([]);
-    } finally {
-      setBooksLoading(false);
     }
-  };
+
+    setBooks(Array.isArray(got) ? (got as BookLite[]) : []);
+  } catch (e) {
+    console.error("books load error:", e);
+    setBooks([]);
+  } finally {
+    setBooksLoading(false);
+  }
+};
+
 
   /* ------------ Fetch receipts ------------ */
 
