@@ -594,35 +594,19 @@ const openCreateBookForRow = (rowIdx: number) => {
 const fetchBooks = async () => {
   setBooksLoading(true);
   try {
-    const tries = [
-      "/api/books?limit=5000",
-      "/api/books?perPage=5000",
-      "/api/books?size=5000",
-      "/api/book-masters?limit=5000",
-      "/api/inventory/books?limit=5000",
-    ];
+    const res = await api.get("/api/books", { params: { limit: 5000, page: 1 } });
 
-    let got: any[] | null = null;
+    const payload: any = res?.data;
 
-    for (const url of tries) {
-      try {
-        const res = await api.get(url);
-        const list =
-          (res.data as any)?.books ||
-          (res.data as any)?.data ||
-          (res.data as any)?.rows ||
-          (Array.isArray(res.data) ? res.data : []);
+    // ✅ Your API returns: { data: [...], meta: {...} }
+    const list =
+      Array.isArray(payload?.data) ? payload.data :
+      Array.isArray(payload?.books) ? payload.books :
+      Array.isArray(payload?.rows) ? payload.rows :
+      Array.isArray(payload) ? payload :
+      [];
 
-        if (Array.isArray(list) && list.length) {
-          got = list;
-          break;
-        }
-      } catch {
-        // keep trying next url
-      }
-    }
-
-    setBooks(Array.isArray(got) ? (got as BookLite[]) : []);
+    setBooks(Array.isArray(list) ? (list as BookLite[]) : []);
   } catch (e) {
     console.error("books load error:", e);
     setBooks([]);
@@ -630,6 +614,7 @@ const fetchBooks = async () => {
     setBooksLoading(false);
   }
 };
+
 
 
   /* ------------ Fetch receipts ------------ */
@@ -2002,37 +1987,35 @@ const specimenPayload = existingItems
             </div>
           </div>
 
-          {/* LISTING */}
-       <div className="flex-1 min-h-0">
-              <div className="h-full overflow-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead className="bg-slate-100 sticky top-0 z-10">
-                    <tr>
-                      {/* ✅ Book dropdown */}
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-left w-[420px]">Book</th>
+       {/* LISTING (UPDATED: perfect header/value alignment) */}
+          <div className="flex-1 min-h-0">
+            <div className="h-full overflow-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead className="bg-slate-100 sticky top-0 z-10">
+                  <tr>
+                    {/* ✅ Book dropdown */}
+                    <th className="border-b border-slate-200 px-2 py-2 text-left w-[420px]">Book</th>
 
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Qty</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Qty</th>
 
-                      {/* Spec */}
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Spec Qty</th>
+                    {/* Spec */}
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Spec Qty</th>
 
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">
-                        {isInvoice ? "Rate*" : "Rate"}
-                      </th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-24">{isInvoice ? "Rate*" : "Rate"}</th>
 
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-16">%Disc</th>
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-24">Disc₹</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-16">%Disc</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-24">Disc₹</th>
 
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Gross</th>
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Net</th>
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-28">Amount</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Gross</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Net</th>
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-28">Amount</th>
 
-                      {/* ✅ actions: + and delete */}
-                      <th className="border-b border-slate-200 px-2 py-1.5 text-right w-20"> </th>
-                    </tr>
-                  </thead>
+                    {/* ✅ actions: + and delete */}
+                    <th className="border-b border-slate-200 px-2 py-2 text-right w-20"></th>
+                  </tr>
+                </thead>
 
-            <tbody>
+                <tbody>
                   {items.map((it, idx) => {
                     const qty = Math.max(0, Math.floor(num(it.qty)));
                     const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
@@ -2046,278 +2029,288 @@ const specimenPayload = existingItems
                     const missingRateInvoice = isInvoice && qty > 0 && up <= 0;
 
                     return (
-                    <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
-                      {/* ✅ Book select + New Book (+) */}
-                      <td className="border-b border-slate-200 px-2 py-1.5">
-                        <div className="flex items-start gap-2">
-                          <div className="flex-1">
-                           <SearchableSelect
-                              value={it.book_id ? String(it.book_id) : ""}
-                              onChange={(val) => setRowBook(idx, val)}
-                              placeholder={booksLoading ? "Loading..." : "Search book..."}
-                              options={bookOptions}
-                              disabled={booksLoading}
-                            />
+                      <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
+                        {/* ✅ Book select + New Book (+) */}
+                        <td className="border-b border-slate-200 px-2 py-2">
+                          <div className="flex items-start gap-2">
+                            <div className="flex-1">
+                              <SearchableSelect
+                                value={it.book_id ? String(it.book_id) : ""}
+                                onChange={(val) => setRowBook(idx, val)}
+                                placeholder={booksLoading ? "Loading..." : "Search book..."}
+                                options={bookOptions}
+                                disabled={booksLoading}
+                              />
+                            </div>
 
-
+                            {/* ✅ Add NEW Book for this row */}
+                            <button
+                              type="button"
+                              onClick={() => openCreateBookForRow(idx)}
+                              className="mt-1 px-2 text-[14px] font-bold text-slate-600 hover:text-slate-900"
+                              title="Add new book"
+                            >
+                              +
+                            </button>
                           </div>
+                        </td>
 
-                          {/* ✅ Add NEW Book for this row */}
-                          <button
-                            type="button"
-                            onClick={() => openCreateBookForRow(idx)}
-                            className="mt-1 px-2 text-[14px] font-bold text-slate-600 hover:text-slate-900"
-                            title="Add new book"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </td>
+                        {/* Qty */}
+                        <td className="border-b border-slate-200 px-2 py-1.5">
+                          <input
+                            ref={(el) => {
+                              cellRefs.current[cellKey(idx, "qty")] = el;
+                            }}
+                            type="number"
+                            min={0}
+                            value={it.qty}
+                            onChange={(e) => setRowQty(idx, e.target.value)}
+                            onWheel={preventWheelChange}
+                            onKeyDown={(e) => onCellEnter(e, idx, "qty")}
+                            className={`${cellInput} ${wQty}`}
+                            title="Qty"
+                          />
+                        </td>
 
-                      {/* Qty (compact) */}
-                      <td className="border-b border-slate-200 px-1 py-0.5">
-                        <input
-                          ref={(el) => {
-                            cellRefs.current[cellKey(idx, "qty")] = el;
-                          }}
-                          type="number"
-                          min={0}
-                          value={it.qty}
-                          onChange={(e) => setRowQty(idx, e.target.value)}
-                          onWheel={preventWheelChange}
-                          onKeyDown={(e) => onCellEnter(e, idx, "qty")}
-                          className={`${cellInput} ${wQty}`}
-                          title="Qty"
-                        />
-                      </td>
+                        {/* Spec Qty */}
+                        <td className="border-b border-slate-200 px-2 py-1.5">
+                          <input
+                            type="number"
+                            min={0}
+                            value={it.spec_qty || ""}
+                            onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                            onWheel={preventWheelChange}
+                            className={`${cellInput} ${wSpec}`}
+                            title="Specimen Qty (free)"
+                          />
+                        </td>
 
-                      {/* Spec Qty (compact) */}
-                      <td className="border-b border-slate-200 px-1 py-0.5">
-                        <input
-                          type="number"
-                          min={0}
-                          value={it.spec_qty || ""}
-                          onChange={(e) => setRowSpecQty(idx, e.target.value)}
-                          onWheel={preventWheelChange}
-                          className={`${cellInput} ${wSpec}`}
-                          title="Specimen Qty (free)"
-                        />
-                      </td>
+                        {/* Rate */}
+                        <td className={`border-b border-slate-200 px-2 py-1.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
+                          <input
+                            ref={(el) => {
+                              cellRefs.current[cellKey(idx, "mrp")] = el;
+                            }}
+                            type="number"
+                            min={0}
+                            value={it.unit_price}
+                            onChange={(e) => setRowUnit(idx, e.target.value)}
+                            onWheel={preventWheelChange}
+                            onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+                            className={`${cellInput} ${wRate} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
+                            title={isInvoice ? "Rate (required)" : "Rate (optional)"}
+                          />
+                        </td>
 
-                      {/* Rate (compact) */}
-                      <td className={`border-b border-slate-200 px-1 py-0.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
-                        <input
-                          ref={(el) => {
-                            cellRefs.current[cellKey(idx, "mrp")] = el;
-                          }}
-                          type="number"
-                          min={0}
-                          value={it.unit_price}
-                          onChange={(e) => setRowUnit(idx, e.target.value)}
-                          onWheel={preventWheelChange}
-                          onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
-                          className={`${cellInput} ${wRate} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
-                          title={isInvoice ? "Rate (required)" : "Rate (optional)"}
-                        />
-                      </td>
+                        {/* %Disc */}
+                        <td className="border-b border-slate-200 px-2 py-1.5">
+                          <input
+                            ref={(el) => {
+                              cellRefs.current[cellKey(idx, "pct")] = el;
+                            }}
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={it.disc_pct}
+                            onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                            onWheel={preventWheelChange}
+                            onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+                            className={`${cellInput} ${wPct}`}
+                            title="% discount (auto sync Disc₹)"
+                          />
+                        </td>
 
-                      {/* %Disc (compact) */}
-                      <td className="border-b border-slate-200 px-1 py-0.5">
-                        <input
-                          ref={(el) => {
-                            cellRefs.current[cellKey(idx, "pct")] = el;
-                          }}
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={it.disc_pct}
-                          onChange={(e) => setRowDiscPct(idx, e.target.value)}
-                          onWheel={preventWheelChange}
-                          onKeyDown={(e) => onCellEnter(e, idx, "pct")}
-                          className={`${cellInput} ${wPct}`}
-                          title="% discount (auto sync Disc₹)"
-                        />
-                      </td>
+                        {/* Disc₹ */}
+                        <td className="border-b border-slate-200 px-2 py-1.5">
+                          <input
+                            ref={(el) => {
+                              cellRefs.current[cellKey(idx, "amt")] = el;
+                            }}
+                            type="number"
+                            min={0}
+                            value={it.disc_amt}
+                            onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                            onWheel={preventWheelChange}
+                            onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+                            className={`${cellInput} ${wAmt}`}
+                            title="Fixed discount per unit (auto sync %)"
+                          />
+                        </td>
 
-                      {/* Disc₹ (compact) */}
-                      <td className="border-b border-slate-200 px-1 py-0.5">
-                        <input
-                          ref={(el) => {
-                            cellRefs.current[cellKey(idx, "amt")] = el;
-                          }}
-                          type="number"
-                          min={0}
-                          value={it.disc_amt}
-                          onChange={(e) => setRowDiscAmt(idx, e.target.value)}
-                          onWheel={preventWheelChange}
-                          onKeyDown={(e) => onCellEnter(e, idx, "amt")}
-                          className={`${cellInput} ${wAmt}`}
-                          title="Fixed discount per unit (auto sync %)"
-                        />
-                      </td>
+                        {/* Gross / Net / Amount */}
+                        <td className="border-b border-slate-200 px-2 py-2 text-right font-semibold tabular-nums">
+                          ₹{fmtMoney(row.grossLine)}
+                        </td>
 
-                      {/* Gross / Net (paid qty only) */}
-                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-semibold">
-                        ₹{fmtMoney(row.grossLine)}
-                      </td>
+                        <td className="border-b border-slate-200 px-2 py-2 text-right font-extrabold tabular-nums">
+                          ₹{fmtMoney(row.netLine)}
+                        </td>
 
-                      <td className="border-b border-slate-200 px-2 py-1.5 text-right font-extrabold">
-                        ₹{fmtMoney(row.netLine)}
-                      </td>
+                        <td className="border-b border-slate-200 px-2 py-2 text-right font-extrabold tabular-nums">
+                          ₹{fmtMoney(row.netLine)}
+                        </td>
 
-                      {/* ✅ actions */}
-                      <td className="border-b border-slate-200 px-2 py-1.5 text-right">
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => addRowAfter(idx)}
-                            className="inline-flex items-center justify-center p-1.5 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100"
-                            title="Add next row"
-                          >
-                            <PlusCircle className="w-4 h-4 text-indigo-700" />
-                          </button>
+                        {/* ✅ actions */}
+                        <td className="border-b border-slate-200 px-2 py-2 text-right">
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => addRowAfter(idx)}
+                              className="inline-flex items-center justify-center p-1.5 rounded-xl border border-indigo-300 bg-indigo-50 hover:bg-indigo-100"
+                              title="Add next row"
+                            >
+                              <PlusCircle className="w-4 h-4 text-indigo-700" />
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
-                            className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                            title="Remove line"
-                          >
-                            <Trash2 className="w-4 h-4 text-rose-600" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-
+                            <button
+                              type="button"
+                              onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                              className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                              title="Remove line"
+                            >
+                              <Trash2 className="w-4 h-4 text-rose-600" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     );
                   })}
                 </tbody>
+              </table>
 
-
-                </table>
-
-                <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
-                  Tip: Select book in row, press “+” to add next row. Enter key navigation stays same for Qty/Rate/Disc.
-                </div>
-              </div>
-            </div>
-
-
-
-          {/* BOTTOM BAR */}
-          <div className="border-t bg-white">
-            <div className="px-3 py-1.5 bg-white flex flex-nowrap items-end gap-2">
-              <div>
-                <MiniLabel>Bill Disc %</MiniLabel>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={form.bill_disc_pct}
-                  onChange={(e) => syncBillDiscFromPct(e.target.value)}
-                  onWheel={preventWheelChange}
-                  className={`${bottomInput} ${w80}`}
-                  placeholder="0"
-                  title="Bill discount percent (auto sync ₹)"
-                />
-              </div>
-
-              <div>
-                <MiniLabel>Bill Disc ₹</MiniLabel>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.bill_disc_amt}
-                  onChange={(e) => syncBillDiscFromAmt(e.target.value)}
-                  onWheel={preventWheelChange}
-                  className={`${bottomInput} ${w90}`}
-                  placeholder="0"
-                  title="Bill discount amount (auto sync %)"
-                />
-              </div>
-
-              <div>
-                <MiniLabel>Ship</MiniLabel>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.shipping_charge}
-                  onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
-                  onWheel={preventWheelChange}
-                    className={`${bottomInput} ${w80}`}
-
-                  placeholder="0"
-                  title="Shipping charge"
-                />
-              </div>
-
-              <div>
-                <MiniLabel>Other</MiniLabel>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.other_charge}
-                  onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
-                  onWheel={preventWheelChange}
-                  className={`${bottomInput} ${w80}`}
-                  placeholder="0"
-                  title="Other charge"
-                />
-              </div>
-
-              <div>
-                <MiniLabel>Round</MiniLabel>
-                <input
-                  type="number"
-                  value={form.round_off}
-                  onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
-                  onWheel={preventWheelChange}
-                 className={`${bottomInput} ${w80}`}
-                  placeholder="0"
-                  title="Round off"
-                />
-              </div>
-
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                  <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                  <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setPreviewOpen(false);
-                    setCreateOpen(false);
-                  }}
-                  className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                  title="Cancel"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  onClick={openPreview}
-                  disabled={!items.length}
-                  className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
-                  title="Preview before saving"
-                >
-                  <Eye className="w-4 h-4" />
-                  Preview
-                </button>
-
-                <button
-                  onClick={submitCreate}
-                  disabled={creating || !items.length}
-                  className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                  title="Save"
-                >
-                  {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRatePaid ? "Save (Draft)" : "Save"}
-                </button>
+              <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
+                Tip: Select book in row, press “+” to add next row. Enter key navigation stays same for Qty/Rate/Disc.
               </div>
             </div>
           </div>
+
+
+
+
+        {/* BOTTOM BAR */}
+        <div className="border-t bg-white">
+          <div className="px-3 py-1.5 bg-white flex flex-nowrap items-end gap-2">
+            <div>
+              <MiniLabel>Bill Disc %</MiniLabel>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={form.bill_disc_pct}
+                onChange={(e) => syncBillDiscFromPct(e.target.value)}
+                onWheel={preventWheelChange}
+                className={`${bottomInput} ${w80}`}
+                placeholder="0"
+                title="Bill discount percent (auto sync ₹)"
+              />
+            </div>
+
+            <div>
+              <MiniLabel>Bill Disc ₹</MiniLabel>
+              <input
+                type="number"
+                min={0}
+                value={form.bill_disc_amt}
+                onChange={(e) => syncBillDiscFromAmt(e.target.value)}
+                onWheel={preventWheelChange}
+                className={`${bottomInput} ${w90}`}
+                placeholder="0"
+                title="Bill discount amount (auto sync %)"
+              />
+            </div>
+
+            <div>
+              <MiniLabel>Ship</MiniLabel>
+              <input
+                type="number"
+                min={0}
+                value={form.shipping_charge}
+                onChange={(e) => setForm((p) => ({ ...p, shipping_charge: e.target.value }))}
+                onWheel={preventWheelChange}
+                className={`${bottomInput} ${w80}`}
+                placeholder="0"
+                title="Shipping charge"
+              />
+            </div>
+
+            <div>
+              <MiniLabel>Other</MiniLabel>
+              <input
+                type="number"
+                min={0}
+                value={form.other_charge}
+                onChange={(e) => setForm((p) => ({ ...p, other_charge: e.target.value }))}
+                onWheel={preventWheelChange}
+                className={`${bottomInput} ${w80}`}
+                placeholder="0"
+                title="Other charge"
+              />
+            </div>
+
+            <div>
+              <MiniLabel>Round</MiniLabel>
+              <input
+                type="number"
+                value={form.round_off}
+                onChange={(e) => setForm((p) => ({ ...p, round_off: e.target.value }))}
+                onWheel={preventWheelChange}
+                className={`${bottomInput} ${w80}`}
+                placeholder="0"
+                title="Round off"
+              />
+            </div>
+
+            {/* ✅ TOTALS + ACTIONS */}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {/* ✅ BEFORE discount */}
+              <BigPill label="Gross (Before Disc)" value={`₹${fmtMoney(totals.gross)}`} />
+
+              {/* discounts */}
+              <BigPill label="Item Disc" value={`₹${fmtMoney(totals.itemDisc)}`} />
+              <BigPill label="Bill Disc" value={`₹${fmtMoney(totals.billDisc)}`} />
+
+              {/* ✅ after item discount */}
+              <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
+
+              {/* ✅ FINAL */}
+              <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                <div className="text-[10px] opacity-80 leading-none">Grand Total (Payable)</div>
+                <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setPreviewOpen(false);
+                  setCreateOpen(false);
+                }}
+                className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                title="Cancel"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={openPreview}
+                disabled={!items.length}
+                className="text-[12px] px-4 py-2 rounded-xl border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-60 font-semibold inline-flex items-center gap-2"
+                title="Preview before saving"
+              >
+                <Eye className="w-4 h-4" />
+                Preview
+              </button>
+
+              <button
+                onClick={submitCreate}
+                disabled={creating || !items.length}
+                className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                title="Save"
+              >
+                {creating ? "Saving..." : isInvoice ? "Save (Received)" : anyMissingRatePaid ? "Save (Draft)" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+
 
           {/* ---------------- Preview Modal ---------------- */}
           {previewOpen && (
@@ -2450,35 +2443,74 @@ const specimenPayload = existingItems
                     </div>
 
                     <div className="border-t bg-white px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-2 justify-end">
-                        <BigPill label="Gross" value={`₹${fmtMoney(totals.gross)}`} />
-                        <BigPill label="ItemDisc" value={`₹${fmtMoney(totals.itemDisc)}`} />
-                        <BigPill label="Net" value={`₹${fmtMoney(totals.net)}`} />
-                        <BigPill label="BillDisc" value={`₹${fmtMoney(totals.billDisc)}`} />
-                        <BigPill label="Ship" value={`₹${fmtMoney(totals.ship)}`} />
-                        <BigPill label="Other" value={`₹${fmtMoney(totals.other)}`} />
-                        <BigPill label="Round" value={`₹${fmtMoney(totals.ro)}`} />
-                        <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
-                          <div className="text-[10px] opacity-80 leading-none">Grand</div>
-                          <div className="text-[14px] font-extrabold">₹{fmtMoney(totals.grand)}</div>
-                        </div>
+                    <div className="flex flex-wrap items-center gap-2 justify-end">
+                      {/* ✅ BEFORE any discount */}
+                      <BigPill
+                        label="Gross (Before Discount)"
+                        value={`₹${fmtMoney(totals.gross)}`}
+                      />
 
-                        <div className="ml-2 flex items-center gap-2">
-                          <button
-                            onClick={() => setPreviewOpen(false)}
-                            className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                          >
-                            Back
-                          </button>
-                          <button
-                            onClick={submitCreate}
-                            disabled={creating}
-                            className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
-                          >
-                            {creating ? "Saving..." : "Confirm Save"}
-                          </button>
+                      {/* item-level discount */}
+                      <BigPill
+                        label="Item Discount"
+                        value={`₹${fmtMoney(totals.itemDisc)}`}
+                      />
+
+                      {/* after item discount, before bill discount */}
+                      <BigPill
+                        label="Net (After Item Disc)"
+                        value={`₹${fmtMoney(totals.net)}`}
+                      />
+
+                      {/* bill-level discount */}
+                      <BigPill
+                        label="Bill Discount"
+                        value={`₹${fmtMoney(totals.billDisc)}`}
+                      />
+
+                      {/* charges */}
+                      <BigPill
+                        label="Shipping"
+                        value={`₹${fmtMoney(totals.ship)}`}
+                      />
+                      <BigPill
+                        label="Other"
+                        value={`₹${fmtMoney(totals.other)}`}
+                      />
+                      <BigPill
+                        label="Round Off"
+                        value={`₹${fmtMoney(totals.ro)}`}
+                      />
+
+                      {/* ✅ FINAL PAYABLE */}
+                      <div className="px-4 py-2 rounded-xl bg-slate-900 text-white">
+                        <div className="text-[10px] opacity-80 leading-none">
+                          Grand Total (Payable)
+                        </div>
+                        <div className="text-[14px] font-extrabold">
+                          ₹{fmtMoney(totals.grand)}
                         </div>
                       </div>
+
+                      {/* actions */}
+                      <div className="ml-2 flex items-center gap-2">
+                        <button
+                          onClick={() => setPreviewOpen(false)}
+                          className="text-[12px] px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                        >
+                          Back
+                        </button>
+
+                        <button
+                          onClick={submitCreate}
+                          disabled={creating}
+                          className="text-[12px] px-5 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 font-semibold"
+                        >
+                          {creating ? "Saving..." : "Confirm Save"}
+                        </button>
+                      </div>
+                    </div>
+
                     </div>
                   </div>
 
