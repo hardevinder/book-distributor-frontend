@@ -128,6 +128,13 @@ const normalizeTransports = (payload: any): TransportLite[] => {
   return [];
 };
 
+const normalizeSuppliers = (payload: any): SupplierLite[] => {
+  if (Array.isArray(payload)) return payload as SupplierLite[];
+  if (payload && Array.isArray(payload.data)) return payload.data as SupplierLite[];
+  return [];
+};
+
+
 
 const getOrderSchool = (order: SchoolOrder | any): School | undefined =>
   (order && (order.school || order.School)) || undefined;
@@ -281,6 +288,9 @@ const mergeEmailLogs = (rows: any[]): MergedEmailLog[] => {
     groups.set(key, arr);
   });
 
+
+
+
   const merged: MergedEmailLog[] = Array.from(groups.entries()).map(([key, arr]) => {
     const primary = arr.find((x) => guessRecipientType(x) === "to") || arr[0];
 
@@ -322,6 +332,27 @@ const mergeEmailLogs = (rows: any[]): MergedEmailLog[] => {
   });
 
   return merged;
+};
+
+  const buildEmailOptionsFromMergedLogs = (merged: MergedEmailLog[]) => {
+  const seen = new Set<string>();
+  const out: { value: string; label: string }[] = [];
+
+  merged.forEach((m) => {
+    const list = [...splitEmails(m.to || ""), ...splitEmails(m.cc || "")];
+
+    list.forEach((e) => {
+      const v = String(e || "").trim();
+      if (!v) return;
+      const key = v.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ value: v, label: v });
+    });
+  });
+
+  out.sort((a, b) => a.value.localeCompare(b.value));
+  return out;
 };
 
 const clampInt = (v: any, min = 0, max = 999999) => {
@@ -472,10 +503,65 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [emailLogsRaw, setEmailLogsRaw] = useState<any[]>([]);
   // merged rows (one per send)
   const mergedEmailLogs = useMemo(() => mergeEmailLogs(emailLogsRaw), [emailLogsRaw]);
-  const emailCount = mergedEmailLogs.length;
+  const emailHistoryOptions = useMemo(() => {
+  return buildEmailOptionsFromMergedLogs(mergedEmailLogs);
+}, [mergedEmailLogs]);
 
-  // ✅ Email count cache for listing (orderId -> count)
-  const [emailCounts, setEmailCounts] = useState<Record<number, number>>({});
+// ✅ GLOBAL email logs for dropdown (all orders)
+const [globalEmailLogsRaw, setGlobalEmailLogsRaw] = useState<any[]>([]);
+const mergedGlobalEmailLogs = useMemo(() => mergeEmailLogs(globalEmailLogsRaw), [globalEmailLogsRaw]);
+const globalEmailHistoryOptions = useMemo(() => {
+  return buildEmailOptionsFromMergedLogs(mergedGlobalEmailLogs);
+}, [mergedGlobalEmailLogs]);
+
+
+
+const supplierEmailOptions = useMemo(() => {
+  // unique list: "Name <email>"
+  const out: { label: string; value: string }[] = [];
+  const seen = new Set<string>();
+
+  (suppliers || []).forEach((s) => {
+    const email = String(s.email || "").trim();
+    if (!email) return;
+    const key = email.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ label: `${s.name} <${email}>`, value: email });
+  });
+
+  out.sort((a, b) => a.label.localeCompare(b.label));
+  return out;
+}, [suppliers]);
+
+// ✅ ADD THIS EXACTLY HERE (after supplierEmailOptions)
+const combinedEmailOptions = useMemo(() => {
+  const map = new Map<string, { value: string; label: string }>();
+
+  // 1) global history first
+  (globalEmailHistoryOptions || []).forEach((o) => {
+    const v = String(o.value || "").trim();
+    if (!v) return;
+    map.set(v.toLowerCase(), { value: v, label: o.label || v });
+  });
+
+  // 2) supplier emails
+  (supplierEmailOptions || []).forEach((o) => {
+    const v = String(o.value || "").trim();
+    if (!v) return;
+    const key = v.toLowerCase();
+    if (!map.has(key)) map.set(key, { value: v, label: o.label || v });
+  });
+
+  return Array.from(map.values()).sort((a, b) => a.value.localeCompare(b.value));
+}, [globalEmailHistoryOptions, supplierEmailOptions]);
+
+const emailCount = mergedEmailLogs.length;
+
+// ✅ Email count cache for listing (orderId -> count)
+const [emailCounts, setEmailCounts] = useState<Record<number, number>>({});
+
+
 
   /* ---------- ✅ Bulk Meta (Transport-1 + Notes1+Notes2 ONLY) ---------- */
 
@@ -535,6 +621,15 @@ const SchoolOrdersPageClient: React.FC = () => {
       console.error("Error loading transports:", err);
     }
   };
+  const fetchSuppliers = async () => {
+  try {
+    const res = await api.get("/api/suppliers");
+    setSuppliers(normalizeSuppliers(res.data));
+  } catch (err) {
+    console.error("Error loading suppliers:", err);
+  }
+};
+
 
   const fetchOrders = async (): Promise<SchoolOrder[]> => {
   setLoading(true);
@@ -573,7 +668,9 @@ const SchoolOrdersPageClient: React.FC = () => {
   useEffect(() => {
     fetchSchools();
     fetchTransports();
+    fetchSuppliers();
     fetchOrders();
+    refreshGlobalEmailLogs(); // ✅ add this
   }, []);
 
   /* ---------- ✅ AUTH PDF FIX ---------- */
@@ -1075,6 +1172,26 @@ const SchoolOrdersPageClient: React.FC = () => {
     }
   };
 
+  // ✅ GLOBAL: fetch logs for ALL orders (dropdown suggestions)
+const refreshGlobalEmailLogs = async () => {
+  try {
+    // ⚠️ Use your global endpoint here
+    const r = await api.get(`/api/school-orders/email-logs?limit=1000`);
+
+    const payload = r?.data || {};
+    const rows = Array.isArray(payload.data)
+      ? payload.data
+      : Array.isArray(payload.logs)
+      ? payload.logs
+      : [];
+
+    setGlobalEmailLogsRaw(rows);
+  } catch {
+    // ignore
+  }
+};
+
+
   const openEmailModal = async (order: SchoolOrder) => {
     if (!order?.id) return;
 
@@ -1193,6 +1310,8 @@ const SchoolOrdersPageClient: React.FC = () => {
       setInfo(res?.data?.message || "Email sent.");
       await fetchOrders();
       await refreshEmailLogs(emailOrder.id);
+      await refreshGlobalEmailLogs(); // ✅ add this
+
 
       // setEmailCounts((prev) => ({
       //   ...prev,
@@ -2296,22 +2415,38 @@ const SchoolOrdersPageClient: React.FC = () => {
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-[11px]">
                         <div className="md:col-span-5">
                           <label className="block text-[10.5px] text-slate-600 mb-0.5">To</label>
-                          <input
-                            value={emailTo}
-                            onChange={(e) => setEmailTo(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                            placeholder="supplier@email.com"
-                          />
+                        <input
+                          value={emailTo}
+                          onChange={(e) => setEmailTo(e.target.value)}
+                          list="emailsList"
+                          className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          placeholder="type to search supplier email…"
+                        />
+
+
+                          <datalist id="emailsList">
+                          {combinedEmailOptions.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </datalist>
+
+
+
+
                         </div>
 
                         <div className="md:col-span-3">
                           <label className="block text-[10.5px] text-slate-600 mb-0.5">CC</label>
                           <input
-                            value={emailCc}
-                            onChange={(e) => setEmailCc(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                            placeholder="cc1@email.com, cc2@email.com"
-                          />
+                                value={emailCc}
+                                onChange={(e) => setEmailCc(e.target.value)}
+                                list="emailsList"
+                                className="w-full border border-slate-300 rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                placeholder="type to search, you can add multiple using comma…"
+                              />
+
                         </div>
 
                         <div className="md:col-span-4">
@@ -2595,6 +2730,7 @@ const BulkTargetBlock: React.FC<{
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [schoolGroups]);
 
+
   const targetOrders = useMemo(() => {
     if (mode === "school" && schoolId) {
       const sid = Number(schoolId);
@@ -2602,6 +2738,8 @@ const BulkTargetBlock: React.FC<{
     }
     return visibleOrders;
   }, [mode, schoolId, visibleOrders]);
+
+  
 
   return (
     <>
