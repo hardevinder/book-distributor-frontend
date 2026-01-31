@@ -76,6 +76,9 @@ type BookLite = {
   subject?: string | null;
   code?: string | null;
   isbn?: string | null;
+   // ✅ add
+  publisher_id?: number | null;
+  publisher?: { id: number; name: string } | null;
 };
 
 type ReceiveDocType = "CHALLAN" | "INVOICE";
@@ -156,7 +159,7 @@ type GetResponse = { receipt: DirectReceipt };
 
 /* ---------------- Helpers ---------------- */
 
-// ✅ IMPORTANT: this page is Direct Receipts, so base must be direct-receipts (not supplier-receipts)
+// ✅ IMPORTANT: this page is Direct Receipts, so base must be supplier-receipts
 const API_BASE = "/api/supplier-receipts";
 
 // ✅ Book create endpoint (change if needed)
@@ -412,6 +415,7 @@ export default function DirectReceiptsPageClient() {
     return {
       supplier_id: "",
       school_id: "", // ✅ add thiss
+      publisher_id: "", // ✅ ADD
   
 
       receive_doc_type: "INVOICE" as ReceiveDocType,
@@ -523,7 +527,16 @@ const [bookCreateRowIdx, setBookCreateRowIdx] = useState<number | null>(null);
 // ✅ open create-book for a particular row
 const openCreateBookForRow = (rowIdx: number) => {
   setBookCreateError(null);
-  setBookForm({ title: "", publisher_id: "", mrp: "", class_name: "", subject: "", code: "", isbn: "" });
+  setBookForm({
+  title: "",
+  publisher_id: String((form as any).publisher_id || ""), // ✅ auto use selected publisher
+  mrp: "",
+  class_name: "",
+  subject: "",
+  code: "",
+  isbn: "",
+});
+
   setBookCreateRowIdx(rowIdx);
   setBookCreateOpen(true);
 };
@@ -654,7 +667,7 @@ const fetchBooks = async () => {
     fetchBooks();
     fetchReceipts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [filterSupplierId, filterStatus, filterFrom, filterTo, filterDocType, filterDocNo]);
 
   /* ------------ Create modal ------------ */
 
@@ -668,6 +681,8 @@ const fetchBooks = async () => {
     setForm({
       supplier_id: "",
       school_id: "",
+      publisher_id: "",
+
 
       receive_doc_type: "INVOICE",
       doc_no: "",
@@ -960,15 +975,23 @@ const openAllocationForReceipt = async (receiptId: number) => {
     }));
   };
 
-    const bookOptions = useMemo(
+const filteredBooks = useMemo(() => {
+  const pid = Number((form as any).publisher_id || 0);
+  if (!pid) return books || [];
+
+  return (books || []).filter((b: any) => Number(b.publisher_id || b.publisher?.id || 0) === pid);
+}, [books, (form as any).publisher_id]);
+
+  const bookOptions = useMemo(
     () =>
-      (books || []).map((b) => ({
+      (filteredBooks || []).map((b) => ({
         value: String(b.id),
         label: b.title,
         meta: [b.class_name, b.subject, b.code].filter(Boolean).join(" • "),
       })),
-    [books]
+    [filteredBooks]
   );
+
 
   const publisherOptions = useMemo(
     () =>
@@ -1909,6 +1932,25 @@ const specimenPayload = existingItems
                     ))}
                   </select>
                 </div>
+
+                {/* ✅ Publisher (filters books below) */}
+                <div className="col-span-12 md:col-span-2">
+                  <MiniLabel>Publisher (optional)</MiniLabel>
+
+                  <SearchableSelect
+                    value={String((form as any).publisher_id || "")}
+                    onChange={(val) => {
+                      setForm((p: any) => ({ ...p, publisher_id: val }));
+                      // ✅ reset all rows book selection when publisher changes
+                      setItems((prev) =>
+                        prev.map((r) => ({ ...r, book_id: 0, title: "", meta: "" }))
+                      );
+                    }}
+                    placeholder="Search publisher..."
+                    options={publisherOptions}
+                  />
+                </div>
+
 
                 {/* Doc Type */}
                 <div className="col-span-6 md:col-span-2">

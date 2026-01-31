@@ -29,6 +29,12 @@ export default function SearchableSelect({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // ✅ Only selected value shortened (dropdown keeps full)
+  const shortLabel = (s: string, max = 10) => {
+    if (!s) return "";
+    return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  };
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return options;
@@ -39,6 +45,12 @@ export default function SearchableSelect({
     const hit = options.find((o) => o.value === value);
     return hit?.label ?? (value || "");
   }, [options, value]);
+
+  // ✅ shortened label for button
+  const selectedLabelShort = useMemo(
+    () => shortLabel(selectedLabel, 14),
+    [selectedLabel]
+  );
 
   const close = () => {
     setOpen(false);
@@ -61,13 +73,11 @@ export default function SearchableSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // reset active when filtering changes
   useEffect(() => {
     if (!open) return;
     setActive(0);
   }, [q, open]);
 
-  // auto-scroll active item into view
   useEffect(() => {
     if (!open) return;
     const container = listRef.current;
@@ -81,7 +91,8 @@ export default function SearchableSelect({
     const viewBottom = viewTop + container.clientHeight;
 
     if (elTop < viewTop) container.scrollTop = elTop;
-    else if (elBottom > viewBottom) container.scrollTop = elBottom - container.clientHeight;
+    else if (elBottom > viewBottom)
+      container.scrollTop = elBottom - container.clientHeight;
   }, [active, open]);
 
   const pick = (opt: Opt) => {
@@ -92,7 +103,6 @@ export default function SearchableSelect({
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
 
-    // If menu closed and user presses ArrowDown/Enter, open it
     if (!open) {
       if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
         e.preventDefault();
@@ -126,16 +136,15 @@ export default function SearchableSelect({
           focus:ring-2 focus:ring-indigo-500 focus:border-transparent
           ${disabled ? "bg-slate-100 text-slate-500" : ""}
           ${buttonClassName}`}
+        title={selectedLabel || "Select..."}   // ✅ full on hover
       >
         <span className={selectedLabel ? "text-slate-900" : "text-slate-400"}>
-          {selectedLabel || "Select..."}
+          {selectedLabelShort || "Select..."}
         </span>
       </button>
 
       {open && !disabled && (
-        <div
-          className={`absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg ${menuClassName}`}
-        >
+        <div className={`absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg ${menuClassName}`}>
           <div className="p-2 border-b border-slate-100">
             <input
               ref={inputRef}
@@ -162,6 +171,7 @@ export default function SearchableSelect({
                   onClick={() => pick(o)}
                   className={`w-full text-left px-3 py-2 text-sm cursor-pointer
                     ${idx === active ? "bg-indigo-50" : "hover:bg-slate-50"}`}
+                  title={o.label}   // ✅ full name hover
                 >
                   {o.label}
                 </button>
