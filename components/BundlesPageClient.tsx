@@ -275,9 +275,9 @@ const BundlesPageClient: React.FC = () => {
 
   /* ---------------- Load Products ---------------- */
   /**
-   * ✅ Backend behavior you requested:
+   * ✅ Backend behavior:
    * - section=books  -> BOOK products only from REQUIREMENTS (school_id + academic_session)
-   * - section=extras -> only DIRECT PURCHASED items (typically MATERIAL products)
+   * - section=extras -> only DIRECT PURCHASED items (MATERIAL + direct-purchased BOOKs)
    */
   const loadProducts = async (opts?: { ensure_books?: boolean; section?: "books" | "extras" }) => {
     if (!schoolId) return;
@@ -292,8 +292,8 @@ const BundlesPageClient: React.FC = () => {
       const pRes = await api.get("/api/products", {
         params: {
           section, // ✅ NEW
-          school_id: Number(schoolId), // ✅ needed for books section
-          academic_session: session || undefined, // ✅ needed for books section
+          school_id: Number(schoolId), // ✅ for books section
+          academic_session: session || undefined, // ✅ for books section
 
           is_active: 1,
           include_book: 1,
@@ -301,7 +301,7 @@ const BundlesPageClient: React.FC = () => {
           // ✅ Option-A: auto create BOOK products (only makes sense for books)
           ensure_books: section === "books" && opts?.ensure_books ? 1 : undefined,
 
-          // If your backend supports it, you can also force extras to "direct-only received"
+          // Optional (if you enable in backend)
           // only_received: section === "extras" ? 1 : undefined,
         },
       });
@@ -339,7 +339,7 @@ const BundlesPageClient: React.FC = () => {
       await loadProducts({ ensure_books: true, section: "books" });
       setSuccess("BOOK products ensured ✅ (Books are now addable in kits)");
     } catch (e: any) {
-      // loadProducts handles error state
+      // loadProducts handles errors
     } finally {
       setEnsuringBooks(false);
     }
@@ -404,16 +404,14 @@ const BundlesPageClient: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, session]);
 
-  // When tab changes: reload products for that tab + set a sensible default type
+  // When tab changes: reload products + adjust default pickerType
   useEffect(() => {
     if (!schoolId) return;
 
     if (pickerTab === "ADD_PRODUCTS") {
-      // ✅ Extras = direct purchased items (usually MATERIAL)
       setPickerType("MATERIAL");
       loadProducts({ section: "extras" });
     } else {
-      // Books tab: show all (mostly BOOK)
       setPickerType("ALL");
       loadProducts({ section: "books" });
     }
@@ -436,11 +434,13 @@ const BundlesPageClient: React.FC = () => {
   const filteredProductRows = useMemo(() => {
     const q = safeStr(pickerQ).toLowerCase();
 
+    // show both MATERIAL and direct BOOKs in extras tab (backend already filters)
     let rows = products.map((p) => {
       const isBook = p.type === "BOOK";
       const title = isBook
         ? p.book?.title || (p.book_id ? `Book #${p.book_id}` : `Book Product #${p.id}`)
         : p.name || `Material #${p.id}`;
+
       const subject = isBook ? p.book?.subject || "" : "MATERIAL";
       const code = isBook ? p.book?.code || "" : p.uom || "";
       const cls = isBook ? p.book?.class_name || "" : "";
@@ -456,11 +456,8 @@ const BundlesPageClient: React.FC = () => {
       };
     });
 
-    // ✅ For "Extra Products", we want direct purchased items => generally MATERIAL only
-    if (pickerTab === "ADD_PRODUCTS") {
-      rows = rows.filter((r) => r.type === "MATERIAL");
-    } else {
-      // normal filter dropdown behavior
+    // For extras tab, keep BOTH types (MATERIAL + direct BOOK)
+    if (pickerTab !== "ADD_PRODUCTS") {
       if (pickerType !== "ALL") rows = rows.filter((r) => r.type === pickerType);
     }
 
@@ -610,7 +607,7 @@ const BundlesPageClient: React.FC = () => {
 
   const activeItems = useMemo(() => {
     const items = (active?.items || []).slice();
-    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(a.id));
+    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(b.id));
     return items;
   }, [active]);
 
@@ -747,6 +744,7 @@ const BundlesPageClient: React.FC = () => {
 
   const schoolBooksCount = flattenedAvailability.length;
   const bookProductsCount = products.filter((p) => p.type === "BOOK").length;
+
   const missingBookProductsCount = useMemo(() => {
     let missing = 0;
     for (const row of flattenedAvailability) {
@@ -945,9 +943,6 @@ const BundlesPageClient: React.FC = () => {
             )}
           </div>
         </section>
-
-        {/* MIDDLE: Bundle editor */}
-        {/* (UNCHANGED below — your editor + items table is same) */}
 
         {/* MIDDLE: Bundle editor */}
         <section className="col-span-12 lg:col-span-6">
@@ -1177,9 +1172,7 @@ const BundlesPageClient: React.FC = () => {
                                   className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.sale_price}
                                   onChange={(e) =>
-                                    updateItemLocal(it.id, {
-                                      sale_price: Math.max(0, num(e.target.value)),
-                                    })
+                                    updateItemLocal(it.id, { sale_price: Math.max(0, num(e.target.value)) })
                                   }
                                 />
                               </td>
@@ -1518,7 +1511,7 @@ const BundlesPageClient: React.FC = () => {
                 )}
 
                 <div className="mt-3 text-xs text-slate-500">
-                  “Extra Products” shows only <b>Direct Purchased</b> items (not requirement books).
+                  “Extra Products” shows only <b>Direct Purchased</b> items (MATERIAL + direct purchased BOOKs).
                 </div>
               </>
             )}
