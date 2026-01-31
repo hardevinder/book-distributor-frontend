@@ -824,10 +824,6 @@ const BooksPageClient: React.FC = () => {
         </div>
 
         <div className="px-3 sm:px-4 pb-2 hidden md:block">
-          <div className="flex items-center gap-2 text-[12px] text-slate-600">
-            <Sparkles className="w-4 h-4 text-indigo-600" />
-            Excel-like inline entry & editing with supplier pricing (MRP, discount & rate).
-          </div>
         </div>
       </header>
 

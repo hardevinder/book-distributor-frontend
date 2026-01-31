@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/apiClient";
 import { useAuth } from "@/context/AuthContext";
@@ -39,13 +39,32 @@ const emptyForm: Omit<Transport, "id"> = {
   remarks: "",
 };
 
-type ToastState = {
-  message: string;
-  type: "success" | "error";
-} | null;
+type ToastState = { message: string; type: "success" | "error" } | null;
+
+type Meta = {
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+};
+
+type TransportsListResponse =
+  | Transport[]
+  | {
+      data: Transport[];
+      meta?: Meta;
+    };
+
+const normalizeTransports = (
+  payload: TransportsListResponse
+): { rows: Transport[]; meta?: Meta } => {
+  if (Array.isArray(payload)) return { rows: payload };
+  return { rows: payload?.data ?? [], meta: payload?.meta };
+};
 
 const TransportsPageClient: React.FC = () => {
   const { user, logout } = useAuth();
+
   const [transports, setTransports] = useState<Transport[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -73,21 +92,44 @@ const TransportsPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  const fetchTransports = async () => {
+  // ✅ Pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [meta, setMeta] = useState<Meta | null>(null);
+
+  const fetchTransports = async (nextPage?: number, nextLimit?: number) => {
     setListLoading(true);
     try {
-      const res = await api.get<Transport[]>("/api/transports");
-      setTransports(res.data);
+      const params: any = {
+        page: nextPage ?? page,
+        limit: nextLimit ?? limit,
+      };
+
+      const res = await api.get<TransportsListResponse>("/api/transports", {
+        params,
+      });
+
+      const { rows, meta } = normalizeTransports(res.data);
+
+      // ✅ latest on top if backend not sorted
+      const sorted = [...(rows || [])].sort((a, b) => (b.id || 0) - (a.id || 0));
+
+      setTransports(sorted);
+      setMeta(meta ?? null);
+      setError(null);
     } catch (err: any) {
       console.error(err);
       setError("Failed to load transports.");
+      setTransports([]);
+      setMeta(null);
     } finally {
       setListLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchTransports();
+    fetchTransports(1, limit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto hide toast
@@ -115,36 +157,29 @@ const TransportsPageClient: React.FC = () => {
     setLoading(true);
 
     try {
-      if (!form.name.trim()) {
-        throw new Error("Name is required.");
-      }
+      if (!form.name.trim()) throw new Error("Name is required.");
+
+      const payload = {
+        ...form,
+        name: form.name.trim(),
+      };
 
       if (editingId) {
-        // UPDATE
-        await api.put(`/api/transports/${editingId}`, form);
-        setToast({
-          message: "Transport updated successfully.",
-          type: "success",
-        });
+        await api.put(`/api/transports/${editingId}`, payload);
+        setToast({ message: "Transport updated successfully.", type: "success" });
       } else {
-        // CREATE
-        await api.post("/api/transports", form);
-        setToast({
-          message: "Transport added successfully.",
-          type: "success",
-        });
+        await api.post("/api/transports", payload);
+        setToast({ message: "Transport added successfully.", type: "success" });
       }
 
       resetForm();
-      await fetchTransports();
+      await fetchTransports(page, limit);
     } catch (err: any) {
       console.error(err);
       const msg =
         err?.message ||
         err?.response?.data?.error ||
-        (editingId
-          ? "Failed to update transport."
-          : "Failed to create transport.");
+        (editingId ? "Failed to update transport." : "Failed to create transport.");
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -156,6 +191,7 @@ const TransportsPageClient: React.FC = () => {
     setError(null);
     setImportSummary(null);
     setEditingId(transport.id);
+
     setForm({
       name: transport.name || "",
       contact_person: transport.contact_person || "",
@@ -182,14 +218,16 @@ const TransportsPageClient: React.FC = () => {
     setDeletingId(id);
     try {
       await api.delete(`/api/transports/${id}`);
-      await fetchTransports();
-      if (editingId === id) {
-        resetForm();
-      }
-      setToast({
-        message: "Transport deleted successfully.",
-        type: "success",
-      });
+
+      // ✅ if last item on page, go prev page
+      const willBeEmpty = transports.length === 1 && page > 1;
+      const nextPage = willBeEmpty ? page - 1 : page;
+      if (willBeEmpty) setPage(nextPage);
+
+      await fetchTransports(nextPage, limit);
+
+      if (editingId === id) resetForm();
+      setToast({ message: "Transport deleted successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg = "Failed to delete transport.";
@@ -205,9 +243,7 @@ const TransportsPageClient: React.FC = () => {
     setImportSummary(null);
     setExporting(true);
     try {
-      const res = await api.get("/api/transports/export", {
-        responseType: "blob",
-      });
+      const res = await api.get("/api/transports/export", { responseType: "blob" });
 
       const blob = new Blob([res.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -222,10 +258,7 @@ const TransportsPageClient: React.FC = () => {
       a.remove();
       window.URL.revokeObjectURL(url);
 
-      setToast({
-        message: "Transports exported successfully.",
-        type: "success",
-      });
+      setToast({ message: "Transports exported successfully.", type: "success" });
     } catch (err: any) {
       console.error(err);
       const msg = "Failed to export transports.";
@@ -236,9 +269,7 @@ const TransportsPageClient: React.FC = () => {
     }
   };
 
-  const handleImportChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleImportChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -251,38 +282,27 @@ const TransportsPageClient: React.FC = () => {
       formData.append("file", file);
 
       const res = await api.post("/api/transports/import", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
       const { created, updated, errors: importErrors } = res.data || {};
-      let summary = `Import completed. Created: ${created ?? 0}, Updated: ${
-        updated ?? 0
-      }`;
-      if (importErrors && importErrors.length > 0) {
-        summary += `, Errors: ${importErrors.length}`;
-      }
+      let summary = `Import completed. Created: ${created ?? 0}, Updated: ${updated ?? 0}`;
+      if (importErrors && importErrors.length > 0) summary += `, Errors: ${importErrors.length}`;
       setImportSummary(summary);
 
-      setToast({
-        message: "Transports imported successfully.",
-        type: "success",
-      });
+      setToast({ message: "Transports imported successfully.", type: "success" });
 
-      await fetchTransports();
+      // after import go page 1
+      setPage(1);
+      await fetchTransports(1, limit);
     } catch (err: any) {
       console.error(err);
-      const msg =
-        err?.response?.data?.error ||
-        "Failed to import transports from Excel.";
+      const msg = err?.response?.data?.error || "Failed to import transports from Excel.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
       setImporting(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -298,9 +318,7 @@ const TransportsPageClient: React.FC = () => {
         const next = addRowRefs.current[index + 1];
         if (next) next.focus();
       } else {
-        if (!loading) {
-          saveTransport();
-        }
+        if (!loading) saveTransport();
       }
     };
 
@@ -314,89 +332,95 @@ const TransportsPageClient: React.FC = () => {
         const next = editRowRefs.current[index + 1];
         if (next) next.focus();
       } else {
-        if (!loading) {
-          saveTransport();
-        }
+        if (!loading) saveTransport();
       }
     };
 
+  /* ---------- Pagination helpers ---------- */
+
+  const totalPages = meta?.totalPages;
+  const total = meta?.total;
+
+  const canPrev = page > 1;
+  const canNext =
+    typeof totalPages === "number" ? page < totalPages : transports.length === limit;
+
+  const goPrev = () => {
+    if (!canPrev || listLoading) return;
+    const nextPage = page - 1;
+    setPage(nextPage);
+    fetchTransports(nextPage, limit);
+  };
+
+  const goNext = () => {
+    if (!canNext || listLoading) return;
+    const nextPage = page + 1;
+    setPage(nextPage);
+    fetchTransports(nextPage, limit);
+  };
+
+  const changeLimit = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextLimit = Number(e.target.value);
+    setLimit(nextLimit);
+    setPage(1);
+    fetchTransports(1, nextLimit);
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 text-slate-900 overflow-hidden relative">
-      {/* Animated Background Elements */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-blob animation-delay-4000"></div>
+    <div className="min-h-dvh bg-slate-50 text-slate-900 overflow-hidden relative">
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-indigo-200/30 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-sky-200/30 rounded-full blur-3xl" />
       </div>
 
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-4 bg-white/95 backdrop-blur-md border-b border-slate-200/50 shadow-lg">
-        <div className="font-bold flex items-center gap-3">
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
-          >
-            <ChevronLeft className="w-5 h-5" />
-            <span className="text-sm">Back to Dashboard</span>
-          </Link>
-        </div>
-        <div className="font-bold flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg animate-pulse">
-            <Truck className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-base sm:text-lg tracking-tight">
-              Transport Management
-            </span>
-            <span className="text-xs text-slate-500 font-medium">
-              Maintain Transporters / Couriers
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-4 text-sm">
-          <div className="flex flex-col items-end">
-            <span className="font-semibold text-slate-800">
-              {user?.name || "User"}
-            </span>
-            {user?.role && (
-              <span className="text-xs rounded-full bg-gradient-to-r from-indigo-100 to-purple-100 px-2.5 py-1 border border-indigo-200 text-indigo-700 font-medium">
-                {user.role}
-              </span>
-            )}
-          </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-1.5 bg-gradient-to-r from-rose-500 to-red-600 text-white px-4 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 transform"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
+      {/* ✅ Compact header */}
+      <header className="relative z-20 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors"
+              title="Back"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="text-xs sm:text-sm hidden sm:inline">Back</span>
+            </Link>
 
-      <main className="relative z-10 p-6 lg:p-8 space-y-6">
-        {/* Header with Actions */}
-        <section className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-md">
-              <Sparkles className="w-4 h-4" />
+            <div className="hidden md:flex items-center gap-2 ml-2 min-w-0">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow">
+                <Truck className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold leading-tight truncate">
+                  Transport Master
+                </div>
+                <div className="text-[11px] text-slate-500 truncate">
+                  Maintain transporters / couriers
+                </div>
+              </div>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
-              Transport Directory
-            </h1>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleExport}
               disabled={exporting || listLoading || transports.length === 0}
-              className="group flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed text-xs sm:text-sm"
+              className="h-9 px-3 rounded-full bg-indigo-600 text-white text-xs font-semibold shadow-sm hover:shadow disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              title="Export Excel"
             >
-              <Download className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
-              {exporting ? "Exporting..." : "Export Excel"}
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{exporting ? "Exporting..." : "Export"}</span>
             </button>
-            <label className="group flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all duration-200 cursor-pointer text-xs sm:text-sm">
-              <Upload className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
-              <span>{importing ? "Importing..." : "Import Excel"}</span>
+
+            <label
+              className={`h-9 px-3 rounded-full bg-emerald-600 text-white text-xs font-semibold shadow-sm hover:shadow inline-flex items-center gap-2 cursor-pointer ${
+                importing ? "opacity-60 cursor-not-allowed" : ""
+              }`}
+              title="Import Excel"
+            >
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">{importing ? "Importing..." : "Import"}</span>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -406,107 +430,176 @@ const TransportsPageClient: React.FC = () => {
                 disabled={importing}
               />
             </label>
-            <span className="text-[11px] sm:text-xs text-slate-500 hidden sm:block">
-              Use export as template for bulk updates.
-            </span>
-          </div>
-        </section>
 
+            <div className="hidden sm:flex flex-col items-end leading-tight ml-1">
+              <span className="text-xs font-semibold text-slate-800 truncate max-w-[160px]">
+                {user?.name || "User"}
+              </span>
+              {user?.role && (
+                <span className="text-[10px] rounded-full bg-indigo-50 px-2 py-0.5 border border-indigo-100 text-indigo-700 font-medium">
+                  {user.role}
+                </span>
+              )}
+            </div>
+
+            <button
+              onClick={logout}
+              className="inline-flex items-center justify-center h-9 px-3 rounded-full bg-rose-600 text-white text-xs font-semibold shadow hover:shadow-md"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+
+      
+      </header>
+
+      <main className="relative z-10 px-3 sm:px-4 py-3">
         {/* Alerts */}
         {(error || importSummary) && (
-          <div className="space-y-3">
+          <div className="mb-3 space-y-2">
             {error && (
-              <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-3 shadow-sm">
-                <div className="flex items-center gap-2 text-xs sm:text-sm text-red-700">
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
-                    !
-                  </div>
-                  <span>{error}</span>
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 flex items-center gap-2">
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
+                  !
                 </div>
+                <span className="truncate">{error}</span>
               </div>
             )}
             {importSummary && !error && (
-              <div className="bg-gradient-to-r from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-3 shadow-sm">
-                <div className="flex items-center gap-2 text-xs sm:text-sm text-emerald-700">
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                    <Sparkles className="w-3 h-3" />
-                  </div>
-                  <span>{importSummary}</span>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700 flex items-center gap-2">
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                  <Sparkles className="w-3 h-3" />
                 </div>
+                <span className="truncate">{importSummary}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Table with Excel-style add/edit */}
-        <section className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-slate-200/60">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm sm:text-base font-semibold text-slate-800 flex items-center gap-2">
-              <Truck className="w-4 h-4 text-indigo-500" />
-              Transports ({transports.length})
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 border-b border-slate-200">
+            <h2 className="text-xs sm:text-sm font-semibold text-slate-800 flex items-center gap-2">
+              <Truck className="w-4 h-4 text-indigo-600" />
+              Transports{" "}
+              {typeof total === "number" ? (
+                <span className="text-slate-500 font-medium">({total})</span>
+              ) : (
+                <span className="text-slate-500 font-medium">({transports.length})</span>
+              )}
             </h2>
-            {editingId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="text-[11px] sm:text-xs px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-600 font-medium"
-              >
-                Cancel Edit
-              </button>
-            )}
+
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="text-[11px] px-3 h-8 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium"
+                >
+                  Cancel Edit
+                </button>
+              )}
+
+              {/* Pagination controls */}
+              <div className="flex items-center gap-2">
+                <select
+                  value={limit}
+                  onChange={changeLimit}
+                  className="h-8 px-2 border border-slate-300 rounded-full text-[11px] bg-white"
+                  title="Rows per page"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  disabled={!canPrev || listLoading}
+                  className="h-8 px-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Prev
+                </button>
+
+                <div className="text-[11px] text-slate-600 px-2">
+                  Page <span className="font-semibold">{page}</span>
+                  {typeof totalPages === "number" ? (
+                    <>
+                      {" "}
+                      / <span className="font-semibold">{totalPages}</span>
+                    </>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={!canNext || listLoading}
+                  className="h-8 px-3 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
 
           {listLoading ? (
-            <div className="flex items-center justify-center py-10 text-xs sm:text-sm text-slate-600">
+            <div className="flex items-center justify-center py-10 text-xs text-slate-600">
               <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mr-2" />
               Loading transports...
             </div>
           ) : transports.length === 0 && !editingId ? (
-            <div className="text-xs sm:text-sm text-slate-500 py-4 mb-3">
+            <div className="text-xs text-slate-500 px-3 sm:px-4 py-3">
               Start typing in the row below headers to add your first transport.
             </div>
           ) : null}
 
-          <div className="overflow-auto max-h-[520px] rounded-xl border border-slate-200/80 shadow-inner">
-            <table className="w-full text-[11px] sm:text-sm border-collapse bg-white">
-              <thead className="bg-gradient-to-r from-indigo-50 to-purple-50 sticky top-0 z-20">
+          {/* ✅ max area for listing */}
+          <div className="overflow-auto max-h-[calc(100dvh-210px)] border-t border-slate-100">
+            <table className="w-full text-[11px] border-collapse bg-white">
+              <thead className="bg-slate-50 sticky top-0 z-20">
                 <tr>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[200px]">
                     Name
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
-                    Contact Person
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[160px]">
+                    Contact
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[130px]">
                     Phone
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[190px]">
                     Email
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[240px]">
                     Address
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[140px]">
                     City
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[140px]">
                     State
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[120px]">
                     Pincode
                   </th>
-                  <th className="px-3 py-2 text-left font-semibold text-slate-700 border-b border-slate-200">
+                  <th className="px-2 py-2 text-left font-semibold text-slate-700 border-b border-slate-200 min-w-[220px]">
                     Remarks
                   </th>
-                  <th className="px-3 py-2 text-center font-semibold text-slate-700 border-b border-slate-200">
+
+                  {/* ✅ sticky actions to stop overlap */}
+                  <th className="px-2 py-2 text-center font-semibold text-slate-700 border-b border-slate-200 w-[110px] sticky right-0 bg-slate-50 z-30">
                     Actions
                   </th>
                 </tr>
               </thead>
+
               <tbody>
                 {/* ADD ROW */}
-                <tr className="bg-slate-50/80">
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+                <tr className="bg-white">
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="name"
                       value={form.name}
@@ -515,11 +608,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[0] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(0)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Transport name"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="contact_person"
                       value={form.contact_person}
@@ -528,11 +622,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[1] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(1)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Contact person"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="phone"
                       value={form.phone}
@@ -541,11 +636,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[2] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(2)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Phone"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="email"
                       type="email"
@@ -555,11 +651,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[3] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(3)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Email"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <textarea
                       name="address"
                       value={form.address}
@@ -568,12 +665,13 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[4] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(4)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
                       rows={1}
                       placeholder="Address"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="city"
                       value={form.city}
@@ -582,11 +680,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[5] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(5)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="City"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="state"
                       value={form.state}
@@ -595,11 +694,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[6] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(6)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="State"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <input
                       name="pincode"
                       value={form.pincode}
@@ -608,11 +708,12 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[7] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(7)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                       placeholder="Pincode"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200">
                     <textarea
                       name="remarks"
                       value={form.remarks}
@@ -621,17 +722,18 @@ const TransportsPageClient: React.FC = () => {
                         addRowRefs.current[8] = el;
                       }}
                       onKeyDown={makeAddRowKeyDown(8)}
-                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
+                      className="w-full border border-slate-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
                       rows={1}
                       placeholder="Remarks (optional)"
                     />
                   </td>
-                  <td className="px-3 py-1.5 border-b border-slate-200 text-center">
+
+                  <td className="px-2 py-1.5 border-b border-slate-200 sticky right-0 bg-white z-10">
                     <button
                       type="button"
                       disabled={loading}
                       onClick={saveTransport}
-                      className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                      className="w-full inline-flex items-center justify-center h-8 px-3 rounded-full bg-emerald-600 text-white text-[11px] font-semibold shadow-sm hover:shadow disabled:opacity-60"
                     >
                       {loading ? "Saving..." : "Add"}
                     </button>
@@ -641,9 +743,8 @@ const TransportsPageClient: React.FC = () => {
                 {/* DATA ROWS */}
                 {transports.map((t) =>
                   editingId === t.id ? (
-                    // EDIT ROW
-                    <tr key={t.id} className="bg-yellow-50/70">
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+                    <tr key={t.id} className="bg-amber-50">
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="name"
                           value={form.name}
@@ -652,10 +753,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[0] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(0)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="contact_person"
                           value={form.contact_person}
@@ -664,10 +766,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[1] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(1)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="phone"
                           value={form.phone}
@@ -676,10 +779,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[2] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(2)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="email"
                           type="email"
@@ -689,10 +793,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[3] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(3)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <textarea
                           name="address"
                           value={form.address}
@@ -701,11 +806,12 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[4] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(4)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
                           rows={1}
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="city"
                           value={form.city}
@@ -714,10 +820,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[5] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(5)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="state"
                           value={form.state}
@@ -726,10 +833,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[6] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(6)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <input
                           name="pincode"
                           value={form.pincode}
@@ -738,10 +846,11 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[7] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(7)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200">
                         <textarea
                           name="remarks"
                           value={form.remarks}
@@ -750,24 +859,25 @@ const TransportsPageClient: React.FC = () => {
                             editRowRefs.current[8] = el;
                           }}
                           onKeyDown={makeEditRowKeyDown(8)}
-                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] sm:text-xs bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
+                          className="w-full border border-amber-300 rounded-md px-2 py-1 text-[11px] bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none"
                           rows={1}
                         />
                       </td>
-                      <td className="px-3 py-1.5 border-b border-slate-200 text-center">
-                        <div className="flex items-center justify-center gap-2">
+
+                      <td className="px-2 py-1.5 border-b border-slate-200 sticky right-0 bg-amber-50 z-10">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
                             disabled={loading}
                             onClick={saveTransport}
-                            className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-[11px] sm:text-xs font-semibold shadow-md hover:shadow-lg hover:scale-105 transition-all disabled:opacity-60"
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-full bg-indigo-600 text-white text-[11px] font-semibold shadow-sm hover:shadow disabled:opacity-60"
                           >
                             {loading ? "Saving..." : "Save"}
                           </button>
                           <button
                             type="button"
                             onClick={resetForm}
-                            className="inline-flex items-center justify-center h-8 px-3 rounded-full border border-slate-300 bg-white text-[11px] sm:text-xs text-slate-700 hover:bg-slate-50"
+                            className="inline-flex items-center justify-center h-8 px-3 rounded-full border border-slate-300 bg-white text-[11px] text-slate-700 hover:bg-slate-50"
                           >
                             Cancel
                           </button>
@@ -775,63 +885,58 @@ const TransportsPageClient: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    // NORMAL ROW
-                    <tr
-                      key={t.id}
-                      className="hover:bg-slate-50 transition-colors group"
-                    >
-                      <td className="px-3 py-2 border-b border-slate-200 font-medium text-slate-800">
-                        {t.name}
+                    <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-2 py-2 border-b border-slate-200 font-medium text-slate-800">
+                        {t.name || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.contact_person || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.phone || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.email || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        <span className="line-clamp-2">
-                          {t.address || "-"}
-                        </span>
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
+                        <span className="line-clamp-2">{t.address || "-"}</span>
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.city || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.state || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
                         {t.pincode || "-"}
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200 text-slate-600">
-                        <span className="line-clamp-2">
-                          {t.remarks || "-"}
-                        </span>
+                      <td className="px-2 py-2 border-b border-slate-200 text-slate-600">
+                        <span className="line-clamp-2">{t.remarks || "-"}</span>
                       </td>
-                      <td className="px-3 py-2 border-b border-slate-200">
-                        <div className="flex items-center justify-center gap-2">
+
+                      <td className="px-2 py-2 border-b border-slate-200 sticky right-0 bg-white z-10">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
                             onClick={() => handleEdit(t)}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80"
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-indigo-600 text-white shadow-sm hover:shadow hover:scale-105 transition"
                             aria-label="Edit transport"
+                            title="Edit"
                           >
-                            <Pencil className="w-3.5 h-3.5" />
+                            <Pencil className="w-4 h-4" />
                           </button>
                           <button
                             type="button"
                             onClick={() => handleDelete(t.id)}
                             disabled={deletingId === t.id}
-                            className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-r from-red-500 to-rose-600 text-white shadow-md hover:shadow-lg hover:scale-110 transition-all group-hover:opacity-100 opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-rose-600 text-white shadow-sm hover:shadow hover:scale-105 transition disabled:opacity-40 disabled:cursor-not-allowed"
                             aria-label="Delete transport"
+                            title="Delete"
                           >
                             {deletingId === t.id ? (
-                              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                             ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             )}
                           </button>
                         </div>
@@ -848,41 +953,13 @@ const TransportsPageClient: React.FC = () => {
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm sm:text-base ${
-            toast.type === "success"
-              ? "bg-emerald-600 text-white"
-              : "bg-rose-600 text-white"
+          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm ${
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
           }`}
         >
           {toast.message}
         </div>
       )}
-
-      <style jsx>{`
-        @keyframes blob {
-          0% {
-            transform: translate(0px, 0px) scale(1);
-          }
-          33% {
-            transform: translate(30px, -50px) scale(1.1);
-          }
-          66% {
-            transform: translate(-20px, 20px) scale(0.9);
-          }
-          100% {
-            transform: translate(0px, 0px) scale(1);
-          }
-        }
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-      `}</style>
     </div>
   );
 };
