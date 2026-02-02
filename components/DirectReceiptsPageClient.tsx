@@ -982,15 +982,24 @@ const filteredBooks = useMemo(() => {
   return (books || []).filter((b: any) => Number(b.publisher_id || b.publisher?.id || 0) === pid);
 }, [books, (form as any).publisher_id]);
 
-  const bookOptions = useMemo(
-    () =>
-      (filteredBooks || []).map((b) => ({
-        value: String(b.id),
-        label: b.title,
-        meta: [b.class_name, b.subject, b.code].filter(Boolean).join(" • "),
-      })),
-    [filteredBooks]
-  );
+const bookOptions = useMemo(() => {
+  const pubMap = new Map((publishers || []).map((p) => [Number(p.id), p.name]));
+
+  return (filteredBooks || []).map((b) => {
+    const pubName =
+      (b as any)?.publisher?.name ||
+      (b as any)?.publisher_id
+        ? pubMap.get(Number((b as any).publisher_id)) || ""
+        : "";
+
+    return {
+      value: String(b.id),
+      label: pubName ? `${b.title} — ${pubName}` : b.title,
+      meta: [b.class_name, b.subject, b.code].filter(Boolean).join(" • "),
+    };
+  });
+}, [filteredBooks, publishers]);
+
 
 
   const publisherOptions = useMemo(
@@ -2922,11 +2931,19 @@ const specimenPayload = existingItems
                   className="w-full bg-transparent border-0 border-b border-slate-300 focus:border-slate-900 focus:ring-0 px-1 py-1 text-[12px]"
                 >
                   <option value="">Select a book</option>
-                  {books.map((b) => (
-                    <option key={b.id} value={String(b.id)}>
-                      {b.title}
-                    </option>
-                  ))}
+                      {books.map((b) => {
+                        const pubName =
+                          (b as any)?.publisher?.name ||
+                          publishers.find((p) => Number(p.id) === Number((b as any)?.publisher_id))?.name ||
+                          "";
+
+                        return (
+                          <option key={b.id} value={String(b.id)}>
+                            {pubName ? `${b.title} • ${pubName}` : b.title}
+                          </option>
+                        );
+                      })}
+
                 </select>
               </div>
 

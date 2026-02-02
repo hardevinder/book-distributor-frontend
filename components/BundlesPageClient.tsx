@@ -21,6 +21,7 @@ import {
   BookOpen,
   Boxes,
   ShieldCheck,
+  Menu,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -197,6 +198,20 @@ const BundlesPageClient: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // ✅ UI Space improvements
+  const [bundlesDrawerOpen, setBundlesDrawerOpen] = useState(false);
+
+  // ✅ Create bundle as popup (space saver)
+  const [createBundleOpen, setCreateBundleOpen] = useState(false);
+
+  // ✅ Manual Extra create modal
+  const [extraCreateOpen, setExtraCreateOpen] = useState(false);
+  const [extraSaving, setExtraSaving] = useState(false);
+  const [extraErr, setExtraErr] = useState<string | null>(null);
+  const [extraName, setExtraName] = useState("");
+  const [extraUom, setExtraUom] = useState("");
+  const [extraActive, setExtraActive] = useState(true);
+
   const selectedSchool = useMemo(() => {
     const idNum = Number(schoolId);
     return schools.find((s) => s.id === idNum);
@@ -267,6 +282,9 @@ const BundlesPageClient: React.FC = () => {
 
       setClassId(row?.class_id ? num(row.class_id) : "");
       setClassName(row?.class_name || row?.class?.class_name || "");
+
+      // close drawer on select (small screens)
+      setBundlesDrawerOpen(false);
     } catch (err: any) {
       console.error("Failed to load bundle", err);
       setError(err?.response?.data?.message || "Failed to load bundle.");
@@ -300,9 +318,6 @@ const BundlesPageClient: React.FC = () => {
 
           // ✅ Option-A: auto create BOOK products (only makes sense for books)
           ensure_books: section === "books" && opts?.ensure_books ? 1 : undefined,
-
-          // Optional (if you enable in backend)
-          // only_received: section === "extras" ? 1 : undefined,
         },
       });
 
@@ -335,7 +350,6 @@ const BundlesPageClient: React.FC = () => {
 
     setEnsuringBooks(true);
     try {
-      // ✅ Ensure books, then reload BOOK section
       await loadProducts({ ensure_books: true, section: "books" });
       setSuccess("BOOK products ensured ✅ (Books are now addable in kits)");
     } catch (e: any) {
@@ -434,7 +448,6 @@ const BundlesPageClient: React.FC = () => {
   const filteredProductRows = useMemo(() => {
     const q = safeStr(pickerQ).toLowerCase();
 
-    // show both MATERIAL and direct BOOKs in extras tab (backend already filters)
     let rows = products.map((p) => {
       const isBook = p.type === "BOOK";
       const title = isBook
@@ -461,11 +474,11 @@ const BundlesPageClient: React.FC = () => {
       if (pickerType !== "ALL") rows = rows.filter((r) => r.type === pickerType);
     }
 
-    if (!q) return rows.slice(0, 120);
+    if (!q) return rows.slice(0, 140);
 
     return rows
       .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q))
-      .slice(0, 120);
+      .slice(0, 140);
   }, [products, pickerQ, pickerType, pickerTab]);
 
   /* ---------------- Picker Filtering: Availability ---------------- */
@@ -531,6 +544,9 @@ const BundlesPageClient: React.FC = () => {
       await loadBundles();
 
       if (created?.id) await loadBundleById(created.id);
+
+      // reset create form popup state
+      setCreateBundleOpen(false);
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.message || "Failed to create bundle.");
@@ -607,7 +623,7 @@ const BundlesPageClient: React.FC = () => {
 
   const activeItems = useMemo(() => {
     const items = (active?.items || []).slice();
-    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(b.id));
+    items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(a.id));
     return items;
   }, [active]);
 
@@ -656,7 +672,6 @@ const BundlesPageClient: React.FC = () => {
     setSuccess("Item added (save to apply) ✅");
   };
 
-  // Add a SCHOOL BOOK: convert book_id -> product_id (BOOK product)
   const addSchoolBookToKit = (book_id: number) => {
     const p = bookProductByBookId.get(Number(book_id));
     if (!p?.id) {
@@ -728,6 +743,75 @@ const BundlesPageClient: React.FC = () => {
     }
   };
 
+  /* ---------------- Extras: Manual create product ---------------- */
+
+  const createExtraProductNow = async () => {
+    if (!schoolId) {
+      setExtraErr("Select school first.");
+      return;
+    }
+    if (!safeStr(extraName)) {
+      setExtraErr("Enter item name.");
+      return;
+    }
+
+    setExtraErr(null);
+    setSuccess(null);
+    setError(null);
+
+    try {
+      setExtraSaving(true);
+
+      // ✅ MUST match your backend createProduct payload
+      // POST /api/products { type, name, uom?, is_active? }
+      const payload: any = {
+        type: "MATERIAL",
+        name: safeStr(extraName),
+        uom: safeStr(extraUom) || "PCS",
+        is_active: extraActive ? 1 : 0,
+      };
+
+      const res = await api.post("/api/products", payload);
+
+      const created: any = res?.data?.data || null;
+      if (!created?.id) {
+        setExtraErr("Created but response missing product id.");
+        return;
+      }
+
+      const newProd: ProductLite = {
+        id: Number(created.id),
+        type: "MATERIAL",
+        name: created.name ?? safeStr(extraName),
+        uom: created.uom ?? (safeStr(extraUom) || "PCS"),
+        is_active: created.is_active ?? (extraActive ? true : false),
+        book_id: null,
+        book: null,
+      };
+
+      // insert locally (instant UI)
+      setProducts((prev) => {
+        const exists = prev.some((p) => Number(p.id) === Number(newProd.id));
+        if (exists) return prev;
+        return [newProd, ...prev];
+      });
+
+      // auto-add to bundle if selected
+      if (activeId) addItemLocal(newProd.id);
+
+      setExtraName("");
+      setExtraUom("");
+      setExtraActive(true);
+      setExtraCreateOpen(false);
+      setSuccess(activeId ? "Extra item created & added ✅" : "Extra item created ✅ (select bundle to add)");
+    } catch (e: any) {
+      console.error(e);
+      setExtraErr(e?.response?.data?.message || "Failed to create extra item.");
+    } finally {
+      setExtraSaving(false);
+    }
+  };
+
   /* ---------------- UI ---------------- */
 
   const refreshAll = async () => {
@@ -753,28 +837,36 @@ const BundlesPageClient: React.FC = () => {
     return missing;
   }, [flattenedAvailability, bookProductByBookId]);
 
+  const activeBundleLabel = useMemo(() => {
+    if (!activeId) return "Select Bundle";
+    const b = bundles.find((x) => x.id === activeId);
+    return b?.name ? b.name : `Bundle #${activeId}`;
+  }, [activeId, bundles]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* Top Bar */}
-      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
-        <div className="px-4 py-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-3">
+      {/* ✅ Top Bar: ONE toolbar row (filters + actions + expand button in same bar) */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
+        <div className="px-3 sm:px-4 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* LEFT: back + icon + title */}
+            <div className="flex items-center gap-2 min-w-0">
               <Link
                 href="/"
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-full border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition"
+                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition shrink-0"
+                title="Back"
               >
                 <ChevronLeft className="w-4 h-4" />
                 Desktop
               </Link>
 
-              <div className="h-10 w-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
+              <div className="h-9 w-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shrink-0">
                 <Layers className="w-5 h-5" />
               </div>
 
               <div className="min-w-0">
-                <div className="text-base font-bold truncate">Bundles / Kits (School-wise)</div>
-                <div className="text-xs text-slate-500 truncate">
+                <div className="text-sm font-extrabold leading-tight truncate">Bundles / Kits</div>
+                <div className="text-[11px] text-slate-500 truncate">
                   {selectedSchool?.name ? (
                     <>
                       <SchoolIcon className="inline w-4 h-4 mr-1" />
@@ -787,81 +879,122 @@ const BundlesPageClient: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={refreshAll}
-              disabled={!schoolId || loadingBundles || pickerLoading || avLoading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
-            >
-              <RefreshCcw className={`w-4 h-4 ${loadingBundles || pickerLoading || avLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            {/* Spacer so controls align right */}
+            <div className="flex-1 min-w-[10px]" />
 
-            <div className="text-xs text-slate-600 hidden sm:block">{user?.name || "User"}</div>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="px-4 pb-3">
-          <div className="grid grid-cols-12 gap-3 items-end">
-            <div className="col-span-12 md:col-span-5">
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">School</label>
-              <select
-                className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                value={schoolId}
-                onChange={(e) => setSchoolId(Number(e.target.value) || "")}
-              >
-                <option value="">Select School</option>
-                {schools.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-span-12 sm:col-span-6 md:col-span-3">
-              <label className="block text-xs font-medium text-slate-600 mb-1.5">Session</label>
-              <select
-                className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                value={session}
-                onChange={(e) => setSession(e.target.value)}
-              >
-                {SESSION_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-span-12 sm:col-span-6 md:col-span-4">
-              <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
-                School Books: <b>{schoolBooksCount}</b> • Missing BOOK products: <b>{missingBookProductsCount}</b> •
-                Book Products: <b>{bookProductsCount}</b> • Products: <b>{products.length}</b>
+            {/* RIGHT: filters + expand + actions (in same bar) */}
+            <div className="flex flex-wrap items-center gap-2 justify-end w-full xl:w-auto">
+              {/* School */}
+              <div className="w-full sm:w-[260px]">
+                <select
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                  value={schoolId}
+                  onChange={(e) => setSchoolId(Number(e.target.value) || "")}
+                >
+                  <option value="">Select School</option>
+                  {schools.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </div>
+
+              {/* Session */}
+              <div className="w-[130px]">
+                <select
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                  value={session}
+                  onChange={(e) => setSession(e.target.value)}
+                >
+                  {SESSION_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* ✅ Expand/Drawer button stays in BAR (not on top) */}
+              <button
+                type="button"
+                onClick={() => setBundlesDrawerOpen(true)}
+                className="lg:hidden inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold"
+                title="Select Bundle"
+              >
+                <Menu className="w-4 h-4" />
+                <span className="max-w-[160px] truncate">{activeBundleLabel}</span>
+              </button>
+
+              {/* Compact stats chip (hidden on small screens to save height) */}
+              <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-[11px] text-slate-700">
+                <span>
+                  Books: <b>{schoolBooksCount}</b>
+                </span>
+                <span className="text-slate-300">•</span>
+                <span>
+                  Missing: <b>{missingBookProductsCount}</b>
+                </span>
+                <span className="text-slate-300">•</span>
+                <span>
+                  Book Products: <b>{bookProductsCount}</b>
+                </span>
+                <span className="text-slate-300">•</span>
+                <span>
+                  Products: <b>{products.length}</b>
+                </span>
+              </div>
+
+              {/* New Bundle */}
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setSuccess(null);
+                  setCreateBundleOpen(true);
+                }}
+                disabled={!schoolId}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-sm font-bold disabled:opacity-50"
+              >
+                <PackagePlus className="w-4 h-4" />
+                New
+              </button>
+
+              {/* Refresh */}
+              <button
+                onClick={refreshAll}
+                disabled={!schoolId || loadingBundles || pickerLoading || avLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
+              >
+                <RefreshCcw
+                  className={`w-4 h-4 ${loadingBundles || pickerLoading || avLoading ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </button>
+
+              {/* user name (optional) */}
+              <div className="hidden xl:block text-xs text-slate-600 pl-1">{user?.name || "User"}</div>
             </div>
           </div>
 
-          {/* Error / Success */}
+          {/* Error / Success (compact, under bar only when needed) */}
           {error && (
-            <div className="mt-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <div className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               {error}
             </div>
           )}
           {success && (
-            <div className="mt-3 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+            <div className="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
               {success}
             </div>
           )}
 
           {schoolId && productsApiStatus === "unauthorized" && (
-            <div className="mt-3 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex items-center gap-2">
-              <Lock className="w-5 h-5 flex-shrink-0" />
+            <div className="mt-2 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 flex items-center gap-2">
+              <Lock className="w-4 h-4 flex-shrink-0" />
               Products API is protected (401). Ensure frontend sends JWT Authorization header for <b>/api/products</b>.
             </div>
           )}
@@ -869,19 +1002,19 @@ const BundlesPageClient: React.FC = () => {
       </header>
 
       {/* Body */}
-      <main className="p-4 max-w-[1400px] mx-auto grid grid-cols-12 gap-4">
-        {/* LEFT: Bundles list */}
-        <section className="col-span-12 lg:col-span-3">
+      <main className="p-3 sm:p-4 max-w-[1500px] mx-auto grid grid-cols-12 gap-4">
+        {/* LEFT: Bundles list (desktop only) */}
+        <section className="hidden lg:block col-span-12 lg:col-span-3">
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-sm font-bold">Bundles</div>
-                <div className="text-xs text-slate-500">School-wise kit templates</div>
+                <div className="text-xs text-slate-500">Pick bundle then add items</div>
               </div>
               <button
                 onClick={loadBundles}
                 disabled={!schoolId || loadingBundles}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-medium disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold disabled:opacity-50"
               >
                 <RefreshCcw className={`w-4 h-4 ${loadingBundles ? "animate-spin" : ""}`} />
                 Reload
@@ -903,7 +1036,7 @@ const BundlesPageClient: React.FC = () => {
                 No bundles yet.
               </div>
             ) : (
-              <div className="mt-3 space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+              <div className="mt-3 space-y-2 max-h-[72vh] overflow-y-auto pr-1">
                 {bundles.map((b) => {
                   const isSel = b.id === activeId;
                   return (
@@ -916,7 +1049,7 @@ const BundlesPageClient: React.FC = () => {
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold text-sm truncate">{b.name || `Bundle #${b.id}`}</div>
+                        <div className="font-bold text-sm truncate">{b.name || `Bundle #${b.id}`}</div>
                         <span
                           className={`text-[11px] px-2 py-1 rounded-full border ${
                             b.is_active
@@ -944,58 +1077,53 @@ const BundlesPageClient: React.FC = () => {
           </div>
         </section>
 
-        {/* MIDDLE: Bundle editor */}
+        {/* MIDDLE: Bundle editor (more space now) */}
         <section className="col-span-12 lg:col-span-6">
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-base font-bold truncate">
-                  {activeId ? `Edit Bundle #${activeId}` : "Create New Bundle"}
+                  {activeId ? `Edit Bundle #${activeId}` : "No Bundle Selected"}
                 </div>
-                <div className="text-xs text-slate-500">Set class + name. Then add items & prices.</div>
+                <div className="text-xs text-slate-500">
+                  {activeId ? "Edit name/class then add items." : "Select a bundle (or create new) to add items."}
+                </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                {activeId ? (
-                  <>
-                    <button
-                      onClick={saveBundle}
-                      disabled={!canSaveBundle}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 text-sm font-bold disabled:opacity-50"
-                    >
-                      <Save className="w-4 h-4" />
-                      {savingBundle ? "Saving…" : "Save"}
-                    </button>
-                    <button
-                      onClick={deleteBundle}
-                      disabled={!activeId}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 px-4 py-2.5 text-sm font-bold disabled:opacity-50"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Delete
-                    </button>
-                  </>
-                ) : (
+              {activeId ? (
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={createBundle}
-                    disabled={!canCreateBundle}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 text-sm font-bold disabled:opacity-50"
+                    onClick={saveBundle}
+                    disabled={!canSaveBundle}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
                   >
-                    <PackagePlus className="w-4 h-4" />
-                    {savingBundle ? "Creating…" : "Create"}
+                    <Save className="w-4 h-4" />
+                    {savingBundle ? "Saving…" : "Save"}
                   </button>
-                )}
-              </div>
+                  <button
+                    onClick={deleteBundle}
+                    disabled={!activeId}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 px-4 py-2 text-sm font-bold disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {!schoolId ? (
               <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
                 Select school to start.
               </div>
+            ) : !activeId ? (
+              <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                No bundle selected. Use <b>New</b> button on top OR select bundle from menu.
+              </div>
             ) : (
               <div className="mt-5 grid grid-cols-12 gap-3">
                 <div className="col-span-12">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Bundle Name</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Bundle Name</label>
                   <input
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                     placeholder="e.g., Class 5 Student Kit"
@@ -1006,7 +1134,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
 
                 <div className="col-span-12 md:col-span-6">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Class (preferred)</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Class (preferred)</label>
                   <select
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                     value={classId}
@@ -1030,7 +1158,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
 
                 <div className="col-span-12 md:col-span-6">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Class Name (fallback)</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Class Name (fallback)</label>
                   <input
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                     placeholder="e.g., 5th / UKG / Nursery"
@@ -1044,7 +1172,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
 
                 <div className="col-span-12 md:col-span-4">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Sort Order</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Sort Order</label>
                   <input
                     type="number"
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
@@ -1055,7 +1183,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
 
                 <div className="col-span-12 md:col-span-4">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Active</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Active</label>
                   <select
                     className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                     value={isActive ? "1" : "0"}
@@ -1068,7 +1196,7 @@ const BundlesPageClient: React.FC = () => {
                 </div>
 
                 <div className="col-span-12 md:col-span-4">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Session</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Session</label>
                   <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">
                     {session}
                   </div>
@@ -1081,13 +1209,13 @@ const BundlesPageClient: React.FC = () => {
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-base font-bold">Bundle Items</div>
-                  <div className="text-xs text-slate-500">Qty, MRP & Sale Price are stored in kit template.</div>
+                  <div className="text-xs text-slate-500">Tip: POS will use Sale Price.</div>
                 </div>
 
                 <button
                   onClick={saveItems}
                   disabled={!activeId || savingItems}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 text-sm font-bold disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
                   {savingItems ? "Saving…" : "Save Items"}
@@ -1096,7 +1224,7 @@ const BundlesPageClient: React.FC = () => {
 
               {!activeId ? (
                 <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                  Create/select a bundle to edit items.
+                  Select a bundle to edit items.
                 </div>
               ) : (active?.items || []).length === 0 ? (
                 <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
@@ -1105,15 +1233,16 @@ const BundlesPageClient: React.FC = () => {
               ) : (
                 <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
                   <div className="max-h-[56vh] overflow-y-auto">
-                    <table className="w-full text-sm">
+                    {/* ✅ table-fixed to avoid horizontal scroll */}
+                    <table className="w-full text-sm table-fixed">
                       <thead className="bg-slate-100 sticky top-0 z-10">
                         <tr>
-                          <th className="px-4 py-3 text-left font-bold text-slate-800">Item</th>
-                          <th className="px-3 py-3 text-center font-bold text-slate-800 w-20">Qty</th>
-                          <th className="px-3 py-3 text-center font-bold text-slate-800 w-28">MRP</th>
-                          <th className="px-3 py-3 text-center font-bold text-slate-800 w-28">Sale</th>
-                          <th className="px-3 py-3 text-center font-bold text-slate-800 w-24">Optional</th>
-                          <th className="px-3 py-3 text-center font-bold text-slate-800 w-20">Del</th>
+                          <th className="px-4 py-3 text-left font-bold text-slate-800 w-[55%]">Item</th>
+                          <th className="px-2 py-3 text-center font-bold text-slate-800 w-[10%]">Qty</th>
+                          <th className="px-2 py-3 text-center font-bold text-slate-800 w-[12%]">MRP</th>
+                          <th className="px-2 py-3 text-center font-bold text-slate-800 w-[12%]">Sale</th>
+                          <th className="px-2 py-3 text-center font-bold text-slate-800 w-[8%]">Opt</th>
+                          <th className="px-2 py-3 text-center font-bold text-slate-800 w-[3%]"> </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1134,18 +1263,18 @@ const BundlesPageClient: React.FC = () => {
                           return (
                             <tr key={it.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
                               <td className="px-4 py-3">
-                                <div className="font-semibold text-slate-900">{title}</div>
-                                {meta ? <div className="text-xs text-slate-500 mt-0.5">{meta}</div> : null}
-                                <div className="text-[11px] text-slate-400 mt-1">
+                                <div className="font-bold text-slate-900 truncate">{title}</div>
+                                {meta ? <div className="text-xs text-slate-500 mt-0.5 truncate">{meta}</div> : null}
+                                <div className="text-[11px] text-slate-400 mt-1 truncate">
                                   product_id: <b>{it.product_id}</b>
                                 </div>
                               </td>
 
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-2 py-3 text-center">
                                 <input
                                   type="number"
                                   min={0}
-                                  className="w-16 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                  className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.qty}
                                   onChange={(e) =>
                                     updateItemLocal(it.id, { qty: Math.max(0, num(e.target.value)) })
@@ -1153,11 +1282,11 @@ const BundlesPageClient: React.FC = () => {
                                 />
                               </td>
 
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-2 py-3 text-center">
                                 <input
                                   type="number"
                                   min={0}
-                                  className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                  className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.mrp}
                                   onChange={(e) =>
                                     updateItemLocal(it.id, { mrp: Math.max(0, num(e.target.value)) })
@@ -1165,11 +1294,11 @@ const BundlesPageClient: React.FC = () => {
                                 />
                               </td>
 
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-2 py-3 text-center">
                                 <input
                                   type="number"
                                   min={0}
-                                  className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                  className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                                   value={it.sale_price}
                                   onChange={(e) =>
                                     updateItemLocal(it.id, { sale_price: Math.max(0, num(e.target.value)) })
@@ -1177,11 +1306,11 @@ const BundlesPageClient: React.FC = () => {
                                 />
                               </td>
 
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-2 py-3 text-center">
                                 <button
                                   type="button"
                                   onClick={() => updateItemLocal(it.id, { is_optional: !it.is_optional })}
-                                  className={`inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-bold border transition ${
+                                  className={`inline-flex items-center justify-center rounded-xl px-2 py-2 text-[11px] font-bold border transition w-full ${
                                     it.is_optional
                                       ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
                                       : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
@@ -1191,7 +1320,7 @@ const BundlesPageClient: React.FC = () => {
                                 </button>
                               </td>
 
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-2 py-3 text-center">
                                 <button
                                   type="button"
                                   onClick={() => removeItem(it.id)}
@@ -1209,8 +1338,6 @@ const BundlesPageClient: React.FC = () => {
                   </div>
                 </div>
               )}
-
-              <div className="mt-3 text-xs text-slate-500">Tip: POS will use Sale Price for billing.</div>
             </div>
           </div>
         </section>
@@ -1221,13 +1348,13 @@ const BundlesPageClient: React.FC = () => {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-bold">Add Items</div>
-                <div className="text-xs text-slate-500">First school books, then extra products</div>
+                <div className="text-xs text-slate-500">First school books, then extras</div>
               </div>
               <button
                 type="button"
                 onClick={refreshAll}
                 disabled={!schoolId || pickerLoading || avLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-medium disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold disabled:opacity-50"
               >
                 <RefreshCcw className={`w-4 h-4 ${pickerLoading || avLoading ? "animate-spin" : ""}`} />
                 Reload
@@ -1258,11 +1385,11 @@ const BundlesPageClient: React.FC = () => {
                 }`}
               >
                 <Boxes className="w-4 h-4" />
-                Extra Products
+                Extras
               </button>
             </div>
 
-            {/* Ensure BOOK products banner (only when needed) */}
+            {/* Ensure BOOK products banner */}
             {schoolId && pickerTab === "SCHOOL_BOOKS" && missingBookProductsCount > 0 && (
               <div className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-3">
                 <div className="font-bold flex items-center gap-2">
@@ -1270,7 +1397,7 @@ const BundlesPageClient: React.FC = () => {
                   {missingBookProductsCount} books have <b>No BOOK product</b>
                 </div>
                 <div className="mt-1 text-amber-900/90">
-                  Click once to auto-create BOOK products from books (no manual entry).
+                  Click once to auto-create BOOK products (no manual entry).
                 </div>
                 <button
                   type="button"
@@ -1293,7 +1420,7 @@ const BundlesPageClient: React.FC = () => {
                 {/* School availability controls */}
                 <div className="mt-3 grid grid-cols-12 gap-2">
                   <div className="col-span-7">
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Search</label>
                     <div className="relative">
                       <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
                       <input
@@ -1317,7 +1444,7 @@ const BundlesPageClient: React.FC = () => {
                   </div>
 
                   <div className="col-span-5">
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Class</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Class</label>
                     <select
                       className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                       value={avClass}
@@ -1348,11 +1475,11 @@ const BundlesPageClient: React.FC = () => {
                 ) : (
                   <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                     <div className="max-h-[70vh] overflow-y-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm table-fixed">
                         <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
-                            <th className="px-3 py-3 text-left font-bold text-slate-800">Book</th>
-                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-12">+</th>
+                            <th className="px-3 py-3 text-left font-bold text-slate-800 w-[85%]">Book</th>
+                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-[15%]">Add</th>
                           </tr>
                         </thead>
 
@@ -1365,9 +1492,12 @@ const BundlesPageClient: React.FC = () => {
                             const canAdd = !!activeId && !!bookProd?.id && !already;
 
                             return (
-                              <tr key={`av:${b.book_id}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
+                              <tr
+                                key={`av:${b.book_id}`}
+                                className="border-b border-slate-100 hover:bg-slate-50 transition"
+                              >
                                 <td className="px-3 py-3">
-                                  <div className="font-semibold text-slate-900 truncate">{b.title}</div>
+                                  <div className="font-bold text-slate-900 truncate">{b.title}</div>
                                 </td>
 
                                 <td className="px-2 py-3 text-center">
@@ -1375,7 +1505,7 @@ const BundlesPageClient: React.FC = () => {
                                     type="button"
                                     onClick={() => addSchoolBookToKit(Number(b.book_id))}
                                     disabled={!canAdd}
-                                    className={`inline-flex items-center justify-center w-9 h-9 rounded-xl border transition ${
+                                    className={`inline-flex items-center justify-center w-10 h-10 rounded-xl border transition ${
                                       !activeId
                                         ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
                                         : already
@@ -1412,16 +1542,31 @@ const BundlesPageClient: React.FC = () => {
               </>
             ) : (
               <>
-                {/* Extras = DIRECT PURCHASED items only */}
+                {/* ✅ Extras: Manual add button + Search */}
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-600">Add manual items (bags, labels, stationery) also.</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraErr(null);
+                      setExtraCreateOpen(true);
+                    }}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-bold"
+                  >
+                    <Plus className="w-4 h-4" />
+                    New Extra
+                  </button>
+                </div>
+
                 <div className="mt-3">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Search</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Search</label>
                   <div className="relative">
                     <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
                     <input
                       className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
                         pickerQ ? "pr-10" : "pr-4"
                       }`}
-                      placeholder="Search direct purchased items…"
+                      placeholder="Search direct purchased / manual items…"
                       value={pickerQ}
                       onChange={(e) => setPickerQ(e.target.value)}
                     />
@@ -1445,19 +1590,17 @@ const BundlesPageClient: React.FC = () => {
                   </div>
                 ) : filteredProductRows.length === 0 ? (
                   <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                    No direct purchased items found.
-                    <div className="text-xs text-slate-500 mt-1">
-                      Add some direct purchase receipts first (extras are built from direct purchases).
-                    </div>
+                    No extras found.
+                    <div className="text-xs text-slate-500 mt-1">Add direct purchase receipts OR create manual extras.</div>
                   </div>
                 ) : (
                   <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                     <div className="max-h-[70vh] overflow-y-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm table-fixed">
                         <thead className="bg-slate-100 sticky top-0 z-10">
                           <tr>
-                            <th className="px-3 py-3 text-left font-bold text-slate-800">Item</th>
-                            <th className="px-3 py-3 text-center font-bold text-slate-800 w-20">Add</th>
+                            <th className="px-3 py-3 text-left font-bold text-slate-800 w-[70%]">Item</th>
+                            <th className="px-3 py-3 text-center font-bold text-slate-800 w-[30%]">Add</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1468,9 +1611,11 @@ const BundlesPageClient: React.FC = () => {
                             return (
                               <tr key={r.key} className="border-b border-slate-100 hover:bg-slate-50 transition">
                                 <td className="px-3 py-3">
-                                  <div className="font-semibold text-slate-900">{r.title}</div>
-                                  {metaLine ? <div className="text-xs text-slate-500 mt-0.5">{metaLine}</div> : null}
-                                  <div className="text-[11px] text-slate-400 mt-1">
+                                  <div className="font-bold text-slate-900 truncate">{r.title}</div>
+                                  {metaLine ? (
+                                    <div className="text-xs text-slate-500 mt-0.5 truncate">{metaLine}</div>
+                                  ) : null}
+                                  <div className="text-[11px] text-slate-400 mt-1 truncate">
                                     product_id: <b>{r.product_id}</b>
                                   </div>
                                 </td>
@@ -1480,7 +1625,7 @@ const BundlesPageClient: React.FC = () => {
                                     type="button"
                                     onClick={() => addItemLocal(r.product_id)}
                                     disabled={!activeId || already}
-                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition border ${
+                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition border w-full ${
                                       !activeId
                                         ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
                                         : already
@@ -1511,13 +1656,308 @@ const BundlesPageClient: React.FC = () => {
                 )}
 
                 <div className="mt-3 text-xs text-slate-500">
-                  “Extra Products” shows only <b>Direct Purchased</b> items (MATERIAL + direct purchased BOOKs).
+                  Extras shows <b>Direct Purchased</b> items + your <b>Manual Extras</b>.
                 </div>
               </>
             )}
           </div>
         </section>
       </main>
+
+      {/* =========================
+          Bundles Drawer (small screens)
+         ========================= */}
+      {bundlesDrawerOpen && (
+        <div className="fixed inset-0 z-[80] bg-black/50 lg:hidden">
+          <div className="absolute inset-y-0 left-0 w-[92%] max-w-[420px] bg-white shadow-2xl border-r border-slate-200">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="font-bold text-sm">Select Bundle</div>
+              <button
+                onClick={() => setBundlesDrawerOpen(false)}
+                className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <button
+                onClick={loadBundles}
+                disabled={!schoolId || loadingBundles}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold disabled:opacity-50"
+              >
+                <RefreshCcw className={`w-4 h-4 ${loadingBundles ? "animate-spin" : ""}`} />
+                Reload Bundles
+              </button>
+
+              {!schoolId ? (
+                <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                  Select a school first.
+                </div>
+              ) : loadingBundles ? (
+                <div className="mt-3 space-y-3">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-12 bg-slate-100 rounded-xl animate-pulse" />
+                  ))}
+                </div>
+              ) : bundles.length === 0 ? (
+                <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                  No bundles yet.
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2 max-h-[75vh] overflow-y-auto pr-1">
+                  {bundles.map((b) => {
+                    const isSel = b.id === activeId;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => loadBundleById(b.id)}
+                        className={`w-full text-left border rounded-2xl px-3 py-3 transition ${
+                          isSel ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-white hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-bold text-sm truncate">{b.name || `Bundle #${b.id}`}</div>
+                          <span
+                            className={`text-[11px] px-2 py-1 rounded-full border ${
+                              b.is_active
+                                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                                : "bg-slate-100 border-slate-200 text-slate-700"
+                            }`}
+                          >
+                            {b.is_active ? "Active" : "Disabled"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-600 truncate">
+                          {b.class?.class_name || b.class_name || (b.class_id ? `Class #${b.class_id}` : "Class")}
+                          {" • "}
+                          {b.academic_session || session}
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Items: <b>{b.items?.length ?? 0}</b>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================
+          Create Bundle Popup
+         ========================= */}
+      {createBundleOpen && (
+        <div className="fixed inset-0 z-[85] bg-black/60">
+          <div className="h-full w-full flex items-center justify-center p-3">
+            <div className="w-full max-w-[820px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-emerald-50 flex items-center justify-between">
+                <div className="text-sm font-bold">Create New Bundle</div>
+                <button
+                  onClick={() => setCreateBundleOpen(false)}
+                  className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-4">
+                {!schoolId ? (
+                  <div className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    Select school first.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-12 gap-3">
+                    <div className="col-span-12">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Bundle Name</label>
+                      <input
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        placeholder="e.g., Class 5 Student Kit"
+                        value={bundleName}
+                        onChange={(e) => setBundleName(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Class (preferred)</label>
+                      <select
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        value={classId}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || "";
+                          setClassId(v);
+                          if (v) {
+                            const cls = classes.find((c) => c.id === v);
+                            setClassName(cls?.class_name || "");
+                          }
+                        }}
+                      >
+                        <option value="">Select Class</option>
+                        {classes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.class_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="col-span-12 md:col-span-6">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Class Name (fallback)</label>
+                      <input
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        placeholder="e.g., 5th / UKG / Nursery"
+                        value={className}
+                        onChange={(e) => {
+                          setClassName(e.target.value);
+                          setClassId("");
+                        }}
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Sort Order</label>
+                      <input
+                        type="number"
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        value={sortOrder}
+                        onChange={(e) => setSortOrder(num(e.target.value))}
+                      />
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Active</label>
+                      <select
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        value={isActive ? "1" : "0"}
+                        onChange={(e) => setIsActive(e.target.value === "1")}
+                      >
+                        <option value="1">Active</option>
+                        <option value="0">Disabled</option>
+                      </select>
+                    </div>
+
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">Session</label>
+                      <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">
+                        {session}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-4 py-3 border-t bg-white flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setCreateBundleOpen(false)}
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-4 py-2 text-sm font-bold"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={createBundle}
+                  disabled={!canCreateBundle}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
+                >
+                  <PackagePlus className="w-4 h-4" />
+                  {savingBundle ? "Creating…" : "Create"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================
+          Manual Extra Item Modal
+         ========================= */}
+      {extraCreateOpen && (
+        <div className="fixed inset-0 z-[90] bg-black/60">
+          <div className="h-full w-full flex items-center justify-center p-3">
+            <div className="w-full max-w-[720px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+              <div className="px-4 py-3 border-b bg-gradient-to-r from-slate-50 to-emerald-50 flex items-center justify-between">
+                <div className="text-sm font-bold">Add Manual Extra Item</div>
+                <button
+                  onClick={() => setExtraCreateOpen(false)}
+                  className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                  title="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-4">
+                {extraErr && (
+                  <div className="mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                    {extraErr}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-12 gap-3">
+                  <div className="col-span-12">
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Item Name</label>
+                    <input
+                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                      placeholder="e.g., School Bag / Label / Notebook Cover"
+                      value={extraName}
+                      onChange={(e) => setExtraName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="col-span-12 md:col-span-7">
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">UOM (optional)</label>
+                    <input
+                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                      placeholder="e.g., pcs / set / pack"
+                      value={extraUom}
+                      onChange={(e) => setExtraUom(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="col-span-12 md:col-span-5">
+                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Active</label>
+                    <select
+                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                      value={extraActive ? "1" : "0"}
+                      onChange={(e) => setExtraActive(e.target.value === "1")}
+                    >
+                      <option value="1">Active</option>
+                      <option value="0">Disabled</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-[11px] text-slate-500">
+                  If a bundle is selected, item will be auto-added into kit.
+                </div>
+              </div>
+
+              <div className="px-4 py-3 border-t bg-white flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setExtraCreateOpen(false)}
+                  className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-4 py-2 text-sm font-bold"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={createExtraProductNow}
+                  disabled={extraSaving || !safeStr(extraName)}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
+                >
+                  <Plus className={`w-4 h-4 ${extraSaving ? "animate-spin" : ""}`} />
+                  {extraSaving ? "Saving…" : "Create Item"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

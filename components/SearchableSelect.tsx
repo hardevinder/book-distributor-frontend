@@ -48,7 +48,7 @@ export default function SearchableSelect({
 
   // ✅ shortened label for button
   const selectedLabelShort = useMemo(
-    () => shortLabel(selectedLabel, 14),
+    () => shortLabel(selectedLabel, 28),
     [selectedLabel]
   );
 
