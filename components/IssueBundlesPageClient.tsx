@@ -21,9 +21,9 @@ import {
   NotebookPen,
   IndianRupee,
   Tag,
-  ListOrdered,
   Info,
   Filter,
+  Download,
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -47,16 +47,34 @@ type BookMini = {
   mrp?: number | string | null;
 };
 
+type ProductMini = {
+  id: number;
+  type?: string | null; // BOOK/MATERIAL
+  name?: string | null;
+  book_id?: number | null;
+  book?: BookMini | null;
+};
+
 type BundleItem = {
   id: number;
   bundle_id: number;
+
+  // item may be BOOK/MATERIAL via product
+  product_id?: number | null;
   book_id: number;
 
   reserved_qty: number;
   issued_qty: number;
 
   required_qty?: number;
+
+  // nested (depends on endpoint)
   book?: BookMini | null;
+  product?: ProductMini | null;
+
+  // pricing (bundle item level)
+  mrp?: number | string | null;
+  sale_price?: number | string | null;
 };
 
 type Bundle = {
@@ -84,8 +102,7 @@ type Bundle = {
 type IssueToType = "DISTRIBUTOR" | "SCHOOL";
 
 /**
- * ✅ What backend now returns inside issue.meta for UI table
- * We intentionally keep optional fields for backwards compatibility
+ * ✅ What backend returns inside issue.meta for UI table
  */
 type IssueMetaItemRow = {
   class_name?: string | null;
@@ -95,9 +112,12 @@ type IssueMetaItemRow = {
   book_title?: string | null;
   product_name?: string | null;
 
-  // qty
+  // qty (kept for fallback calc only)
   issued_qty?: number | string | null;
   reserved_qty?: number | string | null;
+
+  // requested qty
+  requested_qty?: number | string | null;
 
   // pricing
   unit_price?: number | string | null;
@@ -130,9 +150,9 @@ type BundleIssueRow = {
 
   status?: "ISSUED" | "CANCELLED" | "PARTIAL" | "PENDING_STOCK" | string;
 
-  // ✅ backend normalizer now sends:
-  notes?: string | null; // human note only
-  pretty_notes?: string | null; // formatted meta summary
+  // ✅ backend normalizer sends:
+  notes?: string | null;
+  pretty_notes?: string | null;
   meta?: IssueMeta | null;
 
   // raw fallback
@@ -216,6 +236,7 @@ const IssueBundlesPageClient: React.FC = () => {
     return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
   };
 
+  // Book fallback pricing
   const bookRate = (b?: BookMini | null) => {
     if (!b) return 0;
     const r = toNum(b.rate);
@@ -225,6 +246,22 @@ const IssueBundlesPageClient: React.FC = () => {
     const m = toNum(b.mrp);
     if (m) return m;
     return 0;
+  };
+
+  // Bundle item pricing (preferred for issuing UI)
+  const bundleItemPrice = (it?: BundleItem | null) => {
+    if (!it) return 0;
+    const sp = toNum((it as any).sale_price);
+    if (sp) return sp;
+    const mrp = toNum((it as any).mrp);
+    if (mrp) return mrp;
+
+    // if nested product.book exists
+    const pb = (it as any).product?.book as BookMini | undefined;
+    if (pb) return bookRate(pb);
+
+    // fallback to direct book
+    return bookRate((it as any).book);
   };
 
   /**
@@ -251,7 +288,10 @@ const IssueBundlesPageClient: React.FC = () => {
       b.class_name ||
       (b.class_id ? `Class #${b.class_id}` : "");
     const itemCount = b.items?.length ?? 0;
-    const qtyTotal = (b.items || []).reduce((s, it) => s + (toNum(it.reserved_qty) || 0), 0);
+    const qtyTotal = (b.items || []).reduce(
+      (s, it) => s + (toNum(it.reserved_qty) || 0),
+      0
+    );
 
     if (!b.items || b.items.length === 0) {
       return `#${b.id} — ${schoolName} — ${className} — ${b.name || "Bundle"}`;
@@ -298,7 +338,9 @@ const IssueBundlesPageClient: React.FC = () => {
   const partySub = (row: BundleIssueRow) => {
     if (row.issued_to_type === "DISTRIBUTOR") {
       const c = row.issuedDistributor?.city ? `City: ${row.issuedDistributor.city}` : "";
-      const m = row.issuedDistributor?.mobile ? `Mobile: ${row.issuedDistributor.mobile}` : "";
+      const m = row.issuedDistributor?.mobile
+        ? `Mobile: ${row.issuedDistributor.mobile}`
+        : "";
       return [c, m].filter(Boolean).join(" • ");
     }
     return "";
@@ -313,57 +355,161 @@ const IssueBundlesPageClient: React.FC = () => {
     return "bg-indigo-50 text-indigo-700 border-indigo-200";
   };
 
-  /* ---------------- Modal (NEW): Use issue.meta.item_rows ---------------- */
+  /* ---------------- Invoice Download ---------------- */
+
+  /**
+   * ✅ Downloads invoice PDF for an issue
+   * Backend route added: GET /api/bundle-issues/:id/invoice
+   */
+  const downloadInvoice = async (row: BundleIssueRow) => {
+    if (!row?.id) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const res = await api.get(`/api/bundle-issues/${row.id}/invoice`, {
+        responseType: "blob",
+      });
+
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+
+      const issueNo = row.issue_no || `ISSUE-${row.id}`;
+      const party = (partyName(row) || "").replace(/[^\w\-]+/g, "_");
+      const fileName = `Invoice_${issueNo}_${party}.pdf`;
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      window.URL.revokeObjectURL(url);
+
+      setToast({ message: "Invoice downloaded.", type: "success" });
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.message ||
+        e?.response?.data?.error ||
+        e?.message ||
+        "Failed to download invoice.";
+      setToast({ message: msg, type: "error" });
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ---------------- Modal: Build display item rows ---------------- */
+
+  // Create a map of bundle-item prices for selected issue (fixes old issues where meta.unit_price was 0)
+  const selectedIssueBundleItemPriceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const items = selectedIssue?.bundle?.items || [];
+    for (const bi of items) {
+      const pId = toNum((bi as any).product_id);
+      const biId = toNum((bi as any).id);
+      const price = bundleItemPrice(bi);
+      if (pId) map.set(`p:${pId}`, price);
+      if (biId) map.set(`bi:${biId}`, price);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIssue]);
 
   const modalItemRows = useMemo<IssueMetaItemRow[]>(() => {
     const rows = selectedIssue?.meta?.item_rows;
-    if (Array.isArray(rows) && rows.length) return rows;
+    if (Array.isArray(rows) && rows.length) {
+      // ✅ PATCH: If unit_price is 0/missing, use bundle.items.sale_price (or mrp, or book rate)
+      return rows.map((r) => {
+        const unit = toNum(r.unit_price);
+        if (unit > 0) return r;
+
+        const biId = toNum((r as any).bundle_item_id);
+        const pId = toNum((r as any).product_id);
+
+        const fallback =
+          (biId ? selectedIssueBundleItemPriceMap.get(`bi:${biId}`) : 0) ||
+          (pId ? selectedIssueBundleItemPriceMap.get(`p:${pId}`) : 0) ||
+          0;
+
+        if (!fallback) return r;
+
+        const requested =
+          r.requested_qty != null
+            ? toNum(r.requested_qty)
+            : toNum(r.issued_qty) + toNum(r.reserved_qty);
+
+        const line = toNum(r.line_total) || requested * fallback;
+
+        return {
+          ...r,
+          unit_price: fallback,
+          line_total: line,
+        };
+      });
+    }
 
     // fallback (older API): bundle.items -> transform to item rows
     const items = selectedIssue?.bundle?.items || [];
     if (!items.length) return [];
     return items.map((it) => {
-      const unit = bookRate(it.book);
+      const unit = bundleItemPrice(it);
       const issued = toNum(it.issued_qty);
       const reserved = toNum(it.reserved_qty);
+      const requested = issued + reserved;
+
+      const title =
+        it.product?.type && String(it.product.type).toUpperCase() !== "BOOK"
+          ? it.product?.name || "Item"
+          : it.book?.title ||
+            it.product?.book?.title ||
+            (it.book_id ? `Book #${it.book_id}` : "Book");
+
+      const className =
+        it.book?.class_name ||
+        it.product?.book?.class_name ||
+        (it.product?.type && String(it.product.type).toUpperCase() !== "BOOK" ? null : "Unassigned");
+
       return {
-        class_name: it.book?.class_name || "Unassigned",
-        title: it.book?.title || (it.book_id ? `Book #${it.book_id}` : "Book"),
+        class_name: className || "Unassigned",
+        title,
         issued_qty: issued,
         reserved_qty: reserved,
+        requested_qty: requested,
         unit_price: unit,
-        line_total: unit * (issued + reserved),
+        line_total: unit * requested,
         book_id: it.book_id,
+        product_id: it.product_id ?? undefined,
+        bundle_item_id: it.id,
+        type: it.product?.type || "BOOK",
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIssue]);
+  }, [selectedIssue, selectedIssueBundleItemPriceMap]);
 
+  // totals (show only Total Amount)
   const modalTotals = useMemo(() => {
     const rows = modalItemRows;
 
     const totalTitles = rows.length;
 
-    const totalIssued = rows.reduce((s, r) => s + toNum(r.issued_qty), 0);
-    const totalReserved = rows.reduce((s, r) => s + toNum(r.reserved_qty), 0);
-
-    const totalAmountIssued = rows.reduce((s, r) => {
+    const totalAmount = rows.reduce((s, r) => {
       const unit = toNum(r.unit_price);
-      return s + unit * toNum(r.issued_qty);
-    }, 0);
-
-    const totalAmountReserved = rows.reduce((s, r) => {
-      const unit = toNum(r.unit_price);
-      return s + unit * toNum(r.reserved_qty);
+      const requested =
+        r.requested_qty != null
+          ? toNum(r.requested_qty)
+          : toNum(r.issued_qty) + toNum(r.reserved_qty);
+      const line = toNum(r.line_total) || requested * unit;
+      return s + line;
     }, 0);
 
     return {
       totalTitles,
-      totalIssued,
-      totalReserved,
-      totalAmountIssued,
-      totalAmountReserved,
-      grandTotal: totalAmountIssued + totalAmountReserved,
+      totalAmount,
     };
   }, [modalItemRows]);
 
@@ -608,7 +754,7 @@ const IssueBundlesPageClient: React.FC = () => {
         <div className="absolute top-40 left-40 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-25 animate-blob animation-delay-4000" />
       </div>
 
-      {/* ✅ Single Top Bar (Heading + Session + Search + Filters) */}
+      {/* ✅ Single Top Bar */}
       <header className="sticky top-0 z-40 bg-white/92 backdrop-blur-md border-b border-slate-200/60">
         <div className="px-4 sm:px-6 py-3">
           <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
@@ -963,86 +1109,103 @@ const IssueBundlesPageClient: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredIssues.map((x) => (
-                          <tr key={x.id} className="border-b border-slate-100 hover:bg-slate-50/60">
-                            <td className="py-3 px-4">
-                              <div className="font-extrabold text-slate-900">{x.issue_no || `#${x.id}`}</div>
-                              <div className="text-xs text-slate-500">{x.issued_to_type}</div>
-                            </td>
+                        {filteredIssues.map((x) => {
+                          const isDist = String(x.issued_to_type).toUpperCase() === "DISTRIBUTOR";
+                          return (
+                            <tr key={x.id} className="border-b border-slate-100 hover:bg-slate-50/60">
+                              <td className="py-3 px-4">
+                                <div className="font-extrabold text-slate-900">{x.issue_no || `#${x.id}`}</div>
+                                <div className="text-xs text-slate-500">{x.issued_to_type}</div>
+                              </td>
 
-                            <td className="py-3 px-4">
-                              <div className="font-semibold text-slate-900">Bundle #{x.bundle_id}</div>
-                              <div className="text-xs text-slate-500">Session: {x.academic_session}</div>
-                            </td>
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-slate-900">Bundle #{x.bundle_id}</div>
+                                <div className="text-xs text-slate-500">Session: {x.academic_session}</div>
+                              </td>
 
-                            <td className="py-3 px-4">
-                              {x.bundle?.school?.name ? (
-                                <div className="font-semibold text-slate-900">{x.bundle.school.name}</div>
-                              ) : (
-                                <span className="text-slate-400">—</span>
-                              )}
-                              {x.bundle?.notes ? (
-                                <div className="text-xs text-slate-500 line-clamp-1 mt-0.5">
-                                  <span className="font-semibold">Bundle:</span> {x.bundle.notes}
-                                </div>
-                              ) : null}
-                            </td>
+                              <td className="py-3 px-4">
+                                {x.bundle?.school?.name ? (
+                                  <div className="font-semibold text-slate-900">{x.bundle.school.name}</div>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                                {x.bundle?.notes ? (
+                                  <div className="text-xs text-slate-500 line-clamp-1 mt-0.5">
+                                    <span className="font-semibold">Bundle:</span> {x.bundle.notes}
+                                  </div>
+                                ) : null}
+                              </td>
 
-                            <td className="py-3 px-4">
-                              <div className="font-semibold text-slate-900">{partyName(x)}</div>
-                              <div className="text-xs text-slate-500">{partySub(x) || "—"}</div>
-                            </td>
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-slate-900">{partyName(x)}</div>
+                                <div className="text-xs text-slate-500">{partySub(x) || "—"}</div>
+                              </td>
 
-                            <td className="py-3 px-4">
-                              {displayNotes(x) ? (
-                                <div className="text-slate-800 whitespace-pre-wrap line-clamp-3">
-                                  {displayNotes(x)}
-                                </div>
-                              ) : (
-                                <span className="text-slate-400">—</span>
-                              )}
-                            </td>
+                              <td className="py-3 px-4">
+                                {displayNotes(x) ? (
+                                  <div className="text-slate-800 whitespace-pre-wrap line-clamp-3">
+                                    {displayNotes(x)}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
 
-                            <td className="py-3 px-4">
-                              <span
-                                className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(
-                                  x.status
-                                )}`}
-                              >
-                                {(x.status || "ISSUED").toUpperCase()}
-                              </span>
-                            </td>
-
-                            <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
-                              {fmtDate(x.createdAt)}
-                            </td>
-
-                            <td className="py-3 px-4">
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => openIssueDetails(x)}
-                                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm"
+                              <td className="py-3 px-4">
+                                <span
+                                  className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(
+                                    x.status
+                                  )}`}
                                 >
-                                  <Eye className="w-4 h-4" />
-                                  Details
-                                </button>
+                                  {(x.status || "ISSUED").toUpperCase()}
+                                </span>
+                              </td>
 
-                                {(x.status || "ISSUED").toUpperCase() === "ISSUED" && (
+                              <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
+                                {fmtDate(x.createdAt)}
+                              </td>
+
+                              <td className="py-3 px-4">
+                                <div className="flex items-center justify-end gap-2">
+                                  {/* ✅ NEW: Invoice button only for Distributor issues */}
+                                  {isDist ? (
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => downloadInvoice(x)}
+                                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm disabled:opacity-60"
+                                      title="Download invoice"
+                                    >
+                                      <Download className="w-4 h-4" />
+                                      Invoice
+                                    </button>
+                                  ) : null}
+
                                   <button
                                     type="button"
-                                    disabled={loading}
-                                    onClick={() => cancelIssue(x)}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-semibold shadow hover:shadow-md disabled:opacity-60"
+                                    onClick={() => openIssueDetails(x)}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm"
                                   >
-                                    <XCircle className="w-4 h-4" />
-                                    Cancel
+                                    <Eye className="w-4 h-4" />
+                                    Details
                                   </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+
+                                  {(x.status || "ISSUED").toUpperCase() === "ISSUED" && (
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => cancelIssue(x)}
+                                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-semibold shadow hover:shadow-md disabled:opacity-60"
+                                    >
+                                      <XCircle className="w-4 h-4" />
+                                      Cancel
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}
@@ -1078,20 +1241,36 @@ const IssueBundlesPageClient: React.FC = () => {
                 </div>
               </div>
 
-              <button
-                className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold shadow-sm"
-                onClick={() => {
-                  setModalOpen(false);
-                  setSelectedIssue(null);
-                }}
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {/* ✅ NEW: Invoice button inside modal (only for DISTRIBUTOR issues) */}
+                {String(selectedIssue.issued_to_type).toUpperCase() === "DISTRIBUTOR" ? (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => downloadInvoice(selectedIssue)}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm disabled:opacity-60"
+                    title="Download invoice"
+                  >
+                    <Download className="w-4 h-4" />
+                    Invoice
+                  </button>
+                ) : null}
+
+                <button
+                  className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold shadow-sm"
+                  onClick={() => {
+                    setModalOpen(false);
+                    setSelectedIssue(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             <div className="max-h-[78vh] overflow-auto p-4 space-y-4">
               {/* Summary cards */}
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500">Issued To</div>
                   <div className="font-extrabold text-slate-900">{partyName(selectedIssue)}</div>
@@ -1112,35 +1291,20 @@ const IssueBundlesPageClient: React.FC = () => {
                       {(selectedIssue.status || "ISSUED").toUpperCase()}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">Date: {fmtDate(selectedIssue.createdAt)}</div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
-                  <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <ListOrdered className="w-3.5 h-3.5" /> Quantity Summary
-                  </div>
-                  <div className="mt-1 text-sm text-slate-800">
-                    Titles: <span className="font-semibold">{modalTotals.totalTitles}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-slate-800">
-                    Issued: <span className="font-semibold">{modalTotals.totalIssued}</span> • Reserved:{" "}
-                    <span className="font-semibold">{modalTotals.totalReserved}</span>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Date: {fmtDate(selectedIssue.createdAt)}
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <IndianRupee className="w-3.5 h-3.5" /> Amount Summary
-                  </div>
-                  <div className="mt-1 text-sm text-slate-800">
-                    Issued Amount: <span className="font-semibold">₹ {money(modalTotals.totalAmountIssued)}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-slate-800">
-                    Reserved Amount:{" "}
-                    <span className="font-semibold">₹ {money(modalTotals.totalAmountReserved)}</span>
+                    <IndianRupee className="w-3.5 h-3.5" /> Total Amount
                   </div>
                   <div className="mt-2 text-base font-extrabold text-slate-900">
-                    Total: ₹ {money(modalTotals.grandTotal)}
+                    ₹ {money(modalTotals.totalAmount)}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    Titles: <span className="font-semibold">{modalTotals.totalTitles}</span>
                   </div>
                 </div>
               </div>
@@ -1176,10 +1340,10 @@ const IssueBundlesPageClient: React.FC = () => {
                 </div>
               </div>
 
-              {/* Items (NOW from issue.meta.item_rows) */}
+              {/* ✅ Items: ONLY Item Name + Sale Price */}
               <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
                 <div className="bg-slate-50 px-4 py-3 font-extrabold text-slate-900">
-                  Items (Class-wise) • Issued + Reserved + Price
+                  Items (Class-wise) • Item + Sale Price
                 </div>
 
                 <div className="p-4 space-y-4">
@@ -1188,73 +1352,50 @@ const IssueBundlesPageClient: React.FC = () => {
                       Items not included in this response. (Backend should send <b>issue.meta.item_rows</b>)
                     </div>
                   ) : (
-                    modalGroups.map((g) => {
-                      const groupTotal = g.rows.reduce((s, r) => {
-                        const issued = toNum(r.issued_qty);
-                        const reserved = toNum(r.reserved_qty);
-                        const unit = toNum(r.unit_price);
-                        const line = toNum(r.line_total) || (issued + reserved) * unit;
-                        return s + line;
-                      }, 0);
-
-                      return (
-                        <div key={g.class_name} className="rounded-2xl border border-slate-200 overflow-hidden">
-                          <div className="flex items-center justify-between px-4 py-2 bg-white">
-                            <div className="font-semibold text-slate-900">{g.class_name}</div>
-                            <div className="text-sm text-slate-700">
-                              Class Total: <span className="font-extrabold">₹ {money(groupTotal)}</span>
-                            </div>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead>
-                                <tr className="text-left text-slate-600 bg-slate-50">
-                                  <th className="py-2 px-4">Item</th>
-                                  <th className="py-2 px-4 text-right">Issued</th>
-                                  <th className="py-2 px-4 text-right">Reserved</th>
-                                  <th className="py-2 px-4 text-right">Unit Price</th>
-                                  <th className="py-2 px-4 text-right">Line Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {g.rows.map((r, idx) => {
-                                  const title =
-                                    r.title || r.book_title || r.product_name || "Item";
-                                  const issued = toNum(r.issued_qty);
-                                  const reserved = toNum(r.reserved_qty);
-                                  const unit = toNum(r.unit_price);
-                                  const lineTotal = toNum(r.line_total) || (issued + reserved) * unit;
-
-                                  return (
-                                    <tr key={`${g.class_name}-${idx}`} className="border-t border-slate-100">
-                                      <td className="py-2 px-4 font-semibold text-slate-900">
-                                        {title}
-                                        {r.type && String(r.type).toUpperCase() !== "BOOK" ? (
-                                          <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600">
-                                            {String(r.type).toUpperCase()}
-                                          </span>
-                                        ) : null}
-                                      </td>
-                                      <td className="py-2 px-4 text-right">{issued}</td>
-                                      <td className="py-2 px-4 text-right">{reserved}</td>
-                                      <td className="py-2 px-4 text-right">₹ {money(unit)}</td>
-                                      <td className="py-2 px-4 text-right font-extrabold">
-                                        ₹ {money(lineTotal)}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-
-                          <div className="px-4 py-2 text-xs text-slate-500 bg-slate-50">
-                            Note: If price shows ₹ 0, backend is not sending unit_price (or item is MATERIAL).
-                          </div>
+                    modalGroups.map((g) => (
+                      <div key={g.class_name} className="rounded-2xl border border-slate-200 overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2 bg-white">
+                          <div className="font-semibold text-slate-900">{g.class_name}</div>
                         </div>
-                      );
-                    })
+
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-slate-600 bg-slate-50">
+                                <th className="py-2 px-4">Item</th>
+                                <th className="py-2 px-4 text-right">Sale Price</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.rows.map((r, idx) => {
+                                const title = r.title || r.book_title || r.product_name || "Item";
+                                const unit = toNum(r.unit_price);
+
+                                return (
+                                  <tr key={`${g.class_name}-${idx}`} className="border-t border-slate-100">
+                                    <td className="py-2 px-4 font-semibold text-slate-900">
+                                      {title}
+                                      {r.type && String(r.type).toUpperCase() !== "BOOK" ? (
+                                        <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-slate-600">
+                                          {String(r.type).toUpperCase()}
+                                        </span>
+                                      ) : null}
+                                    </td>
+                                    <td className="py-2 px-4 text-right font-extrabold">
+                                      ₹ {money(unit)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="px-4 py-2 text-xs text-slate-500 bg-slate-50">
+                          Note: If Sale Price shows ₹ 0, either bundle item price is 0 or backend did not include pricing.
+                        </div>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
