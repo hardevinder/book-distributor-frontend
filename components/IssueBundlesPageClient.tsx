@@ -59,22 +59,21 @@ type BundleItem = {
   id: number;
   bundle_id: number;
 
-  // item may be BOOK/MATERIAL via product
   product_id?: number | null;
-  book_id: number;
+  book_id?: number | null;
 
   reserved_qty: number;
   issued_qty: number;
-
   required_qty?: number;
 
-  // nested (depends on endpoint)
   book?: BookMini | null;
   product?: ProductMini | null;
 
-  // pricing (bundle item level)
   mrp?: number | string | null;
   sale_price?: number | string | null;
+  selling_price?: number | string | null;
+  unit_price?: number | string | null;
+  rate?: number | string | null;
 };
 
 type Bundle = {
@@ -101,29 +100,21 @@ type Bundle = {
 
 type IssueToType = "DISTRIBUTOR" | "SCHOOL";
 
-/**
- * ✅ What backend returns inside issue.meta for UI table
- */
 type IssueMetaItemRow = {
   class_name?: string | null;
 
-  // label
   title?: string | null;
   book_title?: string | null;
   product_name?: string | null;
 
-  // qty (kept for fallback calc only)
   issued_qty?: number | string | null;
   reserved_qty?: number | string | null;
 
-  // requested qty
   requested_qty?: number | string | null;
 
-  // pricing
   unit_price?: number | string | null;
   line_total?: number | string | null;
 
-  // ids (optional)
   book_id?: number | null;
   product_id?: number | null;
   bundle_item_id?: number | null;
@@ -136,12 +127,18 @@ type IssueMeta = {
   totalIssuedNow?: number;
   shortages?: Array<{ title?: string; shortBy?: number }>;
   non_book_items?: Array<{ title?: string; type?: string }>;
+  totals?: {
+    requested_amount?: number;
+    issued_amount?: number;
+    reserved_amount?: number;
+    total_amount?: number;
+  };
 };
 
 type BundleIssueRow = {
   id: number;
   issue_no?: string | null;
-  academic_session: string;
+  academic_session?: string;
 
   issued_to_type: "DISTRIBUTOR" | "SCHOOL";
   issued_to_id: number;
@@ -150,12 +147,10 @@ type BundleIssueRow = {
 
   status?: "ISSUED" | "CANCELLED" | "PARTIAL" | "PENDING_STOCK" | string;
 
-  // ✅ backend normalizer sends:
   notes?: string | null;
   pretty_notes?: string | null;
   meta?: IssueMeta | null;
 
-  // raw fallback
   remarks?: string | null;
 
   createdAt?: string;
@@ -194,6 +189,7 @@ const IssueBundlesPageClient: React.FC = () => {
   const [issuedToId, setIssuedToId] = useState<number | "">("");
   const [bundleId, setBundleId] = useState<number | "">("");
   const [session, setSession] = useState<string>(DEFAULT_SESSION);
+  const [qtyMultiplier, setQtyMultiplier] = useState<number>(1);
   const [notes, setNotes] = useState<string>("");
 
   // ui
@@ -202,6 +198,10 @@ const IssueBundlesPageClient: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
+
+  // confirm cancel modal
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmIssue, setConfirmIssue] = useState<BundleIssueRow | null>(null);
 
   const notesRef = useRef<HTMLInputElement | null>(null);
 
@@ -236,6 +236,14 @@ const IssueBundlesPageClient: React.FC = () => {
     return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
   };
 
+  const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+  const normStatus = (st?: string) => String(st || "ISSUED").trim().toUpperCase();
+  const statusLabel = (st?: string) => normStatus(st);
+
+  // ✅ show cancel for anything except CANCELLED
+  const canCancelIssue = (st?: string) => normStatus(st) !== "CANCELLED";
+
   // Book fallback pricing
   const bookRate = (b?: BookMini | null) => {
     if (!b) return 0;
@@ -248,56 +256,49 @@ const IssueBundlesPageClient: React.FC = () => {
     return 0;
   };
 
-  // Bundle item pricing (preferred for issuing UI)
+  // Bundle item pricing
   const bundleItemPrice = (it?: BundleItem | null) => {
     if (!it) return 0;
-    const sp = toNum((it as any).sale_price);
+
+    const sp =
+      toNum((it as any).sale_price) ||
+      toNum((it as any).selling_price) ||
+      toNum((it as any).unit_price) ||
+      toNum((it as any).rate) ||
+      0;
     if (sp) return sp;
+
     const mrp = toNum((it as any).mrp);
     if (mrp) return mrp;
 
-    // if nested product.book exists
     const pb = (it as any).product?.book as BookMini | undefined;
     if (pb) return bookRate(pb);
 
-    // fallback to direct book
     return bookRate((it as any).book);
   };
 
-  /**
-   * ✅ Notes priority:
-   * - pretty_notes (best for user)
-   * - notes (human note)
-   * - remarks (raw fallback)
-   */
-  const displayNotes = (row?: {
-    pretty_notes?: string | null;
-    notes?: string | null;
-    remarks?: string | null;
-  }) =>
+  const displayNotes = (row?: { pretty_notes?: string | null; notes?: string | null; remarks?: string | null }) =>
     (row?.pretty_notes && String(row.pretty_notes).trim()) ||
     (row?.notes && String(row.notes).trim()) ||
     (row?.remarks && String(row.remarks).trim()) ||
     "";
 
-  // ✅ Works for BOTH: master bundles (no items) and reserved bundles (items exist)
   const bundleLabel = (b: Bundle) => {
     const schoolName = b.school?.name || `School #${b.school_id}`;
-    const className =
-      b.class?.class_name ||
-      b.class_name ||
-      (b.class_id ? `Class #${b.class_id}` : "");
+    const className = b.class?.class_name || b.class_name || (b.class_id ? `Class #${b.class_id}` : "");
     const itemCount = b.items?.length ?? 0;
-    const qtyTotal = (b.items || []).reduce(
-      (s, it) => s + (toNum(it.reserved_qty) || 0),
-      0
-    );
+
+    const qtyTotal = (b.items || []).reduce((s, it) => {
+      const rq = toNum((it as any).required_qty);
+      const res = toNum((it as any).reserved_qty);
+      return s + (rq || res || 0);
+    }, 0);
 
     if (!b.items || b.items.length === 0) {
       return `#${b.id} — ${schoolName} — ${className} — ${b.name || "Bundle"}`;
     }
 
-    return `#${b.id} — ${schoolName} — ${className} — ${itemCount} titles • ${qtyTotal} reserved`;
+    return `#${b.id} — ${schoolName} — ${className} — ${itemCount} titles • ${qtyTotal} qty`;
   };
 
   const selectedBundle = useMemo(() => {
@@ -307,13 +308,10 @@ const IssueBundlesPageClient: React.FC = () => {
 
   const selectedParty = useMemo(() => {
     if (!issuedToId) return null;
-    if (issueToType === "DISTRIBUTOR") {
-      return distributors.find((d) => d.id === issuedToId) || null;
-    }
+    if (issueToType === "DISTRIBUTOR") return distributors.find((d) => d.id === issuedToId) || null;
     return schools.find((s) => s.id === issuedToId) || null;
   }, [issuedToId, issueToType, distributors, schools]);
 
-  // ✅ Dependent bundle list when issuing to SCHOOL
   const visibleBundles = useMemo(() => {
     if (issueToType === "SCHOOL" && issuedToId) {
       return bundles.filter((b) => Number(b.school_id) === Number(issuedToId));
@@ -329,25 +327,21 @@ const IssueBundlesPageClient: React.FC = () => {
   }, [issueToType, issuedToId, bundles]);
 
   const partyName = (row: BundleIssueRow) => {
-    if (row.issued_to_type === "DISTRIBUTOR") {
-      return row.issuedDistributor?.name || `Distributor #${row.issued_to_id}`;
-    }
+    if (row.issued_to_type === "DISTRIBUTOR") return row.issuedDistributor?.name || `Distributor #${row.issued_to_id}`;
     return row.issuedSchool?.name || `School #${row.issued_to_id}`;
   };
 
   const partySub = (row: BundleIssueRow) => {
     if (row.issued_to_type === "DISTRIBUTOR") {
       const c = row.issuedDistributor?.city ? `City: ${row.issuedDistributor.city}` : "";
-      const m = row.issuedDistributor?.mobile
-        ? `Mobile: ${row.issuedDistributor.mobile}`
-        : "";
+      const m = row.issuedDistributor?.mobile ? `Mobile: ${row.issuedDistributor.mobile}` : "";
       return [c, m].filter(Boolean).join(" • ");
     }
     return "";
   };
 
   const issueBadge = (st?: string) => {
-    const s = (st || "").toUpperCase();
+    const s = normStatus(st);
     if (s === "CANCELLED") return "bg-rose-50 text-rose-700 border-rose-200";
     if (s === "ISSUED") return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (s === "PARTIAL") return "bg-amber-50 text-amber-800 border-amber-200";
@@ -357,10 +351,6 @@ const IssueBundlesPageClient: React.FC = () => {
 
   /* ---------------- Invoice Download ---------------- */
 
-  /**
-   * ✅ Downloads invoice PDF for an issue
-   * Backend route added: GET /api/bundle-issues/:id/invoice
-   */
   const downloadInvoice = async (row: BundleIssueRow) => {
     if (!row?.id) return;
 
@@ -368,9 +358,7 @@ const IssueBundlesPageClient: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const res = await api.get(`/api/bundle-issues/${row.id}/invoice`, {
-        responseType: "blob",
-      });
+      const res = await api.get(`/api/bundle-issues/${row.id}/invoice`, { responseType: "blob" });
 
       const blob = new Blob([res.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
@@ -391,11 +379,7 @@ const IssueBundlesPageClient: React.FC = () => {
       setToast({ message: "Invoice downloaded.", type: "success" });
     } catch (e: any) {
       console.error(e);
-      const msg =
-        e?.response?.data?.message ||
-        e?.response?.data?.error ||
-        e?.message ||
-        "Failed to download invoice.";
+      const msg = e?.response?.data?.message || e?.response?.data?.error || e?.message || "Failed to download invoice.";
       setToast({ message: msg, type: "error" });
       setError(msg);
     } finally {
@@ -405,7 +389,6 @@ const IssueBundlesPageClient: React.FC = () => {
 
   /* ---------------- Modal: Build display item rows ---------------- */
 
-  // Create a map of bundle-item prices for selected issue (fixes old issues where meta.unit_price was 0)
   const selectedIssueBundleItemPriceMap = useMemo(() => {
     const map = new Map<string, number>();
     const items = selectedIssue?.bundle?.items || [];
@@ -422,8 +405,8 @@ const IssueBundlesPageClient: React.FC = () => {
 
   const modalItemRows = useMemo<IssueMetaItemRow[]>(() => {
     const rows = selectedIssue?.meta?.item_rows;
+
     if (Array.isArray(rows) && rows.length) {
-      // ✅ PATCH: If unit_price is 0/missing, use bundle.items.sale_price (or mrp, or book rate)
       return rows.map((r) => {
         const unit = toNum(r.unit_price);
         if (unit > 0) return r;
@@ -439,79 +422,69 @@ const IssueBundlesPageClient: React.FC = () => {
         if (!fallback) return r;
 
         const requested =
-          r.requested_qty != null
-            ? toNum(r.requested_qty)
-            : toNum(r.issued_qty) + toNum(r.reserved_qty);
+          r.requested_qty != null ? toNum(r.requested_qty) : toNum(r.issued_qty) + toNum(r.reserved_qty);
 
         const line = toNum(r.line_total) || requested * fallback;
 
-        return {
-          ...r,
-          unit_price: fallback,
-          line_total: line,
-        };
+        return { ...r, unit_price: fallback, line_total: line };
       });
     }
 
-    // fallback (older API): bundle.items -> transform to item rows
     const items = selectedIssue?.bundle?.items || [];
     if (!items.length) return [];
+
     return items.map((it) => {
       const unit = bundleItemPrice(it);
-      const issued = toNum(it.issued_qty);
-      const reserved = toNum(it.reserved_qty);
-      const requested = issued + reserved;
+
+      const issued = toNum((it as any).issued_qty);
+      const reserved = toNum((it as any).reserved_qty);
+      const requested = toNum((it as any).required_qty) || issued + reserved;
+
+      const pType = String((it as any).product?.type || "BOOK").toUpperCase();
 
       const title =
-        it.product?.type && String(it.product.type).toUpperCase() !== "BOOK"
-          ? it.product?.name || "Item"
-          : it.book?.title ||
-            it.product?.book?.title ||
-            (it.book_id ? `Book #${it.book_id}` : "Book");
+        pType !== "BOOK"
+          ? (it as any).product?.name || "Item"
+          : (it as any).book?.title ||
+            (it as any).product?.book?.title ||
+            ((it as any).book_id ? `Book #${(it as any).book_id}` : "Book");
 
       const className =
-        it.book?.class_name ||
-        it.product?.book?.class_name ||
-        (it.product?.type && String(it.product.type).toUpperCase() !== "BOOK" ? null : "Unassigned");
+        (it as any).book?.class_name ||
+        (it as any).product?.book?.class_name ||
+        (pType !== "BOOK" ? null : "Unassigned");
 
       return {
         class_name: className || "Unassigned",
         title,
-        issued_qty: issued,
-        reserved_qty: reserved,
         requested_qty: requested,
         unit_price: unit,
         line_total: unit * requested,
-        book_id: it.book_id,
-        product_id: it.product_id ?? undefined,
-        bundle_item_id: it.id,
-        type: it.product?.type || "BOOK",
+        book_id: (it as any).book_id ?? null,
+        product_id: (it as any).product_id ?? undefined,
+        bundle_item_id: (it as any).id,
+        type: pType,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIssue, selectedIssueBundleItemPriceMap]);
 
-  // totals (show only Total Amount)
   const modalTotals = useMemo(() => {
     const rows = modalItemRows;
-
     const totalTitles = rows.length;
 
-    const totalAmount = rows.reduce((s, r) => {
+    const backendTotal = toNum(selectedIssue?.meta?.totals?.total_amount);
+
+    const computedTotal = rows.reduce((s, r) => {
       const unit = toNum(r.unit_price);
       const requested =
-        r.requested_qty != null
-          ? toNum(r.requested_qty)
-          : toNum(r.issued_qty) + toNum(r.reserved_qty);
+        r.requested_qty != null ? toNum(r.requested_qty) : toNum(r.issued_qty) + toNum(r.reserved_qty);
       const line = toNum(r.line_total) || requested * unit;
       return s + line;
     }, 0);
 
-    return {
-      totalTitles,
-      totalAmount,
-    };
-  }, [modalItemRows]);
+    return { totalTitles, totalAmount: backendTotal > 0 ? backendTotal : computedTotal };
+  }, [modalItemRows, selectedIssue]);
 
   const modalGroups = useMemo(() => {
     const rows = modalItemRows;
@@ -524,9 +497,7 @@ const IssueBundlesPageClient: React.FC = () => {
       map.get(key)!.push(r);
     }
 
-    const keys = Array.from(map.keys()).sort((a, b) =>
-      a.localeCompare(b, undefined, { numeric: true })
-    );
+    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
     return keys.map((k) => ({
       class_name: k,
@@ -594,7 +565,16 @@ const IssueBundlesPageClient: React.FC = () => {
         params: { academic_session: String(sessionForFilter || "").trim() },
       });
       const list: BundleIssueRow[] = normalizeList(res?.data);
-      setIssues([...list].sort((a, b) => (b.id || 0) - (a.id || 0)));
+
+      const normalized = list.map((x) => ({
+        ...x,
+        academic_session:
+          (x as any).academic_session ||
+          (x as any).bundle?.academic_session ||
+          String(sessionForFilter || "").trim(),
+      }));
+
+      setIssues([...normalized].sort((a, b) => (b.id || 0) - (a.id || 0)));
     } catch (e: any) {
       console.error(e);
       setIssues([]);
@@ -604,10 +584,7 @@ const IssueBundlesPageClient: React.FC = () => {
   };
 
   const fetchAll = async (sessionForFilter: string) => {
-    await Promise.all([
-      fetchMastersAndReservedBundles(sessionForFilter),
-      fetchIssues(sessionForFilter),
-    ]);
+    await Promise.all([fetchMastersAndReservedBundles(sessionForFilter), fetchIssues(sessionForFilter)]);
   };
 
   useEffect(() => {
@@ -635,11 +612,12 @@ const IssueBundlesPageClient: React.FC = () => {
       if (!bundleId) throw new Error("Please select Bundle.");
       if (!session.trim()) throw new Error("Academic session is required.");
 
-      const payload = {
+      const payload: any = {
         academic_session: session.trim(),
         issued_to_type: issueToType,
         issued_to_id: issuedToId,
         bundle_id: bundleId,
+        qty: clamp(toNum(qtyMultiplier) || 1, 1, 999),
         notes: notes.trim() || null,
       };
 
@@ -650,16 +628,13 @@ const IssueBundlesPageClient: React.FC = () => {
       setIssueToType("DISTRIBUTOR");
       setIssuedToId("");
       setBundleId("");
+      setQtyMultiplier(1);
       setNotes("");
 
       await fetchAll(session);
     } catch (e: any) {
       console.error(e);
-      const msg =
-        e?.response?.data?.message ||
-        e?.response?.data?.error ||
-        e?.message ||
-        "Failed to issue bundle.";
+      const msg = e?.response?.data?.message || e?.response?.data?.error || e?.message || "Failed to issue bundle.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -673,25 +648,35 @@ const IssueBundlesPageClient: React.FC = () => {
     setModalOpen(true);
   };
 
-  const cancelIssue = async (row: BundleIssueRow) => {
-    if (!row?.id) return;
+  const openCancelConfirm = (row: BundleIssueRow) => {
+    setConfirmIssue(row);
+    setConfirmOpen(true);
+  };
+
+  const doCancelConfirmed = async () => {
+    if (!confirmIssue?.id) return;
     try {
       setLoading(true);
       setError(null);
 
-      await api.post(`/api/bundle-issues/${row.id}/cancel`);
+      await api.post(`/api/bundle-issues/${confirmIssue.id}/cancel`);
 
       setToast({ message: "Issue cancelled & stock reverted.", type: "success" });
-      setModalOpen(false);
-      setSelectedIssue(null);
+
+      setConfirmOpen(false);
+      setConfirmIssue(null);
+
+      // if that issue is open in details modal, close it
+      if (selectedIssue?.id === confirmIssue.id) {
+        setModalOpen(false);
+        setSelectedIssue(null);
+      }
+
       await fetchAll(session);
     } catch (e: any) {
       console.error(e);
       const msg =
-        e?.response?.data?.message ||
-        e?.response?.data?.error ||
-        e?.message ||
-        "Failed to cancel issue.";
+        e?.response?.data?.message || e?.response?.data?.error || e?.message || "Failed to cancel issue.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -705,9 +690,7 @@ const IssueBundlesPageClient: React.FC = () => {
     const q = issueSearch.trim().toLowerCase();
 
     let base = issues;
-    if (!showCancelled) {
-      base = base.filter((x) => (x.status || "").toUpperCase() !== "CANCELLED");
-    }
+    if (!showCancelled) base = base.filter((x) => normStatus(x.status) !== "CANCELLED");
 
     if (!q) return base;
 
@@ -734,13 +717,13 @@ const IssueBundlesPageClient: React.FC = () => {
   }, [issues, issueSearch, showCancelled]);
 
   const kpi = useMemo(() => {
-    const base = showCancelled
-      ? issues
-      : issues.filter((x) => (x.status || "").toUpperCase() !== "CANCELLED");
+    const base = showCancelled ? issues : issues.filter((x) => normStatus(x.status) !== "CANCELLED");
     const total = base.length;
-    const issued = base.filter((x) => (x.status || "ISSUED").toUpperCase() === "ISSUED").length;
-    const cancelled = base.filter((x) => (x.status || "").toUpperCase() === "CANCELLED").length;
-    return { total, issued, cancelled };
+    const issued = base.filter((x) => normStatus(x.status) === "ISSUED").length;
+    const cancelled = base.filter((x) => normStatus(x.status) === "CANCELLED").length;
+    const partial = base.filter((x) => normStatus(x.status) === "PARTIAL").length;
+    const pending = base.filter((x) => normStatus(x.status) === "PENDING_STOCK").length;
+    return { total, issued, cancelled, partial, pending };
   }, [issues, showCancelled]);
 
   /* ---------------- UI ---------------- */
@@ -754,16 +737,12 @@ const IssueBundlesPageClient: React.FC = () => {
         <div className="absolute top-40 left-40 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-25 animate-blob animation-delay-4000" />
       </div>
 
-      {/* ✅ Single Top Bar */}
+      {/* Top Bar */}
       <header className="sticky top-0 z-40 bg-white/92 backdrop-blur-md border-b border-slate-200/60">
         <div className="px-4 sm:px-6 py-3">
           <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
-            {/* Left: title */}
             <div className="flex items-center gap-3 min-w-0">
-              <Link
-                href="/"
-                className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors shrink-0"
-              >
+              <Link href="/" className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 transition-colors shrink-0">
                 <ChevronLeft className="w-5 h-5" />
                 <span className="text-sm font-semibold hidden sm:inline">Dashboard</span>
               </Link>
@@ -773,19 +752,15 @@ const IssueBundlesPageClient: React.FC = () => {
                   <PackagePlus className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-extrabold leading-tight truncate text-[15px]">
-                    Bundle Issue
-                  </div>
+                  <div className="font-extrabold leading-tight truncate text-[15px]">Bundle Issue</div>
                   <div className="text-[11px] text-slate-500 leading-tight truncate hidden sm:block">
-                    Issue bundles • Cancel reverts stock
+                    Issue bundles • Cancel reverts stock • Invoice for distributor issues
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Right: controls */}
             <div className="flex flex-col lg:flex-row lg:items-center gap-2">
-              {/* Session */}
               <div className="flex items-center gap-2">
                 <div className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-slate-600">
                   <Filter className="w-3.5 h-3.5" />
@@ -799,7 +774,6 @@ const IssueBundlesPageClient: React.FC = () => {
                 />
               </div>
 
-              {/* Search */}
               <div className="relative w-full lg:w-[380px]">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -810,7 +784,6 @@ const IssueBundlesPageClient: React.FC = () => {
                 />
               </div>
 
-              {/* Toggle */}
               <button
                 type="button"
                 onClick={() => setShowCancelled((v) => !v)}
@@ -824,7 +797,6 @@ const IssueBundlesPageClient: React.FC = () => {
                 {showCancelled ? "Hide Cancelled" : "Show Cancelled"}
               </button>
 
-              {/* Actions */}
               <button
                 onClick={() => fetchAll(session)}
                 disabled={pageLoading || historyLoading}
@@ -844,29 +816,26 @@ const IssueBundlesPageClient: React.FC = () => {
 
               <div className="hidden xl:flex items-center gap-2 text-[11px] text-slate-500 pl-1">
                 <Info className="w-3.5 h-3.5" />
-                {kpi.total} records
+                {kpi.total} records • {kpi.partial} partial • {kpi.pending} pending
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Work area */}
       <main className="relative z-10 h-[calc(100vh-76px)]">
         <div className="h-full px-4 sm:px-6 py-3">
           {error ? (
             <div className="mb-3 bg-red-50 border border-red-200 rounded-xl p-3 shadow-sm">
               <div className="flex items-center gap-2 text-xs sm:text-sm text-red-700">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">
-                  !
-                </div>
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-red-600">!</div>
                 <span>{error}</span>
               </div>
             </div>
           ) : null}
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 h-full min-h-0">
-            {/* LEFT: Issue Form */}
+            {/* LEFT */}
             <section className="lg:col-span-4 h-full min-h-0">
               <div className="h-full min-h-0 rounded-2xl border border-slate-200/60 bg-white/85 backdrop-blur-sm shadow-lg overflow-hidden flex flex-col">
                 <div className="px-4 py-3 border-b border-slate-200 bg-white/70">
@@ -892,7 +861,6 @@ const IssueBundlesPageClient: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {/* Issue To Type */}
                       <div>
                         <div className="text-xs font-semibold text-slate-700 mb-1.5">Issue To</div>
                         <div className="grid grid-cols-2 gap-2">
@@ -924,7 +892,6 @@ const IssueBundlesPageClient: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Party */}
                       <div>
                         <label className="text-xs font-semibold text-slate-700">
                           {issueToType === "DISTRIBUTOR" ? "Distributor" : "School"}
@@ -934,10 +901,7 @@ const IssueBundlesPageClient: React.FC = () => {
                           onChange={(e) => setIssuedToId(e.target.value ? Number(e.target.value) : "")}
                           className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none shadow-sm"
                         >
-                          <option value="">
-                            Select {issueToType === "DISTRIBUTOR" ? "Distributor" : "School"}
-                          </option>
-
+                          <option value="">Select {issueToType === "DISTRIBUTOR" ? "Distributor" : "School"}</option>
                           {(issueToType === "DISTRIBUTOR" ? distributors : schools).map((x: any) => (
                             <option key={x.id} value={x.id}>
                               {x.name}
@@ -947,17 +911,12 @@ const IssueBundlesPageClient: React.FC = () => {
 
                         {selectedParty && issueToType === "DISTRIBUTOR" ? (
                           <div className="mt-1 text-[11px] text-slate-500">
-                            {(selectedParty as Distributor).city
-                              ? `City: ${(selectedParty as Distributor).city}`
-                              : ""}
-                            {(selectedParty as Distributor).mobile
-                              ? `  •  Mobile: ${(selectedParty as Distributor).mobile}`
-                              : ""}
+                            {(selectedParty as Distributor).city ? `City: ${(selectedParty as Distributor).city}` : ""}
+                            {(selectedParty as Distributor).mobile ? `  •  Mobile: ${(selectedParty as Distributor).mobile}` : ""}
                           </div>
                         ) : null}
                       </div>
 
-                      {/* Bundle */}
                       <div>
                         <label className="text-xs font-semibold text-slate-700">
                           Bundle {issueToType === "SCHOOL" ? "(Selected School)" : ""}
@@ -968,7 +927,6 @@ const IssueBundlesPageClient: React.FC = () => {
                           className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none shadow-sm"
                         >
                           <option value="">Select Bundle</option>
-
                           {visibleBundles.map((b) => (
                             <option key={b.id} value={b.id}>
                               {bundleLabel(b)}
@@ -977,9 +935,7 @@ const IssueBundlesPageClient: React.FC = () => {
                         </select>
 
                         {issueToType === "SCHOOL" && issuedToId && visibleBundles.length === 0 ? (
-                          <div className="mt-1 text-[11px] text-rose-600">
-                            No active bundles for this school in session {session}.
-                          </div>
+                          <div className="mt-1 text-[11px] text-rose-600">No active bundles for this school in session {session}.</div>
                         ) : null}
 
                         {selectedBundle ? (
@@ -988,14 +944,11 @@ const IssueBundlesPageClient: React.FC = () => {
                               <Layers className="w-4 h-4 text-indigo-600 mt-0.5" />
                               <div className="min-w-0">
                                 <div className="font-semibold text-slate-900">
-                                  Bundle #{selectedBundle.id} •{" "}
-                                  {selectedBundle.school?.name || `School #${selectedBundle.school_id}`}
+                                  Bundle #{selectedBundle.id} • {selectedBundle.school?.name || `School #${selectedBundle.school_id}`}
                                 </div>
                                 <div className="text-[11px] text-slate-500 mt-0.5">
                                   {(selectedBundle.class?.class_name || selectedBundle.class_name || "") ? (
-                                    <span className="font-semibold">
-                                      {selectedBundle.class?.class_name || selectedBundle.class_name}
-                                    </span>
+                                    <span className="font-semibold">{selectedBundle.class?.class_name || selectedBundle.class_name}</span>
                                   ) : null}
                                   {selectedBundle.name ? <span> • {selectedBundle.name}</span> : null}
                                 </div>
@@ -1007,9 +960,7 @@ const IssueBundlesPageClient: React.FC = () => {
                                   </div>
                                 ) : (
                                   <div className="mt-2 text-xs text-slate-500">
-                                    {selectedBundle.items?.length
-                                      ? "Reserved items loaded."
-                                      : "This is a master bundle (no items in this API)."}
+                                    {selectedBundle.items?.length ? "Reserved items loaded." : "This is a master bundle (no items in this API)."}
                                   </div>
                                 )}
                               </div>
@@ -1018,11 +969,24 @@ const IssueBundlesPageClient: React.FC = () => {
                         ) : null}
                       </div>
 
-                      {/* Notes */}
                       <div>
-                        <label className="text-xs font-semibold text-slate-700">
-                          Issue Notes (optional)
-                        </label>
+                        <label className="text-xs font-semibold text-slate-700">Qty Multiplier</label>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={999}
+                            value={qtyMultiplier}
+                            onChange={(e) => setQtyMultiplier(clamp(toNum(e.target.value) || 1, 1, 999))}
+                            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none shadow-sm"
+                            placeholder="1"
+                          />
+                          <div className="text-[11px] text-slate-500 whitespace-nowrap">x bundle qty</div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-semibold text-slate-700">Issue Notes (optional)</label>
                         <input
                           ref={notesRef}
                           value={notes}
@@ -1032,7 +996,6 @@ const IssueBundlesPageClient: React.FC = () => {
                         />
                       </div>
 
-                      {/* Submit */}
                       <button
                         type="button"
                         disabled={loading}
@@ -1043,16 +1006,14 @@ const IssueBundlesPageClient: React.FC = () => {
                         {loading ? "Issuing..." : "Issue Bundle"}
                       </button>
 
-                      <div className="text-[11px] text-slate-500">
-                        Tip: Distributor users can issue only to their own distributor_id (backend rule).
-                      </div>
+                      <div className="text-[11px] text-slate-500">Tip: Distributor users can issue only to their own distributor_id (backend rule).</div>
                     </div>
                   )}
                 </div>
               </div>
             </section>
 
-            {/* RIGHT: History table */}
+            {/* RIGHT */}
             <section className="lg:col-span-8 h-full min-h-0">
               <div className="h-full min-h-0 rounded-2xl border border-slate-200/60 bg-white/85 backdrop-blur-sm shadow-lg overflow-hidden flex flex-col">
                 <div className="px-4 py-3 border-b border-slate-200 bg-white/70 flex items-center justify-between gap-3">
@@ -1064,7 +1025,9 @@ const IssueBundlesPageClient: React.FC = () => {
                       <div className="font-extrabold truncate">Issued History</div>
                       <div className="text-[11px] text-slate-500 truncate">
                         Total: <span className="font-semibold">{kpi.total}</span> • Issued:{" "}
-                        <span className="font-semibold">{kpi.issued}</span> • Cancelled:{" "}
+                        <span className="font-semibold">{kpi.issued}</span> • Partial:{" "}
+                        <span className="font-semibold">{kpi.partial}</span> • Pending:{" "}
+                        <span className="font-semibold">{kpi.pending}</span> • Cancelled:{" "}
                         <span className="font-semibold">{kpi.cancelled}</span>
                       </div>
                     </div>
@@ -1090,9 +1053,7 @@ const IssueBundlesPageClient: React.FC = () => {
                     </div>
                   ) : filteredIssues.length === 0 ? (
                     <div className="p-4 text-sm text-slate-600">
-                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                        No issued records found for this session.
-                      </div>
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">No issued records found for this session.</div>
                     </div>
                   ) : (
                     <table className="min-w-full text-sm">
@@ -1108,6 +1069,7 @@ const IssueBundlesPageClient: React.FC = () => {
                           <th className="py-2 px-4 text-right">Action</th>
                         </tr>
                       </thead>
+
                       <tbody>
                         {filteredIssues.map((x) => {
                           const isDist = String(x.issued_to_type).toUpperCase() === "DISTRIBUTOR";
@@ -1120,15 +1082,11 @@ const IssueBundlesPageClient: React.FC = () => {
 
                               <td className="py-3 px-4">
                                 <div className="font-semibold text-slate-900">Bundle #{x.bundle_id}</div>
-                                <div className="text-xs text-slate-500">Session: {x.academic_session}</div>
+                                <div className="text-xs text-slate-500">Session: {(x.academic_session || session).trim()}</div>
                               </td>
 
                               <td className="py-3 px-4">
-                                {x.bundle?.school?.name ? (
-                                  <div className="font-semibold text-slate-900">{x.bundle.school.name}</div>
-                                ) : (
-                                  <span className="text-slate-400">—</span>
-                                )}
+                                {x.bundle?.school?.name ? <div className="font-semibold text-slate-900">{x.bundle.school.name}</div> : <span className="text-slate-400">—</span>}
                                 {x.bundle?.notes ? (
                                   <div className="text-xs text-slate-500 line-clamp-1 mt-0.5">
                                     <span className="font-semibold">Bundle:</span> {x.bundle.notes}
@@ -1143,64 +1101,54 @@ const IssueBundlesPageClient: React.FC = () => {
 
                               <td className="py-3 px-4">
                                 {displayNotes(x) ? (
-                                  <div className="text-slate-800 whitespace-pre-wrap line-clamp-3">
-                                    {displayNotes(x)}
-                                  </div>
+                                  <div className="text-slate-800 whitespace-pre-wrap line-clamp-3">{displayNotes(x)}</div>
                                 ) : (
                                   <span className="text-slate-400">—</span>
                                 )}
                               </td>
 
                               <td className="py-3 px-4">
-                                <span
-                                  className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(
-                                    x.status
-                                  )}`}
-                                >
-                                  {(x.status || "ISSUED").toUpperCase()}
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(x.status)}`}>
+                                  {statusLabel(x.status)}
                                 </span>
                               </td>
 
-                              <td className="py-3 px-4 text-slate-700 whitespace-nowrap">
-                                {fmtDate(x.createdAt)}
-                              </td>
+                              <td className="py-3 px-4 text-slate-700 whitespace-nowrap">{fmtDate(x.createdAt)}</td>
 
                               <td className="py-3 px-4">
                                 <div className="flex items-center justify-end gap-2">
-                                  {/* ✅ NEW: Invoice button only for Distributor issues */}
                                   {isDist ? (
                                     <button
                                       type="button"
                                       disabled={loading}
                                       onClick={() => downloadInvoice(x)}
-                                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm disabled:opacity-60"
-                                      title="Download invoice"
+                                      className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm disabled:opacity-60"
+                                      title="Invoice"
                                     >
                                       <Download className="w-4 h-4" />
-                                      Invoice
                                     </button>
                                   ) : null}
 
                                   <button
                                     type="button"
                                     onClick={() => openIssueDetails(x)}
-                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm"
+                                    className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm"
+                                    title="Details"
                                   >
                                     <Eye className="w-4 h-4" />
-                                    Details
                                   </button>
 
-                                  {(x.status || "ISSUED").toUpperCase() === "ISSUED" && (
+                                  {canCancelIssue(x.status) ? (
                                     <button
                                       type="button"
                                       disabled={loading}
-                                      onClick={() => cancelIssue(x)}
-                                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-semibold shadow hover:shadow-md disabled:opacity-60"
+                                      onClick={() => openCancelConfirm(x)}
+                                      className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white shadow hover:shadow-md disabled:opacity-60"
+                                      title="Cancel"
                                     >
                                       <XCircle className="w-4 h-4" />
-                                      Cancel
                                     </button>
-                                  )}
+                                  ) : null}
                                 </div>
                               </td>
                             </tr>
@@ -1234,25 +1182,34 @@ const IssueBundlesPageClient: React.FC = () => {
                   Issue Details
                 </div>
                 <div className="text-xs text-slate-500 mt-1">
-                  Issue:{" "}
-                  <span className="font-semibold">{selectedIssue.issue_no || `#${selectedIssue.id}`}</span>{" "}
-                  • Bundle: <span className="font-semibold">#{selectedIssue.bundle_id}</span> • Session:{" "}
-                  <span className="font-semibold">{selectedIssue.academic_session}</span>
+                  Issue: <span className="font-semibold">{selectedIssue.issue_no || `#${selectedIssue.id}`}</span> • Bundle:{" "}
+                  <span className="font-semibold">#{selectedIssue.bundle_id}</span> • Session:{" "}
+                  <span className="font-semibold">{(selectedIssue.academic_session || session).trim()}</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* ✅ NEW: Invoice button inside modal (only for DISTRIBUTOR issues) */}
                 {String(selectedIssue.issued_to_type).toUpperCase() === "DISTRIBUTOR" ? (
                   <button
                     type="button"
                     disabled={loading}
                     onClick={() => downloadInvoice(selectedIssue)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 shadow-sm disabled:opacity-60"
-                    title="Download invoice"
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm disabled:opacity-60"
+                    title="Invoice"
                   >
                     <Download className="w-4 h-4" />
-                    Invoice
+                  </button>
+                ) : null}
+
+                {canCancelIssue(selectedIssue.status) ? (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => openCancelConfirm(selectedIssue)}
+                    className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white shadow hover:shadow-md disabled:opacity-60"
+                    title="Cancel"
+                  >
+                    <XCircle className="w-4 h-4" />
                   </button>
                 ) : null}
 
@@ -1269,47 +1226,35 @@ const IssueBundlesPageClient: React.FC = () => {
             </div>
 
             <div className="max-h-[78vh] overflow-auto p-4 space-y-4">
-              {/* Summary cards */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500">Issued To</div>
                   <div className="font-extrabold text-slate-900">{partyName(selectedIssue)}</div>
                   <div className="text-xs text-slate-500">Type: {selectedIssue.issued_to_type}</div>
-                  {partySub(selectedIssue) ? (
-                    <div className="text-xs text-slate-500 mt-1">{partySub(selectedIssue)}</div>
-                  ) : null}
+                  {partySub(selectedIssue) ? <div className="text-xs text-slate-500 mt-1">{partySub(selectedIssue)}</div> : null}
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500">Status</div>
                   <div className="mt-1">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(
-                        selectedIssue.status
-                      )}`}
-                    >
-                      {(selectedIssue.status || "ISSUED").toUpperCase()}
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(selectedIssue.status)}`}>
+                      {statusLabel(selectedIssue.status)}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Date: {fmtDate(selectedIssue.createdAt)}
-                  </div>
+                  <div className="text-xs text-slate-500 mt-1">Date: {fmtDate(selectedIssue.createdAt)}</div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500 flex items-center gap-1">
                     <IndianRupee className="w-3.5 h-3.5" /> Total Amount
                   </div>
-                  <div className="mt-2 text-base font-extrabold text-slate-900">
-                    ₹ {money(modalTotals.totalAmount)}
-                  </div>
+                  <div className="mt-2 text-base font-extrabold text-slate-900">₹ {money(modalTotals.totalAmount)}</div>
                   <div className="text-xs text-slate-500 mt-1">
                     Titles: <span className="font-semibold">{modalTotals.totalTitles}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Notes */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-slate-200 p-3 shadow-sm">
                   <div className="text-xs text-slate-500 flex items-center gap-2">
@@ -1317,11 +1262,7 @@ const IssueBundlesPageClient: React.FC = () => {
                     Bundle Notes
                   </div>
                   <div className="text-slate-900 mt-1">
-                    {selectedIssue.bundle?.notes?.trim() ? (
-                      <span className="whitespace-pre-wrap">{selectedIssue.bundle.notes}</span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
+                    {selectedIssue.bundle?.notes?.trim() ? <span className="whitespace-pre-wrap">{selectedIssue.bundle.notes}</span> : <span className="text-slate-400">—</span>}
                   </div>
                 </div>
 
@@ -1331,20 +1272,13 @@ const IssueBundlesPageClient: React.FC = () => {
                     Issue Notes
                   </div>
                   <div className="text-slate-900 mt-1">
-                    {displayNotes(selectedIssue) ? (
-                      <span className="whitespace-pre-wrap">{displayNotes(selectedIssue)}</span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
+                    {displayNotes(selectedIssue) ? <span className="whitespace-pre-wrap">{displayNotes(selectedIssue)}</span> : <span className="text-slate-400">—</span>}
                   </div>
                 </div>
               </div>
 
-              {/* ✅ Items: ONLY Item Name + Sale Price */}
               <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                <div className="bg-slate-50 px-4 py-3 font-extrabold text-slate-900">
-                  Items (Class-wise) • Item + Sale Price
-                </div>
+                <div className="bg-slate-50 px-4 py-3 font-extrabold text-slate-900">Items (Class-wise) • Item + Sale Price</div>
 
                 <div className="p-4 space-y-4">
                   {modalItemRows.length === 0 ? (
@@ -1381,9 +1315,7 @@ const IssueBundlesPageClient: React.FC = () => {
                                         </span>
                                       ) : null}
                                     </td>
-                                    <td className="py-2 px-4 text-right font-extrabold">
-                                      ₹ {money(unit)}
-                                    </td>
+                                    <td className="py-2 px-4 text-right font-extrabold">₹ {money(unit)}</td>
                                   </tr>
                                 );
                               })}
@@ -1399,20 +1331,82 @@ const IssueBundlesPageClient: React.FC = () => {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-              {(selectedIssue.status || "ISSUED").toUpperCase() === "ISSUED" ? (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => cancelIssue(selectedIssue)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-semibold shadow hover:shadow-md disabled:opacity-60"
-                  >
-                    <XCircle className="w-4 h-4" />
-                    Cancel Issue
-                  </button>
+      {/* Confirm Cancel Modal */}
+      {confirmOpen && confirmIssue && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
+          <div
+            className="absolute inset-0 bg-black/45"
+            onClick={() => {
+              if (loading) return;
+              setConfirmOpen(false);
+              setConfirmIssue(null);
+            }}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-rose-50 to-red-50 flex items-center justify-between gap-3">
+              <div className="font-extrabold text-slate-900">Confirm Cancel</div>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => {
+                  setConfirmOpen(false);
+                  setConfirmIssue(null);
+                }}
+                className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-60"
+                title="Close"
+              >
+                <XCircle className="w-4 h-4 text-slate-600" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="text-sm text-slate-700">
+                Issue <span className="font-extrabold">{confirmIssue.issue_no || `#${confirmIssue.id}`}</span> will be cancelled and stock will be reverted.
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="flex justify-between gap-2">
+                  <span className="font-semibold">To</span>
+                  <span className="text-right">{partyName(confirmIssue)}</span>
                 </div>
-              ) : null}
+                <div className="flex justify-between gap-2 mt-1">
+                  <span className="font-semibold">Bundle</span>
+                  <span className="text-right">#{confirmIssue.bundle_id}</span>
+                </div>
+                <div className="flex justify-between gap-2 mt-1">
+                  <span className="font-semibold">Status</span>
+                  <span className="text-right">{statusLabel(confirmIssue.status)}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setConfirmOpen(false);
+                    setConfirmIssue(null);
+                  }}
+                  className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold shadow-sm disabled:opacity-60"
+                >
+                  No
+                </button>
+
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={doCancelConfirmed}
+                  className="inline-flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white shadow hover:shadow-md disabled:opacity-60"
+                  title="Yes"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1420,11 +1414,7 @@ const IssueBundlesPageClient: React.FC = () => {
 
       {/* Toast */}
       {toast ? (
-        <div
-          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-lg text-sm font-semibold ${
-            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
-          }`}
-        >
+        <div className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-lg text-sm font-semibold ${toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
           {toast.message}
         </div>
       ) : null}
