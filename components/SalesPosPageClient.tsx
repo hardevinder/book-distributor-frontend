@@ -18,6 +18,9 @@ import {
   User,
   IndianRupee,
   Layers,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 /* ================= Types ================= */
@@ -75,7 +78,6 @@ type CartLine = {
   qty: number;
   unit_price: number;
   include: boolean;
-
   book_id?: number | null;
 };
 
@@ -87,10 +89,8 @@ const num = (v: any) => {
 };
 
 const round2 = (v: any) => Math.round(num(v) * 100) / 100;
-
 const money = (v: any) => round2(v).toFixed(2);
 
-// supports: {data:[...]}, {rows:[...]}, direct array, {data:{data:[...]}} etc
 function normalizeArray<T>(resData: any): T[] {
   if (Array.isArray(resData?.data)) return resData.data as T[];
   if (Array.isArray(resData?.rows)) return resData.rows as T[];
@@ -100,7 +100,6 @@ function normalizeArray<T>(resData: any): T[] {
   return [];
 }
 
-// ✅ supports: {success:true,data:{...}}, {data:{...}}, {bundle:{...}}, direct object
 function normalizeObject<T>(resData: any): T | null {
   if (!resData) return null;
   if (resData?.data && typeof resData.data === "object" && !Array.isArray(resData.data)) return resData.data as T;
@@ -170,6 +169,10 @@ function pickBundleStatus(b: any): string | null {
 export default function SalesPosPageClient() {
   const { user } = useAuth();
 
+  // sidebar wrap (desktop) + drawer (mobile)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
   // Customer selection
   const [soldToType, setSoldToType] = useState<"SCHOOL" | "WALKIN">("SCHOOL");
 
@@ -198,6 +201,15 @@ export default function SalesPosPageClient() {
   // receipt
   const lastSaleIdRef = useRef<number | null>(null);
 
+  // auto-load guards
+  const autoLoadTimerRef = useRef<any>(null);
+  const lastAutoKeyRef = useRef<string>("");
+  const abortRef = useRef<AbortController | null>(null);
+
+  const compactSelect =
+    "w-full rounded-lg border bg-white px-2 py-1.5 text-[12px] font-semibold leading-5 outline-none focus:ring-2 focus:ring-slate-200";
+  const compactInput = "w-full rounded-lg border px-2 py-1.5 text-[12px] outline-none focus:ring-2 focus:ring-slate-200";
+
   const clearBundleAndCart = () => {
     setCart([]);
     setBundleId(null);
@@ -206,28 +218,15 @@ export default function SalesPosPageClient() {
     lastSaleIdRef.current = null;
   };
 
-  /* -----------------------------------
-     Receipt printing (FIX Unauthorized)
-     - Fetch PDF with JWT header (axios)
-     - Open as Blob URL in new tab
-     ----------------------------------- */
+  /* ---------- Receipt ---------- */
   const openReceipt = async (saleId: number, size: "3in" | "a5") => {
     try {
       setErrMsg(null);
-
-      const res = await api.get(`/api/sales/${saleId}/receipt?size=${size}`, {
-        responseType: "blob",
-      });
-
+      const res = await api.get(`/api/sales/${saleId}/receipt?size=${size}`, { responseType: "blob" });
       const blob = new Blob([res.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
-
       const win = window.open(url, "_blank", "noopener,noreferrer");
-      if (!win) {
-        setErrMsg("Popup blocked. Please allow popups to print receipt.");
-      }
-
-      // cleanup later
+      if (!win) setErrMsg("Popup blocked. Please allow popups to print receipt.");
       setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
     } catch (e: any) {
       setErrMsg(e?.response?.data?.message || e?.message || "Failed to open receipt");
@@ -239,7 +238,6 @@ export default function SalesPosPageClient() {
     (async () => {
       try {
         setErrMsg(null);
-
         const [sRes, cRes] = await Promise.all([api.get("/api/schools?limit=500"), api.get("/api/classes?limit=500")]);
 
         const sList = normalizeArray<School>(sRes.data)
@@ -253,13 +251,12 @@ export default function SalesPosPageClient() {
         setSchools(sList);
         setClasses(cList);
 
-        if (sList.length && !selectedSchoolId) setSelectedSchoolId(num(sList[0].id));
-        if (cList.length && !selectedClassId) setSelectedClassId(num(cList[0].id));
+        setSelectedSchoolId((prev) => (prev ? prev : sList.length ? num(sList[0].id) : null));
+        setSelectedClassId((prev) => (prev ? prev : cList.length ? num(cList[0].id) : null));
       } catch (e: any) {
         setErrMsg(e?.response?.data?.message || e?.message || "Failed to load masters");
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---------- Derived ---------- */
@@ -299,22 +296,40 @@ export default function SalesPosPageClient() {
   const decQty = (key: string) =>
     setCart((prev) => prev.map((x) => (x.key === key ? { ...x, qty: Math.max(0, round2(x.qty - 1)) } : x)));
 
-  /* ---------- Load bundle items into cart ---------- */
-  const loadBundleForSchoolClass = async () => {
-    setErrMsg(null);
-    setOkMsg(null);
+  /* ---------- Load bundle into cart ---------- */
+  const loadBundleForSchoolClass = async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
 
-    if (soldToType !== "SCHOOL") return setErrMsg("Select SCHOOL mode to load bundle items.");
-    if (!selectedSchoolId || !selectedClassId) return setErrMsg("Select School and Class first.");
+    if (!silent) {
+      setErrMsg(null);
+      setOkMsg(null);
+    }
+
+    if (soldToType !== "SCHOOL") {
+      if (!silent) setErrMsg("Select SCHOOL mode to load bundle items.");
+      return;
+    }
+    if (!selectedSchoolId || !selectedClassId) {
+      if (!silent) setErrMsg("Select School and Class first.");
+      return;
+    }
+
+    try {
+      abortRef.current?.abort();
+    } catch {}
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setLoading(true);
     try {
-      const bRes = await api.get(`/api/bundles?school_id=${selectedSchoolId}&class_id=${selectedClassId}&limit=5`);
+      const bRes = await api.get(`/api/bundles?school_id=${selectedSchoolId}&class_id=${selectedClassId}&limit=5`, {
+        signal: controller.signal as any,
+      });
       const rows = normalizeArray<BundleLite>(bRes.data);
 
       if (!rows.length) {
         clearBundleAndCart();
-        setErrMsg("No bundle found for this school/class.");
+        if (!silent) setErrMsg("No bundle found for this school/class.");
         return;
       }
 
@@ -324,11 +339,11 @@ export default function SalesPosPageClient() {
       const id = num(preferred.id);
       if (!id) {
         clearBundleAndCart();
-        setErrMsg("Invalid bundle id returned.");
+        if (!silent) setErrMsg("Invalid bundle id returned.");
         return;
       }
 
-      const fullRes = await api.get(`/api/bundles/${id}`);
+      const fullRes = await api.get(`/api/bundles/${id}`, { signal: controller.signal as any });
 
       const bundle = normalizeObject<BundleFull>(fullRes.data);
       const realBundle =
@@ -348,10 +363,8 @@ export default function SalesPosPageClient() {
           const { title, class_name, book_id, kind } = pickTitle(it);
           const qty = Math.max(0, round2(it.qty));
           const unit_price = Math.max(0, round2(resolveUnitPrice(it)));
-
           const product_id = num(it.product_id || it.product?.id);
           const key = `${product_id}:${book_id || 0}:${title}`;
-
           return {
             key,
             product_id,
@@ -373,18 +386,38 @@ export default function SalesPosPageClient() {
       const autoTotal = lines.filter((x) => x.include).reduce((s, x) => s + round2(x.qty * x.unit_price), 0);
       setPaidAmount(round2(autoTotal));
 
-      if (!lines.length) {
-        setOkMsg(null);
-        setErrMsg("Bundle loaded but items list is empty.");
-      } else {
-        setOkMsg(`Loaded bundle #${id} (${pickBundleStatus(b) || String(preferred.status || "").toUpperCase() || "OK"})`);
+      if (!silent) {
+        if (!lines.length) setErrMsg("Bundle loaded but items list is empty.");
+        else setOkMsg(`Loaded bundle #${id}`);
       }
     } catch (e: any) {
-      setErrMsg(e?.response?.data?.message || e?.message || "Failed to load bundle");
+      const msg = e?.name === "CanceledError" || e?.code === "ERR_CANCELED" ? null : e?.response?.data?.message || e?.message;
+      if (msg && !silent) setErrMsg(msg || "Failed to load bundle");
     } finally {
       setLoading(false);
     }
   };
+
+  /* ---------- Auto load (real-time) ---------- */
+  useEffect(() => {
+    if (autoLoadTimerRef.current) clearTimeout(autoLoadTimerRef.current);
+
+    if (soldToType !== "SCHOOL") return;
+    if (!selectedSchoolId || !selectedClassId) return;
+
+    const key = `${selectedSchoolId}:${selectedClassId}`;
+    if (lastAutoKeyRef.current === key && cart.length > 0) return;
+
+    autoLoadTimerRef.current = setTimeout(async () => {
+      lastAutoKeyRef.current = key;
+      await loadBundleForSchoolClass({ silent: true });
+    }, 250);
+
+    return () => {
+      if (autoLoadTimerRef.current) clearTimeout(autoLoadTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soldToType, selectedSchoolId, selectedClassId]);
 
   /* ---------- Submit sale ---------- */
   const submitSale = async (printSize: "3in" | "a5") => {
@@ -420,12 +453,8 @@ export default function SalesPosPageClient() {
       const res = await api.post("/api/sales", payload);
       const saleId = num(res.data?.sale_id);
       lastSaleIdRef.current = saleId;
-
       setOkMsg(res.data?.message || "Sale saved");
-
-      if (saleId) {
-        await openReceipt(saleId, printSize);
-      }
+      if (saleId) await openReceipt(saleId, printSize);
     } catch (e: any) {
       setErrMsg(e?.response?.data?.message || e?.message || "Sale failed");
     } finally {
@@ -433,33 +462,253 @@ export default function SalesPosPageClient() {
     }
   };
 
-  /* ---------- Reset ---------- */
   const resetCart = () => {
-    clearBundleAndCart();
+    setSchoolQuery("");
     setNotes("");
     setOkMsg(null);
     setErrMsg(null);
+    clearBundleAndCart();
+    lastAutoKeyRef.current = "";
   };
 
+  /* ---------- Sidebar content (reuse for desktop + mobile drawer) ---------- */
+  const SidebarContent = (
+    <div className="h-full rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
+      <div className="p-2 border-b">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setSoldToType("SCHOOL")}
+            className={`flex items-center justify-center gap-2 rounded-xl border px-2 py-2 text-xs font-extrabold ${
+              soldToType === "SCHOOL" ? "border-slate-900 bg-slate-900 text-white" : "bg-white text-slate-700"
+            }`}
+          >
+            <SchoolIcon className="h-4 w-4" />
+            School
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSoldToType("WALKIN");
+              setSelectedSchoolId(null);
+              setSelectedClassId(null);
+              resetCart();
+              setMobileDrawerOpen(false);
+            }}
+            className={`flex items-center justify-center gap-2 rounded-xl border px-2 py-2 text-xs font-extrabold ${
+              soldToType === "WALKIN" ? "border-slate-900 bg-slate-900 text-white" : "bg-white text-slate-700"
+            }`}
+          >
+            <User className="h-4 w-4" />
+            Walk-in
+          </button>
+        </div>
+
+        {soldToType === "SCHOOL" && (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                <Search className="h-3.5 w-3.5" /> School
+              </div>
+              <div className="text-[10px] text-slate-500">{schools.length}</div>
+            </div>
+
+            <input value={schoolQuery} onChange={(e) => setSchoolQuery(e.target.value)} placeholder="Search…" className={compactInput} />
+
+            <select
+              value={selectedSchoolId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value ? Number(e.target.value) : null;
+                setSelectedSchoolId(id);
+                clearBundleAndCart();
+                setOkMsg(null);
+                setErrMsg(null);
+                lastAutoKeyRef.current = "";
+              }}
+              className={compactSelect}
+            >
+              <option value="">Select school…</option>
+              {filteredSchools.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-bold text-slate-600">Class</div>
+              <div className="text-[10px] text-slate-500">{classes.length}</div>
+            </div>
+
+            <select
+              value={selectedClassId ?? ""}
+              onChange={(e) => {
+                const id = e.target.value ? Number(e.target.value) : null;
+                setSelectedClassId(id);
+                clearBundleAndCart();
+                setOkMsg(null);
+                setErrMsg(null);
+                lastAutoKeyRef.current = "";
+              }}
+              className={compactSelect}
+            >
+              <option value="">Select class…</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.class_name}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex items-center justify-between rounded-xl border bg-slate-50 px-2 py-2">
+              <div className="text-[11px] text-slate-600">
+                {selectedSchool && selectedClass ? (
+                  <>
+                    <span className="font-bold">{selectedSchool.name}</span>
+                    <span className="mx-1">•</span>
+                    <span className="font-bold">{selectedClass.class_name}</span>
+                  </>
+                ) : (
+                  <span>Select school & class</span>
+                )}
+              </div>
+
+              <div className="text-[11px] text-slate-600 flex items-center gap-2">
+                {bundleId ? (
+                  <>
+                    <span className="font-extrabold">#{bundleId}</span>
+                    {bundleStatus ? (
+                      <span className="rounded-lg bg-white px-2 py-0.5 border text-[10px] font-bold">{bundleStatus}</span>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="text-slate-400">{loading ? "Loading…" : "—"}</span>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={loading || soldToType !== "SCHOOL" || !selectedSchoolId || !selectedClassId}
+              onClick={() => {
+                lastAutoKeyRef.current = "";
+                loadBundleForSchoolClass({ silent: false });
+                setMobileDrawerOpen(false);
+              }}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border bg-white px-2 py-2 text-xs font-extrabold shadow-sm disabled:opacity-60 active:scale-[0.99]"
+            >
+              <Layers className="h-4 w-4" />
+              Refresh Items
+            </button>
+          </div>
+        )}
+
+        {soldToType === "WALKIN" && (
+          <div className="mt-2 rounded-xl border bg-slate-50 px-2 py-2 text-[11px] text-slate-600">
+            Walk-in mode (no bundle auto-load).
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-auto p-2">
+        <div className="rounded-2xl border bg-white p-2">
+          <div className="text-xs font-extrabold">Payment</div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value as any)} className={compactSelect}>
+              <option value="CASH">CASH</option>
+              <option value="UPI">UPI</option>
+              <option value="CARD">CARD</option>
+              <option value="CREDIT">CREDIT</option>
+            </select>
+
+            <div className="rounded-lg border px-2 py-1.5">
+              <div className="text-[10px] font-bold text-slate-600">Paid</div>
+              <div className="mt-1 flex items-center gap-1">
+                <IndianRupee className="h-3.5 w-3.5 text-slate-500" />
+                <input
+                  inputMode="decimal"
+                  value={String(paidAmount)}
+                  onChange={(e) => setPaidAmount(Math.max(0, round2(e.target.value)))}
+                  className="w-full rounded-md border px-2 py-1 text-[12px] font-bold outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </div>
+            </div>
+          </div>
+
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notes…"
+            className="mt-2 w-full rounded-lg border p-2 text-[12px] outline-none focus:ring-2 focus:ring-slate-200"
+            rows={2}
+          />
+
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-xl border bg-slate-50 p-2">
+              <div className="text-[10px] text-slate-500">Total</div>
+              <div className="mt-1 font-extrabold">Rs. {money(totals.total)}</div>
+            </div>
+            <div className="rounded-xl border bg-slate-50 p-2">
+              <div className="text-[10px] text-slate-500">Paid</div>
+              <div className="mt-1 font-extrabold">Rs. {money(totals.paid)}</div>
+            </div>
+            <div className="rounded-xl border bg-slate-50 p-2">
+              <div className="text-[10px] text-slate-500">Bal</div>
+              <div className="mt-1 font-extrabold">Rs. {money(totals.balance)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="shrink-0 p-2 border-t text-[10px] text-slate-500">Auto-load on school/class change</div>
+    </div>
+  );
+
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-slate-50">
-      {/* Top sticky header */}
-      <div className="sticky top-0 z-20 border-b bg-white/95 backdrop-blur">
-        <div className="mx-auto max-w-2xl px-3 py-3">
+    <div className="h-[calc(100vh-64px)] bg-slate-50 flex flex-col overflow-hidden">
+      {/* Top bar with wrap button */}
+      <div className="shrink-0 border-b bg-white/95 backdrop-blur">
+        <div className="mx-auto max-w-6xl px-2 py-2">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Mobile menu button */}
+              <button
+                type="button"
+                className="md:hidden rounded-xl border bg-white p-2"
+                onClick={() => setMobileDrawerOpen(true)}
+                title="Open filters"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+
+              {/* Desktop collapse button */}
+              <button
+                type="button"
+                className="hidden md:inline-flex rounded-xl border bg-white p-2"
+                onClick={() => setSidebarCollapsed((v) => !v)}
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+              </button>
+
               <div className="rounded-xl bg-slate-900 p-2 text-white">
                 <ShoppingCart className="h-5 w-5" />
               </div>
-              <div>
-                <div className="text-base font-semibold leading-5">POS Sales</div>
-                <div className="text-xs text-slate-500">Fast billing • {user?.name ? `Hi, ${user.name}` : "Logged in"}</div>
+
+              <div className="min-w-0">
+                <div className="text-sm font-semibold leading-5">POS Sales</div>
+                <div className="text-[11px] text-slate-500 truncate">
+                  {user?.name ? `Hi, ${user.name}` : "Logged in"}
+                  {loading ? " • loading…" : ""}
+                </div>
               </div>
             </div>
 
             <button
               onClick={resetCart}
-              className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-medium shadow-sm active:scale-[0.99]"
+              className="inline-flex items-center gap-2 rounded-xl border bg-white px-2.5 py-2 text-xs font-semibold shadow-sm active:scale-[0.99]"
               title="Reset"
               type="button"
             >
@@ -468,9 +717,8 @@ export default function SalesPosPageClient() {
             </button>
           </div>
 
-          {/* Alerts */}
           {(errMsg || okMsg) && (
-            <div className="mt-3 space-y-2">
+            <div className="mt-2 space-y-2">
               {errMsg && (
                 <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
                   <AlertTriangle className="mt-0.5 h-4 w-4" />
@@ -491,320 +739,173 @@ export default function SalesPosPageClient() {
               )}
             </div>
           )}
+        </div>
+      </div>
 
-          {/* Customer selection bar */}
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setSoldToType("SCHOOL")}
-              className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
-                soldToType === "SCHOOL" ? "border-slate-900 bg-slate-900 text-white" : "bg-white text-slate-700"
-              }`}
-            >
-              <SchoolIcon className="h-4 w-4" />
-              School
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSoldToType("WALKIN");
-                setSelectedSchoolId(null);
-                setSelectedClassId(null);
-                resetCart();
-              }}
-              className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
-                soldToType === "WALKIN" ? "border-slate-900 bg-slate-900 text-white" : "bg-white text-slate-700"
-              }`}
-            >
-              <User className="h-4 w-4" />
-              Walk-in
-            </button>
+      {/* Mobile Drawer */}
+      {mobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileDrawerOpen(false)} />
+          <div className="absolute left-0 top-0 h-full w-[86%] max-w-[360px] bg-slate-50 p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-extrabold">Filters</div>
+              <button className="rounded-xl border bg-white p-2" onClick={() => setMobileDrawerOpen(false)} type="button">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {SidebarContent}
           </div>
+        </div>
+      )}
 
-          {/* School & class controls */}
-          {soldToType === "SCHOOL" && (
-            <div className="mt-3 space-y-2">
-              {/* School dropdown + search */}
-              <div className="rounded-2xl border bg-white p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                    <Search className="h-4 w-4" /> School
+      {/* Main workspace */}
+      <div className="flex-1 overflow-hidden">
+        <div className="mx-auto h-full max-w-6xl px-2 py-2">
+          <div className="h-full grid grid-cols-1 md:grid-cols-12 gap-2">
+            {/* Desktop Sidebar */}
+            <div className={`hidden md:block h-full overflow-hidden ${sidebarCollapsed ? "md:col-span-0" : "md:col-span-3"}`}>
+              {!sidebarCollapsed ? <div className="h-full">{SidebarContent}</div> : null}
+            </div>
+
+            {/* Cart area */}
+            <div className={`${sidebarCollapsed ? "md:col-span-12" : "md:col-span-9"} h-full overflow-hidden`}>
+              <div className="h-full rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
+                <div className="shrink-0 flex items-center justify-between border-b px-3 py-2">
+                  <div className="text-sm font-extrabold">Cart</div>
+                  <div className="text-xs text-slate-500">
+                    Included: <span className="font-extrabold">{totals.itemCount}</span>
                   </div>
-                  <div className="text-[11px] text-slate-500">{schools.length} schools loaded</div>
                 </div>
 
-                <input
-                  value={schoolQuery}
-                  onChange={(e) => setSchoolQuery(e.target.value)}
-                  placeholder="Type school name to filter…"
-                  className="mt-2 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-                />
+                <div className="flex-1 overflow-auto">
+                  {cart.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-slate-500">
+                      {soldToType === "SCHOOL" ? (
+                        <>
+                          Select school & class — items will load automatically.
+                          {loading ? <div className="mt-2 text-xs text-slate-400">Loading…</div> : null}
+                        </>
+                      ) : (
+                        <>Walk-in mode: no bundle items.</>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {cart.map((x) => {
+                        const lineTotal = round2((x.include ? x.qty : 0) * x.unit_price);
+                        return (
+                          <div key={x.key} className="p-3">
+                            <div className="flex items-start gap-3">
+                              <button
+                                type="button"
+                                onClick={() => setLine(x.key, { include: !x.include })}
+                                className={`mt-0.5 h-6 w-6 rounded-lg border flex items-center justify-center ${
+                                  x.include ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-400"
+                                }`}
+                                title="Include/Exclude"
+                              >
+                                {x.include ? <CheckCircle2 className="h-4 w-4" /> : <span className="h-4 w-4" />}
+                              </button>
 
-                <select
-                  value={selectedSchoolId ?? ""}
-                  onChange={(e) => {
-                    const id = e.target.value ? Number(e.target.value) : null;
-                    setSelectedSchoolId(id);
-                    clearBundleAndCart();
-                    setOkMsg(null);
-                    setErrMsg(null);
-                  }}
-                  className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">Select school…</option>
-                  {filteredSchools.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-extrabold">{x.title}</div>
+                                    <div className="mt-0.5 text-xs text-slate-500">
+                                      {x.kind}
+                                      {x.class_name ? <> • {x.class_name}</> : null}
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-xs text-slate-500">Line</div>
+                                    <div className="text-sm font-extrabold">Rs. {money(lineTotal)}</div>
+                                  </div>
+                                </div>
 
-              {/* Class dropdown + load bundle */}
-              <div className="rounded-2xl border bg-white p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-semibold text-slate-600">Class</div>
-                  {bundleId && (
-                    <div className="text-xs text-slate-500">
-                      Bundle: <span className="font-semibold">#{bundleId}</span>{" "}
-                      {bundleStatus ? <span className="ml-1 rounded-lg bg-slate-100 px-2 py-0.5">{bundleStatus}</span> : null}
+                                <div className="mt-3 grid grid-cols-2 gap-2">
+                                  <div className="rounded-xl border p-2">
+                                    <div className="text-[11px] font-extrabold text-slate-600">Qty</div>
+                                    <div className="mt-1 flex items-center justify-between gap-2">
+                                      <button type="button" onClick={() => decQty(x.key)} className="rounded-lg border bg-white p-2 active:scale-[0.99]">
+                                        <Minus className="h-4 w-4" />
+                                      </button>
+
+                                      <input
+                                        inputMode="decimal"
+                                        value={String(x.qty)}
+                                        onChange={(e) => setLine(x.key, { qty: Math.max(0, round2(e.target.value)) })}
+                                        className="w-full rounded-lg border px-2 py-2 text-center text-sm font-extrabold outline-none focus:ring-2 focus:ring-slate-200"
+                                      />
+
+                                      <button type="button" onClick={() => incQty(x.key)} className="rounded-lg border bg-white p-2 active:scale-[0.99]">
+                                        <Plus className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-xl border p-2">
+                                    <div className="text-[11px] font-extrabold text-slate-600">Unit Price</div>
+                                    <div className="mt-1 flex items-center gap-2">
+                                      <IndianRupee className="h-4 w-4 text-slate-500" />
+                                      <input
+                                        inputMode="decimal"
+                                        value={String(x.unit_price)}
+                                        onChange={(e) => setLine(x.key, { unit_price: Math.max(0, round2(e.target.value)) })}
+                                        className="w-full rounded-lg border px-2 py-2 text-sm font-extrabold outline-none focus:ring-2 focus:ring-slate-200"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
 
-                <select
-                  value={selectedClassId ?? ""}
-                  onChange={(e) => {
-                    const id = e.target.value ? Number(e.target.value) : null;
-                    setSelectedClassId(id);
-                    clearBundleAndCart();
-                    setOkMsg(null);
-                    setErrMsg(null);
-                  }}
-                  className="mt-2 w-full rounded-xl border bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">Select class…</option>
-                  {classes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.class_name}
-                    </option>
-                  ))}
-                </select>
+                <div className="shrink-0 border-t bg-white p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] text-slate-500">Grand Total</div>
+                      <div className="truncate text-lg font-black">Rs. {money(totals.total)}</div>
+                    </div>
 
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={loadBundleForSchoolClass}
-                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
-                >
-                  <Layers className="h-4 w-4" />
-                  {loading ? "Loading…" : "Load Items"}
-                </button>
-
-                {selectedSchool && selectedClass && (
-                  <div className="mt-2 text-xs text-slate-500">
-                    Selected: <span className="font-semibold">{selectedSchool.name}</span> •{" "}
-                    <span className="font-semibold">{selectedClass.class_name}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Main cart */}
-      <div className="mx-auto max-w-2xl px-3 pb-28 pt-4">
-        <div className="rounded-2xl border bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b px-3 py-3">
-            <div className="text-sm font-semibold">Cart</div>
-            <div className="text-xs text-slate-500">
-              Included: <span className="font-semibold">{totals.itemCount}</span>
-            </div>
-          </div>
-
-          {cart.length === 0 ? (
-            <div className="p-5 text-center text-sm text-slate-500">
-              No items loaded. Select school/class and tap <span className="font-semibold">Load Items</span>.
-            </div>
-          ) : (
-            <div className="divide-y">
-              {cart.map((x) => {
-                const lineTotal = round2((x.include ? x.qty : 0) * x.unit_price);
-                return (
-                  <div key={x.key} className="p-3">
-                    <div className="flex items-start gap-3">
+                    <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setLine(x.key, { include: !x.include })}
-                        className={`mt-0.5 h-6 w-6 rounded-lg border flex items-center justify-center ${
-                          x.include ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-400"
-                        }`}
-                        title="Include/Exclude"
+                        disabled={loading || totals.total <= 0}
+                        onClick={() => submitSale("3in")}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm disabled:opacity-60 active:scale-[0.99]"
                       >
-                        {x.include ? <CheckCircle2 className="h-4 w-4" /> : <span className="h-4 w-4" />}
+                        <Printer className="h-4 w-4" />
+                        3in
                       </button>
 
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold">{x.title}</div>
-                            <div className="mt-0.5 text-xs text-slate-500">
-                              {x.kind}
-                              {x.class_name ? <> • {x.class_name}</> : null}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xs text-slate-500">Line</div>
-                            <div className="text-sm font-semibold">Rs. {money(lineTotal)}</div>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <div className="rounded-xl border p-2">
-                            <div className="text-[11px] font-semibold text-slate-600">Qty</div>
-                            <div className="mt-1 flex items-center justify-between gap-2">
-                              <button
-                                type="button"
-                                onClick={() => decQty(x.key)}
-                                className="rounded-lg border bg-white p-2 active:scale-[0.99]"
-                              >
-                                <Minus className="h-4 w-4" />
-                              </button>
-
-                              <input
-                                inputMode="decimal"
-                                value={String(x.qty)}
-                                onChange={(e) => setLine(x.key, { qty: Math.max(0, round2(e.target.value)) })}
-                                className="w-full rounded-lg border px-2 py-2 text-center text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-200"
-                              />
-
-                              <button
-                                type="button"
-                                onClick={() => incQty(x.key)}
-                                className="rounded-lg border bg-white p-2 active:scale-[0.99]"
-                              >
-                                <Plus className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="rounded-xl border p-2">
-                            <div className="text-[11px] font-semibold text-slate-600">Unit Price</div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <IndianRupee className="h-4 w-4 text-slate-500" />
-                              <input
-                                inputMode="decimal"
-                                value={String(x.unit_price)}
-                                onChange={(e) => setLine(x.key, { unit_price: Math.max(0, round2(e.target.value)) })}
-                                className="w-full rounded-lg border px-2 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-200"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <button
+                        type="button"
+                        disabled={loading || totals.total <= 0}
+                        onClick={() => submitSale("a5")}
+                        className="inline-flex items-center gap-2 rounded-2xl border bg-white px-4 py-2.5 text-sm font-extrabold shadow-sm disabled:opacity-60 active:scale-[0.99]"
+                      >
+                        <Receipt className="h-4 w-4" />
+                        A5
+                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
 
-        {/* Payment box */}
-        <div className="mt-4 rounded-2xl border bg-white p-3 shadow-sm">
-          <div className="text-sm font-semibold">Payment</div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <select
-              value={paymentMode}
-              onChange={(e) => setPaymentMode(e.target.value as any)}
-              className="w-full rounded-xl border bg-white px-3 py-3 text-sm font-semibold"
-            >
-              <option value="CASH">CASH</option>
-              <option value="UPI">UPI</option>
-              <option value="CARD">CARD</option>
-              <option value="CREDIT">CREDIT</option>
-            </select>
-
-            <div className="rounded-xl border px-3 py-2">
-              <div className="text-[11px] font-semibold text-slate-600">Paid</div>
-              <div className="mt-1 flex items-center gap-2">
-                <IndianRupee className="h-4 w-4 text-slate-500" />
-                <input
-                  inputMode="decimal"
-                  value={String(paidAmount)}
-                  onChange={(e) => setPaidAmount(Math.max(0, round2(e.target.value)))}
-                  className="w-full rounded-lg border px-2 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-200"
-                />
+                  {bundleId ? (
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      Using bundle #{bundleId}
+                      {bundleStatus ? <span className="ml-2 rounded-lg bg-slate-100 px-2 py-0.5">{bundleStatus}</span> : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
+            {/* end cart */}
           </div>
-
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notes (optional)…"
-            className="mt-2 w-full rounded-xl border p-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
-            rows={2}
-          />
-
-          <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-            <div className="rounded-xl border bg-slate-50 p-3">
-              <div className="text-xs text-slate-500">Total</div>
-              <div className="mt-1 font-semibold">Rs. {money(totals.total)}</div>
-            </div>
-            <div className="rounded-xl border bg-slate-50 p-3">
-              <div className="text-xs text-slate-500">Paid</div>
-              <div className="mt-1 font-semibold">Rs. {money(totals.paid)}</div>
-            </div>
-            <div className="rounded-xl border bg-slate-50 p-3">
-              <div className="text-xs text-slate-500">Balance</div>
-              <div className="mt-1 font-semibold">Rs. {money(totals.balance)}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Sticky bottom bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto max-w-2xl px-3 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-xs text-slate-500">Grand Total</div>
-              <div className="truncate text-lg font-extrabold">Rs. {money(totals.total)}</div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={loading || totals.total <= 0}
-                onClick={() => submitSale("3in")}
-                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:opacity-60 active:scale-[0.99]"
-              >
-                <Printer className="h-4 w-4" />
-                3in
-              </button>
-
-              <button
-                type="button"
-                disabled={loading || totals.total <= 0}
-                onClick={() => submitSale("a5")}
-                className="inline-flex items-center gap-2 rounded-2xl border bg-white px-4 py-3 text-sm font-semibold shadow-sm disabled:opacity-60 active:scale-[0.99]"
-              >
-                <Receipt className="h-4 w-4" />
-                A5
-              </button>
-            </div>
-          </div>
-
-          {bundleId && (
-            <div className="mt-2 text-[11px] text-slate-500">
-              Using bundle #{bundleId}
-              {bundleStatus ? <span className="ml-2 rounded-lg bg-slate-100 px-2 py-0.5">{bundleStatus}</span> : null}
-            </div>
-          )}
         </div>
       </div>
     </div>
