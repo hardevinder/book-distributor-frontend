@@ -1,11 +1,6 @@
 "use client";
 
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import api from "@/lib/apiClient";
 
 type User = {
@@ -15,19 +10,25 @@ type User = {
   role: string;
 };
 
+type LoginResponse = {
+  token: string;
+  user: User;
+};
+
 type AuthContextType = {
   user: User | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+
+  // ✅ changed return type
+  login: (email: string, password: string) => Promise<LoginResponse>;
+
   logout: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
-  children,
-}) => {
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,20 +78,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   /* ============================
      LOGIN
      ============================ */
-  const login = async (email: string, password: string) => {
-    const res = await api.post<{ token: string; user: User }>(
-      "/api/auth/login",
-      { email, password }
-    );
+  const login = async (email: string, password: string): Promise<LoginResponse> => {
+    const res = await api.post<LoginResponse>("/api/auth/login", { email, password });
 
-    const t = res.data.token;
+    const data = res.data;
+    const t = data.token;
 
     setToken(t);
-    setUser(res.data.user);
+    setUser(data.user);
 
     if (typeof window !== "undefined") {
       localStorage.setItem("bd_token", t);
     }
+
+    // ✅ IMPORTANT: return data so login page can redirect by role instantly
+    return data;
   };
 
   /* ============================
@@ -106,15 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        loading,
-        login,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -125,8 +119,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
    ============================ */
 export const useAuth = (): AuthContextType => {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 };

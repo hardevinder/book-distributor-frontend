@@ -34,6 +34,16 @@ type Distributor = {
   is_active?: boolean;
 };
 
+type DistUser = {
+  id: number;
+  name: string;
+  email: string;
+  phone?: string | null;
+  role: string;
+  distributor_id: number;
+  is_active?: boolean;
+};
+
 type ToastState =
   | {
       message: string;
@@ -102,7 +112,7 @@ const DistributorsPageClient: React.FC = () => {
 
   const [toast, setToast] = useState<ToastState>(null);
 
-  // login created result modal
+  // login created / reset result modal (reuse)
   const [createdLogin, setCreatedLogin] = useState<NewUserResult | null>(null);
   const [showPass, setShowPass] = useState(false);
 
@@ -110,6 +120,18 @@ const DistributorsPageClient: React.FC = () => {
   const [q, setQ] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // --- Edit mode: linked user (login) panel ---
+  const [editUserLoading, setEditUserLoading] = useState(false);
+  const [editUserSaving, setEditUserSaving] = useState(false);
+  const [editUser, setEditUser] = useState<DistUser | null>(null);
+  const [userForm, setUserForm] = useState<{ name: string; email: string; phone: string; password: string }>({
+    name: "",
+    email: "",
+    phone: "",
+    password: "",
+  });
+  const [showEditPass, setShowEditPass] = useState(false);
 
   // keep state + ref in sync whenever we set form
   const setFormBoth = (updater: FormState | ((prev: FormState) => FormState)) => {
@@ -157,9 +179,16 @@ const DistributorsPageClient: React.FC = () => {
     return () => clearTimeout(id);
   }, [toast]);
 
+  const resetUserPanel = () => {
+    setEditUser(null);
+    setUserForm({ name: "", email: "", phone: "", password: "" });
+    setShowEditPass(false);
+  };
+
   const resetForm = () => {
     setFormBoth(emptyForm);
     setEditingId(null);
+    resetUserPanel();
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -206,7 +235,6 @@ const DistributorsPageClient: React.FC = () => {
       if (editingId) {
         await api.put(`/api/distributors/${editingId}`, distPayload);
         setToast({ message: "Distributor updated.", type: "success" });
-        resetForm();
         await fetchDistributors();
         return;
       }
@@ -225,7 +253,6 @@ const DistributorsPageClient: React.FC = () => {
 
         const res = await api.post("/api/distributors/with-user", payload);
 
-        // backend may return different shapes; support both
         const data = res?.data || {};
         const result: NewUserResult = {
           distributor: data.distributor || data.row || data.data?.distributor || data.data?.row,
@@ -256,7 +283,35 @@ const DistributorsPageClient: React.FC = () => {
     }
   };
 
-  const handleEdit = (d: Distributor) => {
+  const loadDistributorUser = async (id: number) => {
+    setEditUserLoading(true);
+    setEditUser(null);
+    setUserForm({ name: "", email: "", phone: "", password: "" });
+
+    try {
+      const res = await api.get(`/api/distributors/${id}/user`);
+      const u: DistUser | null = res?.data?.user || null;
+
+      setEditUser(u || null);
+      setUserForm({
+        name: u?.name || "",
+        email: u?.email || "",
+        phone: (u?.phone as any) || "",
+        password: "",
+      });
+    } catch (e: any) {
+      // If endpoint exists but user doesn't, backend returns { user: null }
+      // If endpoint missing, show error.
+      const msg = e?.response?.data?.message || e?.message || "Failed to load distributor login.";
+      setError(msg);
+      setToast({ message: msg, type: "error" });
+      setEditUser(null);
+    } finally {
+      setEditUserLoading(false);
+    }
+  };
+
+  const handleEdit = async (d: Distributor) => {
     setError(null);
     setImportSummary(null);
     setEditingId(d.id);
@@ -276,6 +331,7 @@ const DistributorsPageClient: React.FC = () => {
     };
 
     setFormBoth(nextForm);
+    await loadDistributorUser(d.id);
   };
 
   const handleDelete = async (id: number) => {
@@ -297,6 +353,101 @@ const DistributorsPageClient: React.FC = () => {
       setToast({ message: msg, type: "error" });
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const saveUserLogin = async () => {
+    if (!editingId) return;
+    setError(null);
+    setEditUserSaving(true);
+
+    try {
+      const payload: any = {
+        name: (userForm.name || "").trim(),
+        email: (userForm.email || "").trim(),
+        phone: (userForm.phone || "").trim() || null,
+      };
+
+      // only send password if user typed OR wants generate (blank means generate if we send it)
+      // We'll send password field ONLY when user clicked save with password box touched.
+      // But easiest UX: if password field is present (even blank) user may want generate.
+      // We'll add checkbox-like behavior via: if user clicked "Generate" sets password="" and will send.
+      // Here: send only if userForm.password is not null (string always). We'll decide:
+      // If user changed password field OR explicitly wants generate, we send it.
+      // We'll treat: if userForm.password !== "__NOCHANGE__" not possible, so we use a local flag:
+      // -> simplest: send password if userForm.password was changed OR user clicked generate sets it to "" but we still send.
+      // We'll track with a ref below.
+      // For now: send password if password box is non-empty OR userForm.password === "" AND userWantsGenerateRef.current = true
+      // Implement below.
+    } catch (e) {
+      // noop, handled below
+    } finally {
+      setEditUserSaving(false);
+    }
+  };
+
+  const userWantsPasswordChangeRef = useRef(false);
+  const markPasswordChange = (val: string) => {
+    userWantsPasswordChangeRef.current = true;
+    setUserForm((p) => ({ ...p, password: val }));
+  };
+
+  const doSaveUserLogin = async () => {
+    if (!editingId) return;
+    setError(null);
+    setEditUserSaving(true);
+
+    try {
+      const payload: any = {
+        name: (userForm.name || "").trim(),
+        email: (userForm.email || "").trim(),
+        phone: (userForm.phone || "").trim() || null,
+      };
+
+      // Only update password if user intended
+      if (userWantsPasswordChangeRef.current) {
+        payload.password = (userForm.password || "").trim(); // "" => backend auto-generate
+      }
+
+      // Basic client validation
+      if (!payload.name) throw new Error("Login name is required.");
+      if (!payload.email) throw new Error("Login email is required.");
+
+      const res = await api.patch(`/api/distributors/${editingId}/user`, payload);
+      const data = res?.data || {};
+
+      // refresh shown user
+      const updated = data.user || null;
+      setEditUser(updated || editUser);
+
+      // if password changed, show modal with temp_password (once)
+      const tp = data.temp_password || null;
+      if (tp) {
+        setCreatedLogin({
+          user: updated
+            ? {
+                id: updated.id,
+                name: updated.name,
+                email: updated.email,
+                role: updated.role,
+                distributor_id: updated.distributor_id,
+              }
+            : undefined,
+          temp_password: tp,
+        });
+      }
+
+      setToast({ message: "Login updated.", type: "success" });
+      userWantsPasswordChangeRef.current = false;
+      setUserForm((p) => ({ ...p, password: "" }));
+      await fetchDistributors();
+    } catch (e: any) {
+      console.error(e);
+      const msg = e?.response?.data?.message || e?.message || "Failed to update login.";
+      setError(msg);
+      setToast({ message: msg, type: "error" });
+    } finally {
+      setEditUserSaving(false);
     }
   };
 
@@ -455,7 +606,7 @@ const DistributorsPageClient: React.FC = () => {
                     {editingId ? `Edit Distributor #${editingId}` : "Create Distributor"}
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    {editingId ? "Editing distributor details only." : "You can also create login for distributor."}
+                    {editingId ? "Edit distributor + login (if exists)." : "You can also create login for distributor."}
                   </div>
                 </div>
 
@@ -529,6 +680,128 @@ const DistributorsPageClient: React.FC = () => {
                 </div>
               </div>
 
+              {/* EDIT MODE: Login panel */}
+              {editingId && (
+                <div className="mt-3 border border-slate-200 rounded-2xl p-3 bg-slate-50">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-extrabold text-slate-800 flex items-center gap-2">
+                      <UserPlus className="w-4 h-4 text-slate-600" />
+                      Login Settings
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadDistributorUser(editingId)}
+                      disabled={editUserLoading}
+                      className="text-[11px] px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-60"
+                      title="Reload login"
+                    >
+                      {editUserLoading ? "Loading..." : "Reload"}
+                    </button>
+                  </div>
+
+                  {editUserLoading ? (
+                    <div className="mt-2 text-[11px] text-slate-500">Loading login…</div>
+                  ) : !editUser ? (
+                    <div className="mt-2 text-[11px] text-slate-600">
+                      No login linked for this distributor.
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-12 gap-2">
+                      <div className="col-span-12">
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Email</label>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                          <input
+                            value={userForm.email}
+                            onChange={(e) => setUserForm((p) => ({ ...p, email: e.target.value }))}
+                            className="w-full border border-slate-300 rounded-xl pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                            placeholder="login email"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="col-span-12">
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Name</label>
+                        <div className="relative">
+                          <UserPlus className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                          <input
+                            value={userForm.name}
+                            onChange={(e) => setUserForm((p) => ({ ...p, name: e.target.value }))}
+                            className="w-full border border-slate-300 rounded-xl pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                            placeholder="login name"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="col-span-12">
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Phone (optional)</label>
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                          <input
+                            value={userForm.phone}
+                            onChange={(e) => setUserForm((p) => ({ ...p, phone: e.target.value }))}
+                            className="w-full border border-slate-300 rounded-xl pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                            placeholder="phone"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="col-span-12">
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          New Password (optional)
+                        </label>
+                        <div className="relative">
+                          <KeyRound className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                          <input
+                            type={showEditPass ? "text" : "password"}
+                            value={userForm.password}
+                            onChange={(e) => markPasswordChange(e.target.value)}
+                            className="w-full border border-slate-300 rounded-xl pl-10 pr-10 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white"
+                            placeholder="Leave blank + Generate to auto"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowEditPass((v) => !v)}
+                            className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700"
+                            title={showEditPass ? "Hide" : "Show"}
+                          >
+                            {showEditPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            className="text-[11px] px-3 py-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                            onClick={() => {
+                              // request backend to generate by sending password:""
+                              userWantsPasswordChangeRef.current = true;
+                              setUserForm((p) => ({ ...p, password: "" }));
+                              setToast({ message: "Will generate password on Save Login.", type: "success" });
+                            }}
+                          >
+                            Generate
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={editUserSaving}
+                            onClick={doSaveUserLogin}
+                            className="inline-flex items-center justify-center rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-xs font-extrabold disabled:opacity-60"
+                          >
+                            {editUserSaving ? "Saving..." : "Save Login"}
+                          </button>
+                        </div>
+
+                        <div className="text-[11px] text-slate-500 mt-2">
+                          Password will be shown only once if changed.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Create login toggle (only in create mode) */}
               {!editingId && (
                 <div className="mt-3 border border-slate-200 rounded-2xl p-3 bg-slate-50">
@@ -563,15 +836,11 @@ const DistributorsPageClient: React.FC = () => {
                             placeholder="e.g. dist.login@gmail.com"
                           />
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-1">
-                          (This becomes User.email — must be unique)
-                        </div>
+                        <div className="text-[11px] text-slate-500 mt-1">(This becomes User.email — must be unique)</div>
                       </div>
 
                       <div className="col-span-12">
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                          Login Name (optional)
-                        </label>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Login Name (optional)</label>
                         <div className="relative">
                           <UserPlus className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                           <input
@@ -585,9 +854,7 @@ const DistributorsPageClient: React.FC = () => {
                       </div>
 
                       <div className="col-span-12">
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                          Password (optional)
-                        </label>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Password (optional)</label>
                         <div className="relative">
                           <KeyRound className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                           <input
@@ -807,13 +1074,13 @@ const DistributorsPageClient: React.FC = () => {
         </div>
       </main>
 
-      {/* Created login modal */}
+      {/* Created / Reset password modal (re-used) */}
       {createdLogin && (
         <div className="fixed inset-0 z-[60] bg-black/60">
           <div className="h-full w-full p-3 flex items-center justify-center">
             <div className="w-full max-w-[560px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
               <div className="px-4 py-3 border-b bg-slate-50 flex items-center justify-between">
-                <div className="text-sm font-extrabold">Distributor Login Created</div>
+                <div className="text-sm font-extrabold">Distributor Login</div>
                 <button
                   onClick={() => setCreatedLogin(null)}
                   className="p-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
@@ -831,9 +1098,7 @@ const DistributorsPageClient: React.FC = () => {
                 <div className="grid grid-cols-12 gap-2 text-xs">
                   <div className="col-span-12 sm:col-span-6">
                     <div className="text-[11px] text-slate-500">Login Email</div>
-                    <div className="font-bold text-slate-900 break-all">
-                      {createdLogin.user?.email || "-"}
-                    </div>
+                    <div className="font-bold text-slate-900 break-all">{createdLogin.user?.email || "-"}</div>
                   </div>
                   <div className="col-span-12 sm:col-span-6">
                     <div className="text-[11px] text-slate-500">Role</div>
