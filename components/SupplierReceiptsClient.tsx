@@ -820,6 +820,64 @@ export default function SupplierReceiptsPageClient() {
 
     return { gross, itemDisc, net };
   }, [items]);
+  // ✅ Create Modal MAIN table column totals (under each column)
+const createColTotals = useMemo(() => {
+  let ord = 0;
+  let pend = 0;
+  let rec = 0;
+  let spec = 0;
+
+  let gross = 0;
+  let net = 0;
+
+  // weighted sums for averages (paid/rec only)
+  let rateWx = 0;     // rate * recQty
+  let discWx = 0;     // discPerUnit * recQty
+
+  items.forEach((it) => {
+    const o = Math.max(0, Math.floor(num(it.ordered_qty)));
+    const p = Math.max(0, Math.floor(num(it.pending_qty)));
+
+    const rq = Math.max(0, Math.floor(num(it.rec_qty)));
+    const sq = clamp(Math.floor(num(it.spec_qty)), 0, 500);
+
+    const up = Math.max(0, num(it.unit_price));
+    const da = Math.max(0, num(it.disc_amt));
+
+    ord += o;
+    pend += p;
+
+    rec += rq;
+    spec += sq;
+
+    const row = computeRow(rq, up, da);
+    gross += row.grossLine;
+    net += row.netLine;
+
+    rateWx += up * rq;
+    discWx += da * rq;
+  });
+
+  const denom = rec > 0 ? rec : 1;
+  const avgRate = rateWx / denom;
+  const avgDiscAmt = discWx / denom;
+  const avgDiscPct = avgRate > 0 ? (avgDiscAmt / avgRate) * 100 : 0;
+
+  return {
+    ord,
+    pend,
+    rec,
+    spec,
+
+    avgRate,
+    avgDiscPct,
+    avgDiscAmt,
+
+    gross,
+    net,
+  };
+}, [items]);
+
 
   const syncBillDiscFromPct = (pctStr: string) => {
     const pct = clamp(num(pctStr), 0, 100);
@@ -2210,6 +2268,64 @@ export default function SupplierReceiptsPageClient() {
                           );
                         })}
                       </tbody>
+
+                      <tfoot>
+                          <tr className="bg-slate-50 sticky bottom-0 z-10">
+                            {/* Book */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-left font-semibold text-slate-700">
+                              Total
+                            </td>
+
+                            {/* Ord */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              {createColTotals.ord}
+                            </td>
+
+                            {/* Pend */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              {createColTotals.pend}
+                            </td>
+
+                            {/* Rec */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              {createColTotals.rec}
+                            </td>
+
+                            {/* Spec */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              {createColTotals.spec}
+                            </td>
+
+                            {/* Rate (avg) */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-semibold">
+                              ₹{fmtMoney(createColTotals.avgRate)}
+                            </td>
+
+                            {/* %Disc (avg) */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-semibold">
+                              {fmtMoney(createColTotals.avgDiscPct)}%
+                            </td>
+
+                            {/* Disc₹ (avg per unit) */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-semibold">
+                              ₹{fmtMoney(createColTotals.avgDiscAmt)}
+                            </td>
+
+                            {/* Gross total */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              ₹{fmtMoney(createColTotals.gross)}
+                            </td>
+
+                            {/* Net total */}
+                            <td className="border-t border-slate-200 px-2 py-2 text-right font-extrabold">
+                              ₹{fmtMoney(createColTotals.net)}
+                            </td>
+
+                            {/* action col */}
+                            <td className="border-t border-slate-200 px-2 py-2"></td>
+                          </tr>
+                        </tfoot>
+
                     </table>
 
                     <div className="px-3 py-2 text-[10px] text-slate-500 border-t">
