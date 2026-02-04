@@ -167,7 +167,18 @@ type ToastState = { message: string; type: "success" | "error" } | null;
 const DEFAULT_SESSION = "2026-27";
 
 const IssueBundlesPageClient: React.FC = () => {
-  const { logout } = useAuth();
+  // ✅ include user+token so we can call /api/schools/my/schools for distributor
+  const { logout, user, token } = useAuth() as any;
+
+  const authHeaders = useMemo(() => {
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  }, [token]);
+
+  const isDistributor = useMemo(() => {
+    const rs = user?.roles ?? user?.role ?? [];
+    const arr = Array.isArray(rs) ? rs : [rs];
+    return arr.map((x: any) => String(x).toUpperCase()).includes("DISTRIBUTOR");
+  }, [user]);
 
   // master lists
   const [distributors, setDistributors] = useState<Distributor[]>([]);
@@ -358,7 +369,10 @@ const IssueBundlesPageClient: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const res = await api.get(`/api/bundle-issues/${row.id}/invoice`, { responseType: "blob" });
+      const res = await api.get(`/api/bundle-issues/${row.id}/invoice`, {
+        responseType: "blob",
+        headers: authHeaders, // ✅ auth
+      });
 
       const blob = new Blob([res.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
@@ -525,10 +539,13 @@ const IssueBundlesPageClient: React.FC = () => {
     setPageLoading(true);
     setError(null);
     try {
+      // ✅ distributor must use /api/schools/my/schools
+      const schoolsUrl = isDistributor ? "/api/schools/my/schools" : "/api/schools";
+
       const [dRes, sRes, bRes] = await Promise.all([
-        api.get("/api/distributors"),
-        api.get("/api/schools"),
-        api.get("/api/bundles"),
+        api.get("/api/distributors", { headers: authHeaders }),
+        api.get(schoolsUrl, { headers: authHeaders }),
+        api.get("/api/bundles", { headers: authHeaders }),
       ]);
 
       const dList: Distributor[] = normalizeList(dRes?.data);
@@ -538,13 +555,19 @@ const IssueBundlesPageClient: React.FC = () => {
       setDistributors([...dList].sort((a, b) => (b.id || 0) - (a.id || 0)));
       setSchools([...sList].sort((a, b) => (b.id || 0) - (a.id || 0)));
 
+      const allowedSchoolIds = new Set(sList.map((s) => Number(s.id)));
+
       const sess = String(sessionForFilter || "").trim();
 
       const filtered = [...bList]
         .filter((b) => {
           const bSess = String(b.academic_session || "").trim();
           const active = b.is_active !== false;
-          return bSess === sess && active;
+
+          // ✅ distributor: only bundles belonging to allowed schools
+          const schoolOk = !isDistributor || allowedSchoolIds.has(Number(b.school_id));
+
+          return bSess === sess && active && schoolOk;
         })
         .sort((a, b) => (b.id || 0) - (a.id || 0));
 
@@ -563,15 +586,14 @@ const IssueBundlesPageClient: React.FC = () => {
     try {
       const res = await api.get("/api/bundle-issues", {
         params: { academic_session: String(sessionForFilter || "").trim() },
+        headers: authHeaders, // ✅ auth
       });
       const list: BundleIssueRow[] = normalizeList(res?.data);
 
       const normalized = list.map((x) => ({
         ...x,
         academic_session:
-          (x as any).academic_session ||
-          (x as any).bundle?.academic_session ||
-          String(sessionForFilter || "").trim(),
+          (x as any).academic_session || (x as any).bundle?.academic_session || String(sessionForFilter || "").trim(),
       }));
 
       setIssues([...normalized].sort((a, b) => (b.id || 0) - (a.id || 0)));
@@ -587,20 +609,23 @@ const IssueBundlesPageClient: React.FC = () => {
     await Promise.all([fetchMastersAndReservedBundles(sessionForFilter), fetchIssues(sessionForFilter)]);
   };
 
+  // ✅ wait for token (prevents calling /my/schools without auth)
   useEffect(() => {
+    if (!token) return;
     fetchAll(session);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     setIssuedToId("");
   }, [issueToType]);
 
   useEffect(() => {
+    if (!token) return;
     setBundleId("");
     fetchAll(session);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [session, token]);
 
   /* ---------------- Actions ---------------- */
 
@@ -621,7 +646,7 @@ const IssueBundlesPageClient: React.FC = () => {
         notes: notes.trim() || null,
       };
 
-      await api.post(`/api/bundle-issues/bundles/${bundleId}/issue`, payload);
+      await api.post(`/api/bundle-issues/bundles/${bundleId}/issue`, payload, { headers: authHeaders });
 
       setToast({ message: "Bundle issued successfully.", type: "success" });
 
@@ -659,7 +684,7 @@ const IssueBundlesPageClient: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      await api.post(`/api/bundle-issues/${confirmIssue.id}/cancel`);
+      await api.post(`/api/bundle-issues/${confirmIssue.id}/cancel`, null, { headers: authHeaders });
 
       setToast({ message: "Issue cancelled & stock reverted.", type: "success" });
 
@@ -675,8 +700,7 @@ const IssueBundlesPageClient: React.FC = () => {
       await fetchAll(session);
     } catch (e: any) {
       console.error(e);
-      const msg =
-        e?.response?.data?.message || e?.response?.data?.error || e?.message || "Failed to cancel issue.";
+      const msg = e?.response?.data?.message || e?.response?.data?.error || e?.message || "Failed to cancel issue.";
       setError(msg);
       setToast({ message: msg, type: "error" });
     } finally {
@@ -1006,7 +1030,9 @@ const IssueBundlesPageClient: React.FC = () => {
                         {loading ? "Issuing..." : "Issue Bundle"}
                       </button>
 
-                      <div className="text-[11px] text-slate-500">Tip: Distributor users can issue only to their own distributor_id (backend rule).</div>
+                      <div className="text-[11px] text-slate-500">
+                        Tip: Distributor users can issue only to their own distributor_id (backend rule).
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1053,7 +1079,9 @@ const IssueBundlesPageClient: React.FC = () => {
                     </div>
                   ) : filteredIssues.length === 0 ? (
                     <div className="p-4 text-sm text-slate-600">
-                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">No issued records found for this session.</div>
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                        No issued records found for this session.
+                      </div>
                     </div>
                   ) : (
                     <table className="min-w-full text-sm">
@@ -1086,7 +1114,11 @@ const IssueBundlesPageClient: React.FC = () => {
                               </td>
 
                               <td className="py-3 px-4">
-                                {x.bundle?.school?.name ? <div className="font-semibold text-slate-900">{x.bundle.school.name}</div> : <span className="text-slate-400">—</span>}
+                                {x.bundle?.school?.name ? (
+                                  <div className="font-semibold text-slate-900">{x.bundle.school.name}</div>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
                                 {x.bundle?.notes ? (
                                   <div className="text-xs text-slate-500 line-clamp-1 mt-0.5">
                                     <span className="font-semibold">Bundle:</span> {x.bundle.notes}
@@ -1108,7 +1140,11 @@ const IssueBundlesPageClient: React.FC = () => {
                               </td>
 
                               <td className="py-3 px-4">
-                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(x.status)}`}>
+                                <span
+                                  className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-extrabold ${issueBadge(
+                                    x.status
+                                  )}`}
+                                >
                                   {statusLabel(x.status)}
                                 </span>
                               </td>
@@ -1262,7 +1298,11 @@ const IssueBundlesPageClient: React.FC = () => {
                     Bundle Notes
                   </div>
                   <div className="text-slate-900 mt-1">
-                    {selectedIssue.bundle?.notes?.trim() ? <span className="whitespace-pre-wrap">{selectedIssue.bundle.notes}</span> : <span className="text-slate-400">—</span>}
+                    {selectedIssue.bundle?.notes?.trim() ? (
+                      <span className="whitespace-pre-wrap">{selectedIssue.bundle.notes}</span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </div>
                 </div>
 
@@ -1272,7 +1312,11 @@ const IssueBundlesPageClient: React.FC = () => {
                     Issue Notes
                   </div>
                   <div className="text-slate-900 mt-1">
-                    {displayNotes(selectedIssue) ? <span className="whitespace-pre-wrap">{displayNotes(selectedIssue)}</span> : <span className="text-slate-400">—</span>}
+                    {displayNotes(selectedIssue) ? (
+                      <span className="whitespace-pre-wrap">{displayNotes(selectedIssue)}</span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1414,7 +1458,11 @@ const IssueBundlesPageClient: React.FC = () => {
 
       {/* Toast */}
       {toast ? (
-        <div className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-lg text-sm font-semibold ${toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
+        <div
+          className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-2xl shadow-lg text-sm font-semibold ${
+            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"
+          }`}
+        >
           {toast.message}
         </div>
       ) : null}

@@ -164,10 +164,23 @@ function pickBundleStatus(b: any): string | null {
   return s ? s.toUpperCase() : null;
 }
 
+function hasRole(user: any, role: string) {
+  const rs = user?.roles ?? user?.role ?? [];
+  const arr = Array.isArray(rs) ? rs : [rs];
+  return arr.map((x: any) => String(x).toUpperCase()).includes(String(role).toUpperCase());
+}
+
 /* ================= Component ================= */
 
 export default function SalesPosPageClient() {
-  const { user } = useAuth();
+  // ✅ token added (fixes Unauthorized on receipt blob)
+  const { user, token } = useAuth() as any;
+
+  const authHeaders = useMemo(() => {
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  }, [token]);
+
+  const isDistributor = useMemo(() => hasRole(user, "DISTRIBUTOR"), [user]);
 
   // sidebar wrap (desktop) + drawer (mobile)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -222,7 +235,10 @@ export default function SalesPosPageClient() {
   const openReceipt = async (saleId: number, size: "3in" | "a5") => {
     try {
       setErrMsg(null);
-      const res = await api.get(`/api/sales/${saleId}/receipt?size=${size}`, { responseType: "blob" });
+      const res = await api.get(`/api/sales/${saleId}/receipt?size=${size}`, {
+        responseType: "blob",
+        headers: authHeaders, // ✅ important
+      });
       const blob = new Blob([res.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
       const win = window.open(url, "_blank", "noopener,noreferrer");
@@ -235,10 +251,19 @@ export default function SalesPosPageClient() {
 
   /* ---------- Load masters ---------- */
   useEffect(() => {
+    if (!token) return; // wait for auth
+
     (async () => {
       try {
         setErrMsg(null);
-        const [sRes, cRes] = await Promise.all([api.get("/api/schools?limit=500"), api.get("/api/classes?limit=500")]);
+
+        // ✅ schools: distributor should see ONLY assigned schools
+        const schoolsUrl = "/api/schools/my/schools";
+
+        const [sRes, cRes] = await Promise.all([
+          api.get(schoolsUrl, { headers: authHeaders }),
+          api.get("/api/classes?limit=500", { headers: authHeaders }),
+        ]);
 
         const sList = normalizeArray<School>(sRes.data)
           .filter((s) => num(s.id) > 0 && String(s.name || "").trim())
@@ -251,13 +276,18 @@ export default function SalesPosPageClient() {
         setSchools(sList);
         setClasses(cList);
 
-        setSelectedSchoolId((prev) => (prev ? prev : sList.length ? num(sList[0].id) : null));
+        // ✅ if current selected school is not in allowed list, reset it
+        setSelectedSchoolId((prev) => {
+          const ok = prev && sList.some((x) => num(x.id) === num(prev));
+          return ok ? prev : sList.length ? num(sList[0].id) : null;
+        });
+
         setSelectedClassId((prev) => (prev ? prev : cList.length ? num(cList[0].id) : null));
       } catch (e: any) {
         setErrMsg(e?.response?.data?.message || e?.message || "Failed to load masters");
       }
     })();
-  }, []);
+  }, [token, authHeaders, isDistributor]);
 
   /* ---------- Derived ---------- */
   const filteredSchools = useMemo(() => {
@@ -324,6 +354,7 @@ export default function SalesPosPageClient() {
     try {
       const bRes = await api.get(`/api/bundles?school_id=${selectedSchoolId}&class_id=${selectedClassId}&limit=5`, {
         signal: controller.signal as any,
+        headers: authHeaders,
       });
       const rows = normalizeArray<BundleLite>(bRes.data);
 
@@ -343,7 +374,10 @@ export default function SalesPosPageClient() {
         return;
       }
 
-      const fullRes = await api.get(`/api/bundles/${id}`, { signal: controller.signal as any });
+      const fullRes = await api.get(`/api/bundles/${id}`, {
+        signal: controller.signal as any,
+        headers: authHeaders,
+      });
 
       const bundle = normalizeObject<BundleFull>(fullRes.data);
       const realBundle =
@@ -391,7 +425,8 @@ export default function SalesPosPageClient() {
         else setOkMsg(`Loaded bundle #${id}`);
       }
     } catch (e: any) {
-      const msg = e?.name === "CanceledError" || e?.code === "ERR_CANCELED" ? null : e?.response?.data?.message || e?.message;
+      const msg =
+        e?.name === "CanceledError" || e?.code === "ERR_CANCELED" ? null : e?.response?.data?.message || e?.message;
       if (msg && !silent) setErrMsg(msg || "Failed to load bundle");
     } finally {
       setLoading(false);
@@ -450,7 +485,7 @@ export default function SalesPosPageClient() {
         })),
       };
 
-      const res = await api.post("/api/sales", payload);
+      const res = await api.post("/api/sales", payload, { headers: authHeaders });
       const saleId = num(res.data?.sale_id);
       lastSaleIdRef.current = saleId;
       setOkMsg(res.data?.message || "Sale saved");
@@ -514,27 +549,37 @@ export default function SalesPosPageClient() {
               <div className="text-[10px] text-slate-500">{schools.length}</div>
             </div>
 
-            <input value={schoolQuery} onChange={(e) => setSchoolQuery(e.target.value)} placeholder="Search…" className={compactInput} />
+        {/* ✅ For distributor: no need of search if only few assigned schools */}
+{!isDistributor && (
+  <input
+    value={schoolQuery}
+    onChange={(e) => setSchoolQuery(e.target.value)}
+    placeholder="Search…"
+    className={compactInput}
+  />
+)}
 
-            <select
-              value={selectedSchoolId ?? ""}
-              onChange={(e) => {
-                const id = e.target.value ? Number(e.target.value) : null;
-                setSelectedSchoolId(id);
-                clearBundleAndCart();
-                setOkMsg(null);
-                setErrMsg(null);
-                lastAutoKeyRef.current = "";
-              }}
-              className={compactSelect}
-            >
-              <option value="">Select school…</option>
-              {filteredSchools.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+<select
+  value={selectedSchoolId ?? ""}
+  onChange={(e) => {
+    const id = e.target.value ? Number(e.target.value) : null;
+    setSelectedSchoolId(id);
+    clearBundleAndCart();
+    setOkMsg(null);
+    setErrMsg(null);
+    lastAutoKeyRef.current = "";
+  }}
+  className={compactSelect}
+  disabled={isDistributor && schools.length <= 1} // ✅ lock if only 1 school
+>
+  <option value="">{schools.length ? "Select school…" : "No assigned schools"}</option>
+  {(isDistributor ? schools : filteredSchools).map((s) => (
+    <option key={s.id} value={s.id}>
+      {s.name}
+    </option>
+  ))}
+</select>
+
 
             <div className="flex items-center justify-between">
               <div className="text-[11px] font-bold text-slate-600">Class</div>
