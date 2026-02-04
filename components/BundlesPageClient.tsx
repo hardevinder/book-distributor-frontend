@@ -41,10 +41,9 @@ type BookLite = {
   subject?: string | null;
   code?: string | null;
   class_name?: string | null;
-  rate?: number | string | null;  
+  rate?: number | string | null;
   mrp?: number | string | null;
   selling_price?: number | string | null;
-
 };
 
 type ProductLite = {
@@ -58,7 +57,6 @@ type ProductLite = {
   mrp?: number | string | null;
   selling_price?: number | string | null;
   rate?: number | string | null;
-
 };
 
 type BundleItemRow = {
@@ -154,7 +152,6 @@ const pickDefaultSalePrice = (p: ProductLite | null) => {
   );
 };
 
-
 const pickDefaultMrp = (p: ProductLite | null) => {
   if (!p) return 0;
   return num(p.book?.mrp) || num((p as any).mrp) || 0;
@@ -247,6 +244,9 @@ const BundlesPageClient: React.FC = () => {
   const [extraUom, setExtraUom] = useState("");
   const [extraActive, setExtraActive] = useState(true);
 
+  // ✅ NEW: this is the WRAP/COLLAPSE for ALL editable boxes in middle section
+  const [metaCollapsed, setMetaCollapsed] = useState(false);
+
   // ✅ Bundle list expand/collapse (wrap names)
   const [expandedBundles, setExpandedBundles] = useState<Record<number, boolean>>({});
   const toggleBundleExpand = (id: number) =>
@@ -256,10 +256,23 @@ const BundlesPageClient: React.FC = () => {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
+  const chip = (base: string) =>
+    `inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none ${base}`;
+
   const selectedSchool = useMemo(() => {
     const idNum = Number(schoolId);
     return schools.find((s) => s.id === idNum);
   }, [schools, schoolId]);
+
+  const activeClassLabel = useMemo(() => {
+    if (!activeId) return "—";
+    const fromMaster = classes.find((c) => Number(c.id) === Number(classId))?.class_name;
+    return safeStr(fromMaster || className || active?.class?.class_name || active?.class_name) || "Class";
+  }, [activeId, classes, classId, className, active]);
+
+  const activeSessionLabel = useMemo(() => safeStr(active?.academic_session || session) || "-", [active, session]);
+  const activeSortLabel = useMemo(() => String(num(sortOrder)), [sortOrder]);
+  const activeStatusLabel = useMemo(() => (isActive ? "Active" : "Disabled"), [isActive]);
 
   /* ---------------- Load masters ---------------- */
 
@@ -270,10 +283,7 @@ const BundlesPageClient: React.FC = () => {
         setSchools(normalizeSchools(sRes?.data));
         setClasses(
           normalizeClasses(cRes?.data).sort(
-            (a, b) =>
-              num(a.sort_order) - num(b.sort_order) ||
-              safeStr(a.class_name).localeCompare(safeStr(b.class_name))
-
+            (a, b) => num(a.sort_order) - num(b.sort_order) || safeStr(a.class_name).localeCompare(safeStr(b.class_name))
           )
         );
       } catch (e) {
@@ -348,8 +358,7 @@ const BundlesPageClient: React.FC = () => {
     setProductsApiStatus("idle");
 
     try {
-      const section: "books" | "extras" =
-        opts?.section ?? (pickerTab === "ADD_PRODUCTS" ? "extras" : "books");
+      const section: "books" | "extras" = opts?.section ?? (pickerTab === "ADD_PRODUCTS" ? "extras" : "books");
 
       const pRes = await api.get("/api/products", {
         params: {
@@ -437,6 +446,8 @@ const BundlesPageClient: React.FC = () => {
       setAvQ("");
       setAvClass("ALL");
       setPickerTab("SCHOOL_BOOKS");
+      setMetaCollapsed(false);
+
       return;
     }
 
@@ -450,6 +461,8 @@ const BundlesPageClient: React.FC = () => {
     setClassName("");
     setSortOrder(0);
     setIsActive(true);
+    setMetaCollapsed(false);
+
 
     loadBundles();
     loadProducts({ section: pickerTab === "ADD_PRODUCTS" ? "extras" : "books" });
@@ -648,6 +661,7 @@ const BundlesPageClient: React.FC = () => {
       setClassName("");
       setSortOrder(0);
       setIsActive(true);
+      setMetaCollapsed(false);
 
       await loadBundles();
     } catch (err: any) {
@@ -660,7 +674,6 @@ const BundlesPageClient: React.FC = () => {
 
   const activeItems = useMemo(() => {
     const items = (active?.items || []).slice();
-    // ✅ fixed bug: was num(a.id) - num(a.id)
     items.sort((a, b) => num(a.sort_order) - num(b.sort_order) || num(a.id) - num(b.id));
     return items;
   }, [active]);
@@ -673,69 +686,64 @@ const BundlesPageClient: React.FC = () => {
     });
   };
 
-const addItemLocal = (
-  product_id: number,
-  defaults?: Partial<Pick<BundleItemRow, "qty" | "sale_price" | "mrp">>
-) => {
-  if (!activeId) {
-    setError("Create/select a bundle first.");
-    return;
-  }
-  setError(null);
-  setSuccess(null);
+  const addItemLocal = (
+    product_id: number,
+    defaults?: Partial<Pick<BundleItemRow, "qty" | "sale_price" | "mrp">>
+  ) => {
+    if (!activeId) {
+      setError("Create/select a bundle first.");
+      return;
+    }
+    setError(null);
+    setSuccess(null);
 
-  const exists = (active?.items || []).some((it) => num(it.product_id) === num(product_id));
-  if (exists) {
-    setSuccess("Already in bundle ✅");
-    return;
-  }
+    const exists = (active?.items || []).some((it) => num(it.product_id) === num(product_id));
+    if (exists) {
+      setSuccess("Already in bundle ✅");
+      return;
+    }
 
-  const tempId = -Date.now();
-  const prod = products.find((p) => p.id === product_id) || null;
+    const tempId = -Date.now();
+    const prod = products.find((p) => p.id === product_id) || null;
 
-  const dQty = Math.max(0, num(defaults?.qty ?? 1));
-  const dSale = Math.max(0, num(defaults?.sale_price ?? pickDefaultSalePrice(prod)));
-  const dMrp = Math.max(0, num(defaults?.mrp ?? pickDefaultMrp(prod)));
+    const dQty = Math.max(0, num(defaults?.qty ?? 1));
+    const dSale = Math.max(0, num(defaults?.sale_price ?? pickDefaultSalePrice(prod)));
+    const dMrp = Math.max(0, num(defaults?.mrp ?? pickDefaultMrp(prod)));
 
-  const row: BundleItemRow = {
-    id: tempId,
-    bundle_id: activeId,
-    product_id,
-    qty: dQty,
-    mrp: dMrp,
-    sale_price: dSale,
-    is_optional: false,
-    sort_order: (active?.items?.length || 0) + 1,
-    product: prod,
+    const row: BundleItemRow = {
+      id: tempId,
+      bundle_id: activeId,
+      product_id,
+      qty: dQty,
+      mrp: dMrp,
+      sale_price: dSale,
+      is_optional: false,
+      sort_order: (active?.items?.length || 0) + 1,
+      product: prod,
+    };
+
+    setActive((prev) => {
+      if (!prev) return prev;
+      return { ...prev, items: [...(prev.items || []), row] };
+    });
+
+    setSuccess("Item added (save to apply) ✅");
   };
 
-  setActive((prev) => {
-    if (!prev) return prev;
-    return { ...prev, items: [...(prev.items || []), row] };
-  });
+  const addSchoolBookToKit = (book_id: number) => {
+    const p = bookProductByBookId.get(Number(book_id));
+    if (!p?.id) {
+      setError(`No BOOK product for book_id=${book_id}. Click “Ensure Book Products” once.`);
+      return;
+    }
 
-  setSuccess("Item added (save to apply) ✅");
-};
+    const avRow = flattenedAvailability.find((x) => Number(x.book_id) === Number(book_id));
+    const kitType: "SCHOOL_BULK" | "STUDENT" = "SCHOOL_BULK";
 
-const addSchoolBookToKit = (book_id: number) => {
-  const p = bookProductByBookId.get(Number(book_id));
-  if (!p?.id) {
-    setError(`No BOOK product for book_id=${book_id}. Click “Ensure Book Products” once.`);
-    return;
-  }
+    const defaultQty = kitType === "SCHOOL_BULK" ? Math.max(1, num(avRow?.required_qty || 0)) : 1;
 
-  // pick qty from availability
-  const avRow = flattenedAvailability.find((x) => Number(x.book_id) === Number(book_id));
-
-  // your kit type (change if needed)
-  const kitType: "SCHOOL_BULK" | "STUDENT" = "SCHOOL_BULK";
-
-  const defaultQty =
-    kitType === "SCHOOL_BULK" ? Math.max(1, num(avRow?.required_qty || 0)) : 1;
-
-  addItemLocal(p.id, { qty: defaultQty });
-};
-
+    addItemLocal(p.id, { qty: defaultQty });
+  };
 
   const removeItem = async (itemId: number) => {
     if (!activeId) return;
@@ -773,9 +781,7 @@ const addSchoolBookToKit = (book_id: number) => {
       id: it.id > 0 ? it.id : undefined,
       product_id: num(it.product_id),
       qty: Math.max(0, num(it.qty)),
-      // ✅ keep sending mrp (backend might expect), but UI doesn't show it
       mrp: Math.max(0, num(it.mrp)),
-      // ✅ only sale_price matters for POS
       sale_price: Math.max(0, num(it.sale_price)),
       is_optional: !!it.is_optional,
       sort_order: Math.max(0, num(it.sort_order)),
@@ -792,20 +798,10 @@ const addSchoolBookToKit = (book_id: number) => {
       await api.post(`/api/bundles/${activeId}/items`, {
         replace: true,
         items,
-
-        // ✅ NEW: let backend fill defaults
         use_defaults: true,
-
-        // ✅ overwrite existing values with defaults
         overwrite_qty: true,
         overwrite_price: true,
-
-        // ✅ pick your bundle type:
-        // "SCHOOL_BULK" => qty = required_copies
-        // "STUDENT"     => qty = 1
         bundle_type: "SCHOOL_BULK",
-
-        // ✅ ensure it matches requirements session
         academic_session: session || undefined,
       });
 
@@ -956,7 +952,7 @@ const addSchoolBookToKit = (book_id: number) => {
 
             <div className="flex flex-wrap items-center gap-2 justify-end w-full xl:w-auto">
               {/* ✅ Desktop collapse controls */}
-              <div className="hidden lg:flex items-center gap-2">
+              <div className="hidden md:flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setLeftCollapsed((v) => !v)}
@@ -1083,14 +1079,10 @@ const addSchoolBookToKit = (book_id: number) => {
       </header>
 
       {/* ✅ Layout updated: flex on desktop so sidebars can collapse */}
-      <main className="p-3 sm:p-4 max-w-[1500px] mx-auto">
-        <div className="flex flex-col lg:flex-row gap-4">
+      <main className="p-2 sm:p-3 w-full max-w-none mx-auto">
+        <div className="flex flex-col md:flex-row gap-3">
           {/* LEFT: Bundles list (desktop only) */}
-          <section
-            className={`hidden lg:block transition-all duration-200 ${
-              leftCollapsed ? "lg:w-[76px]" : "lg:w-[340px]"
-            }`}
-          >
+          <section className={`hidden lg:block transition-all duration-200 ${leftCollapsed ? "lg:w-[76px]" : "lg:w-[340px]"}`}>
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm h-full">
               {/* Left header */}
               <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
@@ -1160,17 +1152,13 @@ const addSchoolBookToKit = (book_id: number) => {
                           key={b.id}
                           type="button"
                           onClick={() => loadBundleById(b.id)}
-                          className={`w-full rounded-xl border px-2 py-2 text-left transition ${
+                          className={`w-full rounded-xl border px-1.5 py-1 text-left transition ${
                             isSel ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-white hover:bg-slate-50"
                           }`}
                           title={b.name || `Bundle #${b.id}`}
                         >
-                          <div className="text-[11px] font-extrabold text-slate-800 truncate">
-                            #{b.id}
-                          </div>
-                          <div className="text-[10px] text-slate-500 truncate">
-                            {b.class?.class_name || b.class_name || "Class"}
-                          </div>
+                          <div className="text-[11px] font-extrabold text-slate-800 truncate">#{b.id}</div>
+                          <div className="text-[10px] text-slate-500 truncate">{b.class?.class_name || b.class_name || "Class"}</div>
                         </button>
                       );
                     })}
@@ -1196,12 +1184,10 @@ const addSchoolBookToKit = (book_id: number) => {
                               className="flex-1 text-left min-w-0"
                               title="Select bundle"
                             >
-                              {/* ✅ Wrap bundle name */}
                               <div className="font-extrabold text-sm text-slate-900 leading-snug whitespace-normal break-words">
                                 {b.name || `Bundle #${b.id}`}
                               </div>
 
-                              {/* compact line (still single line) */}
                               <div className="mt-1 text-[11px] text-slate-600 truncate">
                                 {b.class?.class_name || b.class_name || (b.class_id ? `Class #${b.class_id}` : "Class")}
                                 {" • "}
@@ -1245,9 +1231,7 @@ const addSchoolBookToKit = (book_id: number) => {
                                 </div>
                               </div>
 
-                              <div className="mt-2 text-[11px] text-slate-500">
-                                Tip: click name to select, arrow to collapse.
-                              </div>
+                              <div className="mt-2 text-[11px] text-slate-500">Tip: click name to select, arrow to collapse.</div>
                             </div>
                           )}
                         </div>
@@ -1259,261 +1243,386 @@ const addSchoolBookToKit = (book_id: number) => {
             </div>
           </section>
 
-          {/* MIDDLE: Bundle editor */}
-          <section className="flex-1 min-w-0">
-            <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-base font-bold truncate">
-                    {activeId ? `Edit Bundle #${activeId}` : "No Bundle Selected"}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {activeId ? "Edit name/class then add items." : "Select a bundle (or create new) to add items."}
-                  </div>
-                </div>
+       {/* MIDDLE: Bundle editor */}
+<section className="flex-1 min-w-0">
+  <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 shadow-sm">
+    {/* ✅ Ultra compact header: Title + one-row chips */}
+    <div className="flex items-start gap-2">
+      {/* LEFT */}
+      <div className="flex-1 min-w-0">
+        {/* Title row */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="text-sm font-extrabold truncate min-w-0">
+            {activeId ? bundleName || `Bundle #${activeId}` : "No Bundle Selected"}
+          </div>
 
-                {activeId ? (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={saveBundle}
-                      disabled={!canSaveBundle}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
-                    >
-                      <Save className="w-4 h-4" />
-                      {savingBundle ? "Saving…" : "Save"}
-                    </button>
-                    <button
-                      onClick={deleteBundle}
-                      disabled={!activeId}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 px-4 py-2 text-sm font-bold disabled:opacity-50"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Delete
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+          {activeId && (
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full border shrink-0 ${
+                isActive
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-slate-100 border-slate-200 text-slate-700"
+              }`}
+              title="Status"
+            >
+              {isActive ? "Active" : "Disabled"}
+            </span>
+          )}
+        </div>
 
-              {!schoolId ? (
-                <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                  Select school to start.
-                </div>
-              ) : !activeId ? (
-                <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                  No bundle selected. Use <b>New</b> button on top OR select bundle from menu.
-                </div>
-              ) : (
-                <div className="mt-5 grid grid-cols-12 gap-3">
-                  <div className="col-span-12">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Bundle Name</label>
-                    <input
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      placeholder="e.g., Class 5 Student Kit"
-                      value={bundleName}
-                      onChange={(e) => setBundleName(e.target.value)}
-                      disabled={!schoolId}
-                    />
-                  </div>
+        {/* ✅ ONE ROW ONLY: compact chips */}
+        <div className="mt-1 flex items-center gap-1.5 flex-wrap sm:flex-nowrap min-w-0 overflow-hidden">
+          <span
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none bg-white border-slate-200 text-slate-700`}
+            title="Class"
+          >
+            <span className="text-slate-500">Class:</span>
+            <span className="font-semibold truncate max-w-[160px] sm:max-w-[220px]">
+              {activeClassLabel}
+            </span>
+          </span>
 
-                  <div className="col-span-12 md:col-span-6">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Class (preferred)</label>
-                    <select
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      value={classId}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || "";
-                        setClassId(v);
-                        if (v) {
-                          const cls = classes.find((c) => c.id === v);
-                          setClassName(cls?.class_name || "");
-                        }
-                      }}
-                      disabled={!schoolId}
-                    >
-                      <option value="">Select Class</option>
-                      {classes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.class_name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+          <span
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none bg-white border-slate-200 text-slate-700`}
+            title="Session"
+          >
+            <span className="text-slate-500">Sess:</span>
+            <span className="font-semibold">{activeSessionLabel}</span>
+          </span>
 
-                  <div className="col-span-12 md:col-span-6">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Class Name (fallback)</label>
-                    <input
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      placeholder="e.g., 5th / UKG / Nursery"
-                      value={className}
-                      onChange={(e) => {
-                        setClassName(e.target.value);
-                        setClassId("");
-                      }}
-                      disabled={!schoolId}
-                    />
-                  </div>
+          <span
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none bg-white border-slate-200 text-slate-700`}
+            title="Sort order"
+          >
+            <span className="text-slate-500">Sort:</span>
+            <span className="font-semibold tabular-nums">{activeSortLabel}</span>
+          </span>
 
-                  <div className="col-span-12 md:col-span-4">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Sort Order</label>
+          <span
+            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none bg-slate-50 border-slate-200 text-slate-700`}
+            title="Bundle ID"
+          >
+            <span className="text-slate-500">ID:</span>
+            <span className="font-semibold tabular-nums">{activeId ?? "-"}</span>
+          </span>
+
+          {/* ✅ WRAP button: collapses ALL editable boxes */}
+          {activeId && (
+            <button
+              type="button"
+              onClick={() => setMetaCollapsed((v) => !v)}
+              className={`ml-auto inline-flex items-center justify-center h-7 w-7 rounded-lg border bg-white hover:bg-slate-100 ${
+                metaCollapsed ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-300"
+              }`}
+              title={metaCollapsed ? "Expand details" : "Collapse details"}
+            >
+              {metaCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* RIGHT actions (tiny) */}
+      {activeId ? (
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={saveBundle}
+            disabled={!canSaveBundle}
+            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+            title={savingBundle ? "Saving…" : "Save Bundle"}
+          >
+            <Save className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={deleteBundle}
+            disabled={!activeId}
+            className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800 disabled:opacity-50"
+            title="Delete Bundle"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+
+    {/* ✅ Bundle details area (collapsible via metaCollapsed only) */}
+    {!schoolId ? (
+      <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+        Select school to start.
+      </div>
+    ) : !activeId ? (
+      <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+        No bundle selected. Use <b>New</b> button on top OR select bundle from menu.
+      </div>
+    ) : metaCollapsed ? (
+      <div className="mt-3 text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+        Details collapsed. Items remain visible below.
+      </div>
+    ) : (
+      <div className="mt-3 grid grid-cols-12 gap-2">
+        <div className="col-span-12">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Bundle Name</label>
+          <input
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            placeholder="e.g., Class 5 Student Kit"
+            value={bundleName}
+            onChange={(e) => setBundleName(e.target.value)}
+            disabled={!schoolId}
+          />
+        </div>
+
+        <div className="col-span-12 md:col-span-6">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Class (preferred)</label>
+          <select
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            value={classId}
+            onChange={(e) => {
+              const v = Number(e.target.value) || "";
+              setClassId(v);
+              if (v) {
+                const cls = classes.find((c) => c.id === v);
+                setClassName(cls?.class_name || "");
+              }
+            }}
+            disabled={!schoolId}
+          >
+            <option value="">Select Class</option>
+            {classes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.class_name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-12 md:col-span-6">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Class Name (fallback)</label>
+          <input
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            placeholder="e.g., 5th / UKG / Nursery"
+            value={className}
+            onChange={(e) => {
+              setClassName(e.target.value);
+              setClassId("");
+            }}
+            disabled={!schoolId}
+          />
+        </div>
+
+        <div className="col-span-12 md:col-span-4">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Sort Order</label>
+          <input
+            type="number"
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            value={sortOrder}
+            onChange={(e) => setSortOrder(num(e.target.value))}
+            disabled={!schoolId}
+          />
+        </div>
+
+        <div className="col-span-12 md:col-span-4">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Active</label>
+          <select
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+            value={isActive ? "1" : "0"}
+            onChange={(e) => setIsActive(e.target.value === "1")}
+            disabled={!schoolId}
+          >
+            <option value="1">Active</option>
+            <option value="0">Disabled</option>
+          </select>
+        </div>
+
+        <div className="col-span-12 md:col-span-4">
+          <label className="block text-[11px] font-bold text-slate-600 mb-1">Session</label>
+          <div className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-slate-50 text-sm">
+            {session}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ✅ Items editor (ALWAYS visible; no editorCollapsed) */}
+  
+<div className="mt-4 border-t border-slate-100 pt-4">
+  <div className="flex items-center justify-between gap-2">
+    <div>
+      <div className="text-base font-bold">Bundle Items</div>
+      <div className="text-xs text-slate-500">POS will use <b>Sale Price</b> only.</div>
+    </div>
+
+    <button
+      onClick={saveItems}
+      disabled={!activeId || savingItems}
+      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-extrabold disabled:opacity-50"
+      title={savingItems ? "Saving…" : "Save Items"}
+    >
+      <Save className="w-4 h-4" />
+      {savingItems ? "Saving…" : "Save Items"}
+    </button>
+  </div>
+
+  {!activeId ? (
+    <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+      Select a bundle to edit items.
+    </div>
+  ) : (active?.items || []).length === 0 ? (
+    <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+      No items yet — add from right side.
+    </div>
+  ) : (
+    <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden bg-white">
+      {/* ✅ BOTH scrolls */}
+      <div className="max-h-[70vh] overflow-auto">
+        {/* min width so columns don’t wrap too much */}
+        <table className="min-w-[980px] w-full text-[11px] leading-none table-fixed border-separate border-spacing-0">
+          <thead className="sticky top-0 z-20 bg-slate-100">
+            <tr>
+              {/* ✅ Sticky first column */}
+              <th
+                className="sticky left-0 z-30 bg-slate-100 border-b border-slate-200 px-1.5 py-1 text-left font-extrabold text-slate-800 w-[520px]"
+              >
+                Item
+              </th>
+
+              <th className="border-b border-slate-200 px-1.5 py-1 text-center font-extrabold text-slate-800 w-[90px]">
+                Qty
+              </th>
+
+              <th className="border-b border-slate-200 px-1.5 py-1 text-center font-extrabold text-slate-800 w-[130px]">
+                Sale
+              </th>
+
+              <th className="border-b border-slate-200 px-1.5 py-1 text-center font-extrabold text-slate-800 w-[90px]">
+                Opt
+              </th>
+
+              <th className="border-b border-slate-200 px-1.5 py-1 text-center font-extrabold text-slate-800 w-[80px]">
+                Sort
+              </th>
+
+              <th className="border-b border-slate-200 px-1.5 py-1 text-center font-extrabold text-slate-800 w-[60px]">
+                Del
+              </th>
+            </tr>
+          </thead>
+
+          <tbody className="[&>tr:nth-child(even)]:bg-slate-50/40">
+            {activeItems.map((it) => {
+              const title =
+                it.product?.type === "MATERIAL"
+                  ? it.product?.name || `Material #${it.product_id}`
+                  : it.product?.book?.title || it.product?.name || `Product #${it.product_id}`;
+
+              const meta =
+                it.product?.type === "MATERIAL"
+                  ? `MATERIAL${it.product?.uom ? ` • ${it.product.uom}` : ""}`
+                  : [
+                      it.product?.book?.class_name,
+                      it.product?.book?.subject,
+                      it.product?.book?.code,
+                    ]
+                      .filter(Boolean)
+                      .join(" • ");
+
+              return (
+                <tr key={it.id} className="h-7 border-b border-slate-100 hover:bg-slate-100/60">
+                  {/* ✅ Sticky first column */}
+                  <td className="sticky left-0 z-10 bg-inherit border-b border-slate-100 px-1.5 py-0.5">
+                  <div
+                    className="font-bold text-slate-900 truncate leading-tight"
+                    title={title}
+                  >
+                    {title}
+                  </div>
+                </td>
+
+
+                  {/* Qty */}
+                  <td className="border-b border-slate-100 px-2 py-1.5">
                     <input
                       type="number"
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      value={sortOrder}
-                      onChange={(e) => setSortOrder(num(e.target.value))}
-                      disabled={!schoolId}
+                      min={0}
+                      inputMode="numeric"
+                      className="w-full h-7 border border-slate-300 rounded-lg px-2 text-[12px] text-center tabular-nums
+                                 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      value={it.qty}
+                      onChange={(e) => updateItemLocal(it.id, { qty: Math.max(0, num(e.target.value)) })}
                     />
-                  </div>
+                  </td>
 
-                  <div className="col-span-12 md:col-span-4">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Active</label>
-                    <select
-                      className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                      value={isActive ? "1" : "0"}
-                      onChange={(e) => setIsActive(e.target.value === "1")}
-                      disabled={!schoolId}
+                  {/* Sale Price */}
+                  <td className="border-b border-slate-100 px-2 py-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="decimal"
+                      className="w-full h-7 border border-slate-300 rounded-lg px-2 text-[12px] text-center tabular-nums
+                                 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      value={it.sale_price}
+                      onChange={(e) => updateItemLocal(it.id, { sale_price: Math.max(0, num(e.target.value)) })}
+                    />
+                  </td>
+
+                  {/* Optional */}
+                  <td className="border-b border-slate-100 px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => updateItemLocal(it.id, { is_optional: !it.is_optional })}
+                      className={`w-full h-7 rounded-lg border text-[11px] font-extrabold transition
+                        ${
+                          it.is_optional
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+                            : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      title="Optional?"
                     >
-                      <option value="1">Active</option>
-                      <option value="0">Disabled</option>
-                    </select>
-                  </div>
+                      {it.is_optional ? "YES" : "NO"}
+                    </button>
+                  </td>
 
-                  <div className="col-span-12 md:col-span-4">
-                    <label className="block text-xs font-bold text-slate-600 mb-1.5">Session</label>
-                    <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">
-                      {session}
-                    </div>
-                  </div>
-                </div>
-              )}
+                  {/* Sort */}
+                  <td className="border-b border-slate-100 px-2 py-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      className="w-full h-7 border border-slate-300 rounded-lg px-2 text-[12px] text-center tabular-nums
+                                 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      value={it.sort_order}
+                      onChange={(e) => updateItemLocal(it.id, { sort_order: Math.max(0, num(e.target.value)) })}
+                      title="Sort order"
+                    />
+                  </td>
 
-              {/* Items editor */}
-              <div className="mt-6 border-t border-slate-100 pt-5">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-base font-bold">Bundle Items</div>
-                    <div className="text-xs text-slate-500">POS will use **Sale Price** only.</div>
-                  </div>
+                  {/* Delete */}
+                  <td className="border-b border-slate-100 px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => removeItem(it.id)}
+                      className="w-full h-7 inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 transition"
+                      title="Remove"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+</div>
 
-                  <button
-                    onClick={saveItems}
-                    disabled={!activeId || savingItems}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
-                  >
-                    <Save className="w-4 h-4" />
-                    {savingItems ? "Saving…" : "Save Items"}
-                  </button>
-                </div>
+  </div>
+</section>
 
-                {!activeId ? (
-                  <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                    Select a bundle to edit items.
-                  </div>
-                ) : (active?.items || []).length === 0 ? (
-                  <div className="mt-4 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
-                    No items yet — add from right side.
-                  </div>
-                ) : (
-                  <div className="mt-4 border border-slate-200 rounded-2xl overflow-hidden">
-                    <div className="max-h-[56vh] overflow-y-auto">
-                      <table className="w-full text-sm table-fixed">
-                        <thead className="bg-slate-100 sticky top-0 z-10">
-                          <tr>
-                            <th className="px-4 py-3 text-left font-bold text-slate-800 w-[60%]">Item</th>
-                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-[12%]">Qty</th>
-                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-[15%]">Sale Price</th>
-                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-[10%]">Opt</th>
-                            <th className="px-2 py-3 text-center font-bold text-slate-800 w-[3%]"> </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {activeItems.map((it) => {
-                            const title =
-                              it.product?.type === "MATERIAL"
-                                ? it.product?.name || `Material #${it.product_id}`
-                                : it.product?.book?.title || it.product?.name || `Product #${it.product_id}`;
-
-                            const meta =
-                              it.product?.type === "MATERIAL"
-                                ? `MATERIAL${it.product?.uom ? ` • ${it.product.uom}` : ""}`
-                                : it.product?.book?.class_name ||
-                                  it.product?.book?.code ||
-                                  it.product?.book?.subject ||
-                                  "";
-
-                            return (
-                              <tr key={it.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                                <td className="px-4 py-3">
-                                  <div className="font-bold text-slate-900 truncate">{title}</div>
-                                  {meta ? <div className="text-xs text-slate-500 mt-0.5 truncate">{meta}</div> : null}
-                                  <div className="text-[11px] text-slate-400 mt-1 truncate">
-                                    product_id: <b>{it.product_id}</b>
-                                  </div>
-                                </td>
-
-                                <td className="px-2 py-3 text-center">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    value={it.qty}
-                                    onChange={(e) => updateItemLocal(it.id, { qty: Math.max(0, num(e.target.value)) })}
-                                  />
-                                </td>
-
-                                <td className="px-2 py-3 text-center">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    className="w-full border border-slate-300 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    value={it.sale_price}
-                                    onChange={(e) =>
-                                      updateItemLocal(it.id, { sale_price: Math.max(0, num(e.target.value)) })
-                                    }
-                                  />
-                                </td>
-
-                                <td className="px-2 py-3 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => updateItemLocal(it.id, { is_optional: !it.is_optional })}
-                                    className={`inline-flex items-center justify-center rounded-xl px-2 py-2 text-[11px] font-bold border transition w-full ${
-                                      it.is_optional
-                                        ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
-                                        : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100"
-                                    }`}
-                                  >
-                                    {it.is_optional ? "Yes" : "No"}
-                                  </button>
-                                </td>
-
-                                <td className="px-2 py-3 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => removeItem(it.id)}
-                                    className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 transition"
-                                    title="Remove"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
 
           {/* RIGHT: Picker */}
-          <section
-            className={`transition-all duration-200 ${
-              rightCollapsed ? "lg:w-[76px]" : "lg:w-[360px]"
-            }`}
-          >
+          <section className={`transition-all duration-200 ${rightCollapsed ? "lg:w-[76px]" : "lg:w-[360px]"}`}>
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm h-full overflow-hidden">
               {/* Right header */}
               <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
@@ -1592,7 +1701,7 @@ const addSchoolBookToKit = (book_id: number) => {
                 </div>
               ) : (
                 <div className="p-4">
-                  {/* (your right picker UI kept same, only wrapped in this block) */}
+                  {/* (your right picker UI kept same) */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -1626,9 +1735,7 @@ const addSchoolBookToKit = (book_id: number) => {
                         <AlertTriangle className="w-4 h-4" />
                         {missingBookProductsCount} books have <b>No BOOK product</b>
                       </div>
-                      <div className="mt-1 text-amber-900/90">
-                        Click once to auto-create BOOK products (no manual entry).
-                      </div>
+                      <div className="mt-1 text-amber-900/90">Click once to auto-create BOOK products (no manual entry).</div>
                       <button
                         type="button"
                         onClick={ensureBookProductsNow}
@@ -1721,10 +1828,7 @@ const addSchoolBookToKit = (book_id: number) => {
                                   const canAdd = !!activeId && !!bookProd?.id && !already;
 
                                   return (
-                                    <tr
-                                      key={`av:${b.book_id}`}
-                                      className="border-b border-slate-100 hover:bg-slate-50 transition"
-                                    >
+                                    <tr key={`av:${b.book_id}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
                                       <td className="px-3 py-3">
                                         <div className="font-bold text-slate-900 truncate">{b.title}</div>
                                       </td>
@@ -1819,9 +1923,7 @@ const addSchoolBookToKit = (book_id: number) => {
                       ) : filteredProductRows.length === 0 ? (
                         <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
                           No extras found.
-                          <div className="text-xs text-slate-500 mt-1">
-                            Add direct purchase receipts OR create manual extras.
-                          </div>
+                          <div className="text-xs text-slate-500 mt-1">Add direct purchase receipts OR create manual extras.</div>
                         </div>
                       ) : (
                         <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
@@ -1835,22 +1937,15 @@ const addSchoolBookToKit = (book_id: number) => {
                               </thead>
                               <tbody>
                                 {filteredProductRows.map((r) => {
-                                  const already = (active?.items || []).some(
-                                    (it) => num(it.product_id) === num(r.product_id)
-                                  );
+                                  const already = (active?.items || []).some((it) => num(it.product_id) === num(r.product_id));
                                   const metaLine = [r.class_name, r.subject, r.code].filter(Boolean).join(" • ");
 
                                   return (
                                     <tr key={r.key} className="border-b border-slate-100 hover:bg-slate-50 transition">
                                       <td className="px-3 py-3">
                                         <div className="font-bold text-slate-900 truncate">{r.title}</div>
-                                        {metaLine ? (
-                                          <div className="text-xs text-slate-500 mt-0.5 truncate">{metaLine}</div>
-                                        ) : null}
-                                        <div className="text-[11px] text-slate-400 mt-1 truncate">
-                                          product_id: <b>{r.product_id}</b>
-                                        </div>
                                       </td>
+
 
                                       <td className="px-3 py-3 text-center">
                                         <button
@@ -1952,11 +2047,7 @@ const addSchoolBookToKit = (book_id: number) => {
                         }`}
                       >
                         <div className="flex items-start gap-2 px-3 py-3">
-                          <button
-                            type="button"
-                            onClick={() => loadBundleById(b.id)}
-                            className="flex-1 text-left min-w-0"
-                          >
+                          <button type="button" onClick={() => loadBundleById(b.id)} className="flex-1 text-left min-w-0">
                             <div className="font-extrabold text-sm leading-snug whitespace-normal break-words">
                               {b.name || `Bundle #${b.id}`}
                             </div>
@@ -2099,9 +2190,7 @@ const addSchoolBookToKit = (book_id: number) => {
 
                     <div className="col-span-12 md:col-span-4">
                       <label className="block text-xs font-bold text-slate-600 mb-1.5">Session</label>
-                      <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">
-                        {session}
-                      </div>
+                      <div className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-slate-50 text-sm">{session}</div>
                     </div>
                   </div>
                 )}
@@ -2186,7 +2275,9 @@ const addSchoolBookToKit = (book_id: number) => {
                   </div>
                 </div>
 
-                <div className="mt-3 text-[11px] text-slate-500">If a bundle is selected, item will be auto-added into kit.</div>
+                <div className="mt-3 text-[11px] text-slate-500">
+                  If a bundle is selected, item will be auto-added into kit.
+                </div>
               </div>
 
               <div className="px-4 py-3 border-t bg-white flex items-center justify-end gap-2">
