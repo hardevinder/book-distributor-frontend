@@ -41,6 +41,10 @@ type BookLite = {
   subject?: string | null;
   code?: string | null;
   class_name?: string | null;
+  rate?: number | string | null;  
+  mrp?: number | string | null;
+  selling_price?: number | string | null;
+
 };
 
 type ProductLite = {
@@ -51,6 +55,10 @@ type ProductLite = {
   uom?: string | null;
   is_active?: boolean;
   book?: BookLite | null;
+  mrp?: number | string | null;
+  selling_price?: number | string | null;
+  rate?: number | string | null;
+
 };
 
 type BundleItemRow = {
@@ -130,6 +138,27 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : 0;
 };
 const bool = (v: any) => v === true || v === 1 || v === "1" || v === "true";
+
+const pickDefaultSalePrice = (p: ProductLite | null) => {
+  if (!p) return 0;
+
+  // ✅ We want RATE first (for books + materials)
+  return (
+    num((p as any).rate) ||
+    num(p.book?.rate) ||
+    num((p as any).selling_price) ||
+    num(p.book?.selling_price) ||
+    num((p as any).mrp) ||
+    num(p.book?.mrp) ||
+    0
+  );
+};
+
+
+const pickDefaultMrp = (p: ProductLite | null) => {
+  if (!p) return 0;
+  return num(p.book?.mrp) || num((p as any).mrp) || 0;
+};
 
 const normalizeSchools = (payload: any): School[] => {
   if (Array.isArray(payload)) return payload as School[];
@@ -244,6 +273,7 @@ const BundlesPageClient: React.FC = () => {
             (a, b) =>
               num(a.sort_order) - num(b.sort_order) ||
               safeStr(a.class_name).localeCompare(safeStr(b.class_name))
+
           )
         );
       } catch (e) {
@@ -643,51 +673,69 @@ const BundlesPageClient: React.FC = () => {
     });
   };
 
-  const addItemLocal = (product_id: number) => {
-    if (!activeId) {
-      setError("Create/select a bundle first.");
-      return;
-    }
-    setError(null);
-    setSuccess(null);
+const addItemLocal = (
+  product_id: number,
+  defaults?: Partial<Pick<BundleItemRow, "qty" | "sale_price" | "mrp">>
+) => {
+  if (!activeId) {
+    setError("Create/select a bundle first.");
+    return;
+  }
+  setError(null);
+  setSuccess(null);
 
-    const exists = (active?.items || []).some((it) => num(it.product_id) === num(product_id));
-    if (exists) {
-      setSuccess("Already in bundle ✅");
-      return;
-    }
+  const exists = (active?.items || []).some((it) => num(it.product_id) === num(product_id));
+  if (exists) {
+    setSuccess("Already in bundle ✅");
+    return;
+  }
 
-    const tempId = -Date.now();
-    const prod = products.find((p) => p.id === product_id) || null;
+  const tempId = -Date.now();
+  const prod = products.find((p) => p.id === product_id) || null;
 
-    const row: BundleItemRow = {
-      id: tempId,
-      bundle_id: activeId,
-      product_id,
-      qty: 1,
-      mrp: 0, // not shown
-      sale_price: 0,
-      is_optional: false,
-      sort_order: (active?.items?.length || 0) + 1,
-      product: prod,
-    };
+  const dQty = Math.max(0, num(defaults?.qty ?? 1));
+  const dSale = Math.max(0, num(defaults?.sale_price ?? pickDefaultSalePrice(prod)));
+  const dMrp = Math.max(0, num(defaults?.mrp ?? pickDefaultMrp(prod)));
 
-    setActive((prev) => {
-      if (!prev) return prev;
-      return { ...prev, items: [...(prev.items || []), row] };
-    });
-
-    setSuccess("Item added (save to apply) ✅");
+  const row: BundleItemRow = {
+    id: tempId,
+    bundle_id: activeId,
+    product_id,
+    qty: dQty,
+    mrp: dMrp,
+    sale_price: dSale,
+    is_optional: false,
+    sort_order: (active?.items?.length || 0) + 1,
+    product: prod,
   };
 
-  const addSchoolBookToKit = (book_id: number) => {
-    const p = bookProductByBookId.get(Number(book_id));
-    if (!p?.id) {
-      setError(`No BOOK product for book_id=${book_id}. Click “Ensure Book Products” once.`);
-      return;
-    }
-    addItemLocal(p.id);
-  };
+  setActive((prev) => {
+    if (!prev) return prev;
+    return { ...prev, items: [...(prev.items || []), row] };
+  });
+
+  setSuccess("Item added (save to apply) ✅");
+};
+
+const addSchoolBookToKit = (book_id: number) => {
+  const p = bookProductByBookId.get(Number(book_id));
+  if (!p?.id) {
+    setError(`No BOOK product for book_id=${book_id}. Click “Ensure Book Products” once.`);
+    return;
+  }
+
+  // pick qty from availability
+  const avRow = flattenedAvailability.find((x) => Number(x.book_id) === Number(book_id));
+
+  // your kit type (change if needed)
+  const kitType: "SCHOOL_BULK" | "STUDENT" = "SCHOOL_BULK";
+
+  const defaultQty =
+    kitType === "SCHOOL_BULK" ? Math.max(1, num(avRow?.required_qty || 0)) : 1;
+
+  addItemLocal(p.id, { qty: defaultQty });
+};
+
 
   const removeItem = async (itemId: number) => {
     if (!activeId) return;
@@ -741,7 +789,26 @@ const BundlesPageClient: React.FC = () => {
 
     try {
       setSavingItems(true);
-      await api.post(`/api/bundles/${activeId}/items`, { replace: true, items });
+      await api.post(`/api/bundles/${activeId}/items`, {
+        replace: true,
+        items,
+
+        // ✅ NEW: let backend fill defaults
+        use_defaults: true,
+
+        // ✅ overwrite existing values with defaults
+        overwrite_qty: true,
+        overwrite_price: true,
+
+        // ✅ pick your bundle type:
+        // "SCHOOL_BULK" => qty = required_copies
+        // "STUDENT"     => qty = 1
+        bundle_type: "SCHOOL_BULK",
+
+        // ✅ ensure it matches requirements session
+        academic_session: session || undefined,
+      });
+
       setSuccess("Items saved ✅");
       await loadBundleById(activeId);
       await loadBundles();
