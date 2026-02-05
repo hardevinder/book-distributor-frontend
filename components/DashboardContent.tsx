@@ -21,7 +21,9 @@ import {
   IndianRupee,
   Star,
   Search,
-  ClipboardSignature, // ✅ ADDED
+  ClipboardSignature,
+  KeyRound,
+  BarChart3, // ✅ Sales Analytics
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -214,7 +216,6 @@ const DashboardContent: React.FC = () => {
         icon: <Users className="h-5 w-5" />,
         accent: "rose",
       },
-
       {
         title: "Books",
         href: "/books",
@@ -240,7 +241,7 @@ const DashboardContent: React.FC = () => {
         accent: "sky",
       },
 
-      // ✅ RENAMED: Supplier Receipts -> Purchases
+      // ✅ Purchases
       {
         title: "Purchases",
         href: "/supplier-receipts",
@@ -248,7 +249,7 @@ const DashboardContent: React.FC = () => {
         accent: "teal",
       },
 
-      // ✅ ADDED: Direct Purchase
+      // ✅ Direct Purchase
       {
         title: "Direct Purchase",
         href: "/direct-receipts",
@@ -261,6 +262,22 @@ const DashboardContent: React.FC = () => {
         href: "/supplier-payments",
         icon: <IndianRupee className="h-5 w-5" />,
         accent: "emerald",
+      },
+
+      // ✅ Sales / POS
+      {
+        title: "Sales (POS)",
+        href: "/sales",
+        icon: <IndianRupee className="h-5 w-5" />,
+        accent: "indigo",
+      },
+
+      // ✅ Sales Analytics (NEW)
+      {
+        title: "Sales Analytics",
+        href: "/sales-analytics",
+        icon: <BarChart3 className="h-5 w-5" />,
+        accent: "cyan",
       },
 
       {
@@ -294,12 +311,19 @@ const DashboardContent: React.FC = () => {
         accent: "emerald",
       },
 
-      // ✅ ADDED BUTTON (Tile): School-Supplier Billing Report
       {
         title: "School Order Billing Status",
         href: "/reports/school-supplier-billing",
         icon: <ClipboardSignature className="h-5 w-5" />,
         accent: "slate",
+      },
+
+      // ✅ Admin Change Password
+      {
+        title: "Change Password",
+        href: "/admin/change-password",
+        icon: <KeyRound className="h-5 w-5" />,
+        accent: "indigo",
       },
     ],
     []
@@ -313,8 +337,9 @@ const DashboardContent: React.FC = () => {
       const raw = localStorage.getItem(LS_PIN_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed))
+        if (Array.isArray(parsed)) {
           setPins(parsed.filter((x) => typeof x === "string"));
+        }
       }
     } catch {}
   }, []);
@@ -391,6 +416,7 @@ const DashboardContent: React.FC = () => {
               <button
                 className="text-[12px] font-bold text-slate-500 hover:text-slate-800"
                 onClick={() => setQ("")}
+                type="button"
               >
                 Clear
               </button>
@@ -411,7 +437,7 @@ const DashboardContent: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {pinnedCards.map((c) => (
                 <Tile
                   key={c.href}
@@ -424,9 +450,9 @@ const DashboardContent: React.FC = () => {
           </section>
         )}
 
-        {/* All Tiles: 4 per row */}
+        {/* All Tiles */}
         <section>
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {filteredCards.map((c) => (
               <Tile
                 key={c.href}
