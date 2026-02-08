@@ -417,6 +417,22 @@ export default function SupplierReceiptsPageClient() {
   });
 
   const [items, setItems] = useState<UiItem[]>([]);
+  // ✅ Create table search
+  const [itemSearch, setItemSearch] = useState("");
+
+  // ✅ indices of items that match search (keeps original index)
+  const visibleItemIdxs = useMemo(() => {
+    const q = itemSearch.trim().toLowerCase();
+    if (!q) return items.map((_, i) => i);
+
+    return items
+      .map((it, i) => {
+        const hay = `${it.title} ${it.meta || ""} ${it.book_id}`.toLowerCase();
+        return hay.includes(q) ? i : -1;
+      })
+      .filter((i) => i >= 0);
+  }, [items, itemSearch]);
+
 
   // view modal
   const [viewOpen, setViewOpen] = useState(false);
@@ -450,27 +466,47 @@ export default function SupplierReceiptsPageClient() {
 
   /* ------------ Enter-to-next-cell (create table) ------------ */
 
-  const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const cellKey = (rowIdx: number, field: "rec" | "mrp" | "pct" | "amt") => `${rowIdx}-${field}`;
-  const focusCell = (rowIdx: number, field: "rec" | "mrp" | "pct" | "amt") => {
-    const el = cellRefs.current[cellKey(rowIdx, field)];
-    el?.focus();
-    el?.select?.();
-  };
+/* ------------ Enter-to-next-cell (create table) ------------ */
 
-  const onCellEnter = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    rowIdx: number,
-    field: "rec" | "mrp" | "pct" | "amt"
-  ) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    const order: Array<"rec" | "mrp" | "pct" | "amt"> = ["rec", "mrp", "pct", "amt"];
-    const pos = order.indexOf(field);
-    if (pos === -1) return;
-    if (pos < order.length - 1) focusCell(rowIdx, order[pos + 1]);
-    else focusCell(rowIdx + 1, "rec");
-  };
+const cellRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+// ✅ IMPORTANT: key by original index so filtering doesn't break refs
+const cellKey = (origIdx: number, field: "rec" | "mrp" | "pct" | "amt") => `${origIdx}-${field}`;
+
+const focusCell = (origIdx: number, field: "rec" | "mrp" | "pct" | "amt") => {
+  const el = cellRefs.current[cellKey(origIdx, field)];
+  el?.focus();
+  el?.select?.();
+};
+
+// ✅ Find next visible original index
+const nextVisibleOrigIdx = (currentOrigIdx: number) => {
+  const pos = visibleItemIdxs.indexOf(currentOrigIdx);
+  if (pos === -1) return null;
+  return visibleItemIdxs[pos + 1] ?? null;
+};
+
+const onCellEnter = (
+  e: React.KeyboardEvent<HTMLInputElement>,
+  origIdx: number,
+  field: "rec" | "mrp" | "pct" | "amt"
+) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+
+  const order: Array<"rec" | "mrp" | "pct" | "amt"> = ["rec", "mrp", "pct", "amt"];
+  const pos = order.indexOf(field);
+  if (pos === -1) return;
+
+  if (pos < order.length - 1) {
+    focusCell(origIdx, order[pos + 1]);
+    return;
+  }
+
+  const nextOrig = nextVisibleOrigIdx(origIdx);
+  if (nextOrig != null) focusCell(nextOrig, "rec");
+};
+
 
   /* ------------ Fetch masters ------------ */
 
@@ -2106,7 +2142,35 @@ const createColTotals = useMemo(() => {
                     <table className="w-full text-xs border-collapse">
                       <thead className="bg-slate-100 sticky top-0 z-10">
                         <tr>
-                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">Book</th>
+                          <th className="border-b border-slate-200 px-2 py-1.5 text-left">
+                            <div className="flex items-center justify-between gap-2">
+                              <span>Book</span>
+
+                              {/* ✅ tiny search */}
+                            <div className="relative">
+                              <input
+                                value={itemSearch}
+                                onChange={(e) => setItemSearch(e.target.value)}
+                                className="border border-slate-300 rounded-lg pl-2 pr-7 py-1 text-[11px] bg-white w-[180px]"
+                                placeholder="Search book..."
+                                title="Search in loaded books"
+                              />
+
+                              {itemSearch.trim() ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setItemSearch("")}
+                                  className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-slate-100"
+                                  title="Clear"
+                                >
+                                  <X className="w-3 h-3 text-slate-500" />
+                                </button>
+                              ) : null}
+                            </div>
+
+                            </div>
+                          </th>
+
                           <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Ord</th>
                           <th className="border-b border-slate-200 px-2 py-1.5 text-right w-14">Pend</th>
 
@@ -2129,7 +2193,10 @@ const createColTotals = useMemo(() => {
                       </thead>
 
                       <tbody>
-                        {items.map((it, idx) => {
+                        {visibleItemIdxs.map((origIdx) => {
+                          const it = items[origIdx];
+                          if (!it) return null;
+
                           const qty = Math.max(0, Math.floor(num(it.rec_qty)));
                           const specQty = clamp(Math.floor(num(it.spec_qty)), 0, 500);
 
@@ -2166,14 +2233,14 @@ const createColTotals = useMemo(() => {
                               <td className={`border-b border-slate-200 px-1 py-0.5 ${tooMuchPaid ? "bg-rose-50" : ""}`}>
                                 <input
                                   ref={(el) => {
-                                    cellRefs.current[cellKey(idx, "rec")] = el;
+                                    cellRefs.current[cellKey(origIdx, "rec")] = el;
                                   }}
                                   type="number"
                                   min={0}
                                   value={it.rec_qty}
-                                  onChange={(e) => setRowRecQty(idx, e.target.value)}
+                                  onChange={(e) => setRowRecQty(origIdx, e.target.value)}
                                   onWheel={preventWheelChange}
-                                  onKeyDown={(e) => onCellEnter(e, idx, "rec")}
+                                  onKeyDown={(e) => onCellEnter(e, origIdx, "rec")}
                                   className={`${cellNum} ${tooMuchPaid ? "text-rose-700 font-semibold" : ""}`}
                                   title="Received now (Paid)"
                                 />
@@ -2185,7 +2252,7 @@ const createColTotals = useMemo(() => {
                                   type="number"
                                   min={0}
                                   value={it.spec_qty || ""}
-                                  onChange={(e) => setRowSpecQty(idx, e.target.value)}
+                                  onChange={(e) => setRowSpecQty(origIdx, e.target.value)}  
                                   onWheel={preventWheelChange}
                                   className={cellNum}
                                   title="Specimen qty (Rate will be 0)"
@@ -2196,14 +2263,14 @@ const createColTotals = useMemo(() => {
                               <td className={`border-b border-slate-200 px-1 py-0.5 ${missingRateInvoice ? "bg-rose-50" : ""}`}>
                                 <input
                                   ref={(el) => {
-                                    cellRefs.current[cellKey(idx, "mrp")] = el;
+                                    cellRefs.current[cellKey(origIdx, "mrp")] = el;
                                   }}
                                   type="number"
                                   min={0}
                                   value={it.unit_price}
-                                  onChange={(e) => setRowUnit(idx, e.target.value)}
+                                  onChange={(e) => setRowUnit(origIdx, e.target.value)}        
                                   onWheel={preventWheelChange}
-                                  onKeyDown={(e) => onCellEnter(e, idx, "mrp")}
+                                  onKeyDown={(e) => onCellEnter(e, origIdx, "mrp")}            
                                   className={`${cellNum} ${missingRateInvoice ? "text-rose-700 font-semibold" : ""}`}
                                   title={isInvoice ? "Rate (required for paid qty)" : "Rate (optional for challan draft)"}
                                 />
@@ -2213,15 +2280,15 @@ const createColTotals = useMemo(() => {
                               <td className="border-b border-slate-200 px-1 py-0.5">
                                 <input
                                   ref={(el) => {
-                                    cellRefs.current[cellKey(idx, "pct")] = el;
+                                    cellRefs.current[cellKey(origIdx, "pct")] = el;            
                                   }}
                                   type="number"
                                   min={0}
                                   max={100}
                                   value={it.disc_pct}
-                                  onChange={(e) => setRowDiscPct(idx, e.target.value)}
+                                  onChange={(e) => setRowDiscPct(origIdx, e.target.value)}     
                                   onWheel={preventWheelChange}
-                                  onKeyDown={(e) => onCellEnter(e, idx, "pct")}
+                                  onKeyDown={(e) => onCellEnter(e, origIdx, "pct")}            
                                   className={cellNum}
                                   title="% discount (auto sync Disc₹)"
                                 />
@@ -2231,14 +2298,14 @@ const createColTotals = useMemo(() => {
                               <td className="border-b border-slate-200 px-1 py-0.5">
                                 <input
                                   ref={(el) => {
-                                    cellRefs.current[cellKey(idx, "amt")] = el;
+                                    cellRefs.current[cellKey(origIdx, "amt")] = el;            
                                   }}
                                   type="number"
                                   min={0}
                                   value={it.disc_amt}
-                                  onChange={(e) => setRowDiscAmt(idx, e.target.value)}
+                                  onChange={(e) => setRowDiscAmt(origIdx, e.target.value)}     
                                   onWheel={preventWheelChange}
-                                  onKeyDown={(e) => onCellEnter(e, idx, "amt")}
+                                  onKeyDown={(e) => onCellEnter(e, origIdx, "amt")}            
                                   className={cellNum}
                                   title="Fixed discount per unit (auto sync %)"
                                 />
@@ -2257,7 +2324,7 @@ const createColTotals = useMemo(() => {
                               <td className="border-b border-slate-200 px-2 py-1.5 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => setItems((p2) => p2.filter((_, i) => i !== idx))}
+                                  onClick={() => setItems((p2) => p2.filter((_, i) => i !== origIdx))}
                                   className="inline-flex items-center justify-center p-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
                                   title="Remove line (does not change order)"
                                 >
@@ -2267,7 +2334,17 @@ const createColTotals = useMemo(() => {
                             </tr>
                           );
                         })}
+
+                        {/* ✅ Optional: show when no search match */}
+                        {visibleItemIdxs.length === 0 ? (
+                          <tr>
+                            <td colSpan={11} className="px-3 py-6 text-center text-sm text-slate-500">
+                              No matching books.
+                            </td>
+                          </tr>
+                        ) : null}
                       </tbody>
+
 
                       <tfoot>
                           <tr className="bg-slate-50 sticky bottom-0 z-10">

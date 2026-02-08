@@ -116,6 +116,30 @@ const SESSION_OPTIONS = (() => {
 
 /* ---------- Helpers ---------- */
 
+const deriveDisplayStatus = (order: SchoolOrder): string => {
+  const items = getOrderItems(order);
+
+  const ord = totalQtyFromItems(items);
+  const rec = totalReceivedFromItems(items);
+  const re = totalReorderedFromItems(items);
+
+  // if order is closed, keep original status
+  if (isClosedishStatus(order.status)) return order.status || "draft";
+
+  // ✅ completed when received covers ordered (or ordered 0)
+  if (ord > 0 && rec >= ord) return "completed";
+
+  // ✅ partial received if some received but not all
+  if (rec > 0 && rec < ord) return "partial_received";
+
+  // otherwise use real status (sent/draft etc.)
+  return order.status || "draft";
+};
+
+const displayStatusLabel = (order: SchoolOrder) => statusLabel(deriveDisplayStatus(order));
+const displayStatusChipClass = (order: SchoolOrder) => statusChipClass(deriveDisplayStatus(order));
+
+
 const normalizeSchools = (payload: any): School[] => {
   if (Array.isArray(payload)) return payload as School[];
   if (payload && Array.isArray(payload.data)) return payload.data as School[];
@@ -1760,7 +1784,7 @@ const refreshGlobalEmailLogs = async () => {
                           {group.rows.map((row) => {
                             const { order } = row;
                             const isSending = sendingOrderId === order.id;                            
-                            const statusClass = statusChipClass(order.status);
+                            const statusClass = displayStatusChipClass(order);
 
                             const draft = orderNoDrafts[order.id] ?? order.order_no ?? "";
                             const savingThis = savingOrderNoId === order.id;
@@ -1832,7 +1856,7 @@ const refreshGlobalEmailLogs = async () => {
                                   <span
                                     className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${statusClass}`}
                                   >
-                                    {statusLabel(order.status)}
+                                    {displayStatusLabel(order)}
                                   </span>
                                 </td>
 
@@ -2028,7 +2052,7 @@ const refreshGlobalEmailLogs = async () => {
                                     viewOrder.status
                                   )}`}
                                 >
-                                  {statusLabel(viewOrder.status)}
+                                  {statusLabel(deriveDisplayStatus(viewOrder))}
                                 </span>
                               </div>
                             </div>
