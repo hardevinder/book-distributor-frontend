@@ -53,11 +53,23 @@ type ProductLite = {
   name?: string | null;
   uom?: string | null;
   is_active?: boolean;
+
+  // ✅ NEW
+  category_id?: number | null;
+  category?: ProductCategoryLite | null;
+
   book?: BookLite | null;
   mrp?: number | string | null;
   selling_price?: number | string | null;
   rate?: number | string | null;
 };
+
+
+type ProductCategoryLite = {
+  id: number;
+  name: string;
+};
+
 
 type BundleItemRow = {
   id: number;
@@ -181,11 +193,21 @@ const normalizeProducts = (payload: any): ProductLite[] => {
   return [];
 };
 
+const normalizeCategories = (payload: any): ProductCategoryLite[] => {
+  if (Array.isArray(payload)) return payload as ProductCategoryLite[];
+  if (payload && Array.isArray(payload.data)) return payload.data as ProductCategoryLite[];
+  if (payload && Array.isArray(payload.rows)) return payload.rows as ProductCategoryLite[];
+  if (payload && Array.isArray(payload.categories)) return payload.categories as ProductCategoryLite[];
+  return [];
+};
+
+
 const BundlesPageClient: React.FC = () => {
   const { user } = useAuth();
 
   const [schools, setSchools] = useState<School[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
+  
 
   const [schoolId, setSchoolId] = useState<number | "">("");
   const DEFAULT_SESSION = "2026-27";
@@ -256,6 +278,15 @@ const BundlesPageClient: React.FC = () => {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
+// ✅ Categories master
+const [categories, setCategories] = useState<ProductCategoryLite[]>([]);
+const [catLoading, setCatLoading] = useState(false);
+const [catApiStatus, setCatApiStatus] = useState<"idle" | "ok" | "missing" | "error">("idle");
+
+// ✅ Extra modal: selected category
+const [extraCategoryId, setExtraCategoryId] = useState<number | "">("");
+
+
   const chip = (base: string) =>
     `inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] leading-none ${base}`;
 
@@ -276,6 +307,42 @@ const BundlesPageClient: React.FC = () => {
 
   /* ---------------- Load masters ---------------- */
 
+  const loadCategories = async () => {
+  setCatLoading(true);
+  setCatApiStatus("idle");
+
+  const endpointsToTry = [
+    "/api/product-categories",
+    "/api/products/categories",
+    "/api/categories/products",
+  ];
+
+  try {
+    for (const url of endpointsToTry) {
+      try {
+        const res = await api.get(url);
+        const arr = normalizeCategories(res?.data);
+        if (arr.length) {
+          setCategories(arr.sort((a, b) => safeStr(a.name).localeCompare(safeStr(b.name))));
+          setCatApiStatus("ok");
+          return;
+        }
+      } catch (e: any) {
+        // try next
+      }
+    }
+
+    setCategories([]);
+    setCatApiStatus("missing");
+  } catch (e) {
+    setCategories([]);
+    setCatApiStatus("error");
+  } finally {
+    setCatLoading(false);
+  }
+};
+
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -286,6 +353,7 @@ const BundlesPageClient: React.FC = () => {
             (a, b) => num(a.sort_order) - num(b.sort_order) || safeStr(a.class_name).localeCompare(safeStr(b.class_name))
           )
         );
+        await loadCategories(); // ✅ NEW
       } catch (e) {
         console.error(e);
       }
@@ -367,6 +435,7 @@ const BundlesPageClient: React.FC = () => {
           academic_session: session || undefined,
           is_active: 1,
           include_book: 1,
+           include_category: 1, // ✅ NEW
           ensure_books: section === "books" && opts?.ensure_books ? 1 : undefined,
         },
       });
@@ -510,15 +579,20 @@ const BundlesPageClient: React.FC = () => {
       const code = isBook ? p.book?.code || "" : p.uom || "";
       const cls = isBook ? p.book?.class_name || "" : "";
 
-      return {
-        key: `p:${p.id}`,
-        type: p.type,
-        product_id: p.id,
-        title,
-        subject,
-        code,
-        class_name: cls,
-      };
+      const catName = safeStr(p.category?.name);
+
+        return {
+          key: `p:${p.id}`,
+          type: p.type,
+          product_id: p.id,
+          title,
+          subject,
+          code,
+          class_name: cls,
+
+          category: catName, // ✅ ADD
+        };
+
     });
 
     if (pickerTab !== "ADD_PRODUCTS") {
@@ -528,7 +602,7 @@ const BundlesPageClient: React.FC = () => {
     if (!q) return rows.slice(0, 140);
 
     return rows
-      .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name}`.toLowerCase().includes(q))
+      .filter((r) => `${r.title} ${r.subject} ${r.code} ${r.class_name} ${r.category}`.toLowerCase().includes(q))
       .slice(0, 140);
   }, [products, pickerQ, pickerType, pickerTab]);
 
@@ -827,6 +901,11 @@ const BundlesPageClient: React.FC = () => {
       setExtraErr("Enter item name.");
       return;
     }
+    if (!extraCategoryId) {
+      setExtraErr("Select category.");
+      return;
+    }
+
 
     setExtraErr(null);
     setSuccess(null);
@@ -840,6 +919,8 @@ const BundlesPageClient: React.FC = () => {
         name: safeStr(extraName),
         uom: safeStr(extraUom) || "PCS",
         is_active: extraActive ? 1 : 0,
+
+        category_id: Number(extraCategoryId), // ✅ NEW (required)
       };
 
       const res = await api.post("/api/products", payload);
@@ -850,15 +931,22 @@ const BundlesPageClient: React.FC = () => {
         return;
       }
 
-      const newProd: ProductLite = {
-        id: Number(created.id),
-        type: "MATERIAL",
-        name: created.name ?? safeStr(extraName),
-        uom: created.uom ?? (safeStr(extraUom) || "PCS"),
-        is_active: created.is_active ?? (extraActive ? true : false),
+    const pickedCat = categories.find((c) => Number(c.id) === Number(extraCategoryId)) || null;
+
+const newProd: ProductLite = {
+  id: Number(created.id),
+  type: "MATERIAL",
+  name: created.name ?? safeStr(extraName),
+  uom: created.uom ?? (safeStr(extraUom) || "PCS"),
+  is_active: created.is_active ?? (extraActive ? true : false),
         book_id: null,
         book: null,
+
+        // ✅ NEW
+        category_id: Number(extraCategoryId),
+        category: pickedCat ? { id: pickedCat.id, name: pickedCat.name } : null,
       };
+
 
       setProducts((prev) => {
         const exists = prev.some((p) => Number(p.id) === Number(newProd.id));
@@ -871,6 +959,7 @@ const BundlesPageClient: React.FC = () => {
       setExtraName("");
       setExtraUom("");
       setExtraActive(true);
+      setExtraCategoryId(""); // ✅ ADD THIS
       setExtraCreateOpen(false);
       setSuccess(activeId ? "Extra item created & added ✅" : "Extra item created ✅ (select bundle to add)");
     } catch (e: any) {
@@ -915,168 +1004,197 @@ const BundlesPageClient: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* ✅ Top Bar */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
-        <div className="px-3 sm:px-4 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Link
-                href="/"
-                className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-full border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition shrink-0"
-                title="Back"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Desktop
-              </Link>
+ <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
+  {/* ✅ tighter padding */}
+  <div className="px-2 sm:px-3 py-1.5">
+    {/* ✅ ONE ROW ONLY (no wrap) */}
+    <div className="flex items-center gap-1.5">
+      {/* LEFT: back + icon + title */}
+      <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition shrink-0"
+          title="Back"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          Desktop
+        </Link>
 
-              <div className="h-9 w-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shrink-0">
-                <Layers className="w-5 h-5" />
-              </div>
+        <div className="h-7 w-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-sm shrink-0">
+          <Layers className="w-4 h-4" />
+        </div>
 
-              <div className="min-w-0">
-                <div className="text-sm font-extrabold leading-tight truncate">Bundles / Kits</div>
-                <div className="text-[11px] text-slate-500 truncate">
-                  {selectedSchool?.name ? (
-                    <>
-                      <SchoolIcon className="inline w-4 h-4 mr-1" />
-                      {selectedSchool.name}
-                      {session ? ` • ${session}` : ""}
-                    </>
-                  ) : (
-                    <>Select school to manage kits</>
-                  )}
-                </div>
-              </div>
-            </div>
+        <div className="min-w-0">
+          <div className="text-[12px] font-extrabold leading-none truncate">Bundles / Kits</div>
+          <div className="text-[10px] text-slate-500 leading-none truncate">
+            {selectedSchool?.name ? (
+              <>
+                <SchoolIcon className="inline w-3.5 h-3.5 mr-1" />
+                {selectedSchool.name}
+                {session ? ` • ${session}` : ""}
+              </>
+            ) : (
+              <>Select school to manage kits</>
+            )}
+          </div>
+        </div>
+      </div>
 
-            <div className="flex-1 min-w-[10px]" />
+      {/* RIGHT: controls (single line scroll on small screens) */}
+      <div className="ml-auto min-w-0">
+        <div
+          className="flex items-center gap-1.5 justify-end overflow-x-auto whitespace-nowrap
+                     [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {/* ✅ Desktop collapse controls */}
+          <div className="hidden md:flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setLeftCollapsed((v) => !v)}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+              title={leftCollapsed ? "Expand Left" : "Collapse Left"}
+            >
+              {leftCollapsed ? (
+                <PanelLeftOpen className="w-3.5 h-3.5" />
+              ) : (
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              )}
+            </button>
 
-            <div className="flex flex-wrap items-center gap-2 justify-end w-full xl:w-auto">
-              {/* ✅ Desktop collapse controls */}
-              <div className="hidden md:flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setLeftCollapsed((v) => !v)}
-                  className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                  title={leftCollapsed ? "Expand Left" : "Collapse Left"}
-                >
-                  {leftCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setRightCollapsed((v) => !v)}
-                  className="inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
-                  title={rightCollapsed ? "Expand Right" : "Collapse Right"}
-                >
-                  {rightCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
-                </button>
-              </div>
-
-              <div className="w-full sm:w-[260px]">
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                  value={schoolId}
-                  onChange={(e) => setSchoolId(Number(e.target.value) || "")}
-                >
-                  <option value="">Select School</option>
-                  {schools.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="w-[130px]">
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
-                  value={session}
-                  onChange={(e) => setSession(e.target.value)}
-                >
-                  {SESSION_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setBundlesDrawerOpen(true)}
-                className="lg:hidden inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold"
-                title="Select Bundle"
-              >
-                <Menu className="w-4 h-4" />
-                <span className="max-w-[160px] truncate">{activeBundleLabel}</span>
-              </button>
-
-              <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-[11px] text-slate-700">
-                <span>
-                  Books: <b>{schoolBooksCount}</b>
-                </span>
-                <span className="text-slate-300">•</span>
-                <span>
-                  Missing: <b>{missingBookProductsCount}</b>
-                </span>
-                <span className="text-slate-300">•</span>
-                <span>
-                  Book Products: <b>{bookProductsCount}</b>
-                </span>
-                <span className="text-slate-300">•</span>
-                <span>
-                  Products: <b>{products.length}</b>
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setSuccess(null);
-                  setCreateBundleOpen(true);
-                }}
-                disabled={!schoolId}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-sm font-bold disabled:opacity-50"
-              >
-                <PackagePlus className="w-4 h-4" />
-                New
-              </button>
-
-              <button
-                onClick={refreshAll}
-                disabled={!schoolId || loadingBundles || pickerLoading || avLoading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition shadow-md"
-              >
-                <RefreshCcw className={`w-4 h-4 ${loadingBundles || pickerLoading || avLoading ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-
-              <div className="hidden xl:block text-xs text-slate-600 pl-1">{user?.name || "User"}</div>
-            </div>
+            <button
+              type="button"
+              onClick={() => setRightCollapsed((v) => !v)}
+              className="inline-flex items-center justify-center w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+              title={rightCollapsed ? "Expand Right" : "Collapse Right"}
+            >
+              {rightCollapsed ? (
+                <PanelRightOpen className="w-3.5 h-3.5" />
+              ) : (
+                <PanelRightClose className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
 
-          {error && (
-            <div className="mt-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-          {success && (
-            <div className="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-              {success}
-            </div>
-          )}
+          {/* School */}
+          <div className="w-[185px] sm:w-[220px] shrink-0">
+            <select
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px]
+                         focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+              value={schoolId}
+              onChange={(e) => setSchoolId(Number(e.target.value) || "")}
+            >
+              <option value="">Select School</option>
+              {schools.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          {schoolId && productsApiStatus === "unauthorized" && (
-            <div className="mt-2 text-xs text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 flex items-center gap-2">
-              <Lock className="w-4 h-4 flex-shrink-0" />
-              Products API is protected (401). Ensure frontend sends JWT Authorization header for <b>/api/products</b>.
-            </div>
-          )}
+          {/* Session */}
+          <div className="w-[108px] shrink-0">
+            <select
+              className="w-full border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px]
+                         focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+              value={session}
+              onChange={(e) => setSession(e.target.value)}
+            >
+              {SESSION_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Mobile bundle selector */}
+          <button
+            type="button"
+            onClick={() => setBundlesDrawerOpen(true)}
+            className="lg:hidden inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 px-2 py-1 text-[11px] font-bold shrink-0"
+            title="Select Bundle"
+          >
+            <Menu className="w-3.5 h-3.5" />
+            <span className="max-w-[120px] truncate">{activeBundleLabel}</span>
+          </button>
+
+          {/* ✅ Stats: only Products + (Missing if >0) */}
+          <div className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[10px] text-slate-700 shrink-0">
+            <span>
+              Products: <b>{products.length}</b>
+            </span>
+
+            {missingBookProductsCount > 0 && (
+              <>
+                <span className="text-slate-300">•</span>
+                <span className="text-amber-700">
+                  Missing: <b>{missingBookProductsCount}</b>
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* New */}
+          <button
+            type="button"
+            onClick={() => {
+              setExtraErr(null);
+              setExtraCategoryId("");
+              setExtraCreateOpen(true);
+            }}
+            disabled={!schoolId}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 shrink-0"
+          >
+            <PackagePlus className="w-3.5 h-3.5" />
+            New
+          </button>
+
+          {/* Refresh */}
+          <button
+            onClick={refreshAll}
+            disabled={!schoolId || loadingBundles || pickerLoading || avLoading}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 text-[11px] font-bold
+                       disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm shrink-0"
+          >
+            <RefreshCcw className={`w-3.5 h-3.5 ${loadingBundles || pickerLoading || avLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+
+          <div className="hidden xl:block text-[11px] text-slate-600 pl-1 shrink-0">
+            {user?.name || "User"}
+          </div>
         </div>
-      </header>
+      </div>
+    </div>
+
+    {/* ✅ Messages below (compact) */}
+    {error && (
+      <div className="mt-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="truncate">{error}</span>
+      </div>
+    )}
+
+    {success && (
+      <div className="mt-1.5 text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+        <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="truncate">{success}</span>
+      </div>
+    )}
+
+    {schoolId && productsApiStatus === "unauthorized" && (
+      <div className="mt-1.5 text-[11px] text-indigo-900 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
+        <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+        <span className="truncate">
+          Products API is protected (401). Ensure frontend sends JWT Authorization header for <b>/api/products</b>.
+        </span>
+      </div>
+    )}
+  </div>
+</header>
+
+
 
       {/* ✅ Layout updated: flex on desktop so sidebars can collapse */}
       <main className="p-2 sm:p-3 w-full max-w-none mx-auto">
@@ -1360,7 +1478,7 @@ const BundlesPageClient: React.FC = () => {
         Details collapsed. Items remain visible below.
       </div>
     ) : (
-      <div className="mt-3 grid grid-cols-12 gap-2">
+      <div className="mt-2 grid grid-cols-12 gap-2">
         <div className="col-span-12">
           <label className="block text-[11px] font-bold text-slate-600 mb-1">Bundle Name</label>
           <input
@@ -1625,11 +1743,12 @@ const BundlesPageClient: React.FC = () => {
           <section className={`transition-all duration-200 ${rightCollapsed ? "lg:w-[76px]" : "lg:w-[360px]"}`}>
             <div className="bg-white border border-slate-200 rounded-2xl shadow-sm h-full overflow-hidden">
               {/* Right header */}
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
+              <div className="p-2 border-b border-slate-100 flex items-center justify-between gap-2">
                 {!rightCollapsed ? (
                   <div>
-                    <div className="text-sm font-bold">Add Items</div>
-                    <div className="text-xs text-slate-500">First school books, then extras</div>
+                    <div className="text-[13px] font-bold leading-tight">Add Items</div>
+                    <div className="text-[11px] leading-tight text-slate-500">First school books, then extras</div>
+
                   </div>
                 ) : (
                   <div className="text-xs font-extrabold text-slate-700">+</div>
@@ -1641,10 +1760,10 @@ const BundlesPageClient: React.FC = () => {
                       type="button"
                       onClick={refreshAll}
                       disabled={!schoolId || pickerLoading || avLoading}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold disabled:opacity-50"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 px-2.5 py-1 text-[11px] font-bold disabled:opacity-50"
                       title="Reload"
                     >
-                      <RefreshCcw className={`w-4 h-4 ${pickerLoading || avLoading ? "animate-spin" : ""}`} />
+                      <RefreshCcw className={`w-2 h-2 ${pickerLoading || avLoading ? "animate-spin" : ""}`} />
                       Reload
                     </button>
                   )}
@@ -1652,10 +1771,10 @@ const BundlesPageClient: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setRightCollapsed((v) => !v)}
-                    className="hidden lg:inline-flex items-center justify-center w-10 h-10 rounded-xl border border-slate-300 bg-white hover:bg-slate-100"
+                    className="hidden lg:inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
                     title={rightCollapsed ? "Expand" : "Collapse"}
                   >
-                    {rightCollapsed ? <PanelRightOpen className="w-4 h-4" /> : <PanelRightClose className="w-4 h-4" />}
+                    {rightCollapsed ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -1682,7 +1801,7 @@ const BundlesPageClient: React.FC = () => {
                       }}
                       className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 px-3 py-2 text-xs font-bold"
                     >
-                      <BookOpen className="w-4 h-4" />
+                      <BookOpen className="w-3.5 h-3.5" />
                       Books
                     </button>
 
@@ -1700,7 +1819,7 @@ const BundlesPageClient: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div className="p-4">
+                <div className="p-2">
                   {/* (your right picker UI kept same) */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -1718,7 +1837,7 @@ const BundlesPageClient: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setPickerTab("ADD_PRODUCTS")}
-                      className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold border transition ${
+                      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold border transition ${
                         pickerTab === "ADD_PRODUCTS"
                           ? "bg-indigo-50 border-indigo-200 text-indigo-800"
                           : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
@@ -1749,18 +1868,18 @@ const BundlesPageClient: React.FC = () => {
                   )}
 
                   {!schoolId ? (
-                    <div className="mt-3 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <div className="mt-2 text-sm text-slate-400 bg-slate-50 border border-slate-200 rounded-xl p-4">
                       Select school first.
                     </div>
                   ) : pickerTab === "SCHOOL_BOOKS" ? (
                     <>
-                      <div className="mt-3 grid grid-cols-12 gap-2">
+                      <div className="mt-2 grid grid-cols-12 gap-1">
                         <div className="col-span-7">
-                          <label className="block text-xs font-bold text-slate-600 mb-1.5">Search</label>
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Search</label>
                           <div className="relative">
                             <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
                             <input
-                              className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                              className={`w-full border border-slate-300 rounded-xl pl-9 py-1.5 text-[11px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
                                 avQ ? "pr-10" : "pr-4"
                               }`}
                               placeholder="Title / subject / code…"
@@ -1780,9 +1899,9 @@ const BundlesPageClient: React.FC = () => {
                         </div>
 
                         <div className="col-span-5">
-                          <label className="block text-xs font-bold text-slate-600 mb-1.5">Class</label>
+                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Class</label>
                           <select
-                            className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                            className="w-full border border-slate-300 rounded-xl px-3 py-1.5 bg-white text-[12px] focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                             value={avClass}
                             onChange={(e) => setAvClass(e.target.value)}
                           >
@@ -1810,12 +1929,13 @@ const BundlesPageClient: React.FC = () => {
                         </div>
                       ) : (
                         <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
-                          <div className="max-h-[70vh] overflow-y-auto">
-                            <table className="w-full text-sm table-fixed">
+                          <div className="max-h-[78vh] overflow-y-auto">
+                            <table className="w-full text-[12px] leading-none table-fixed">
                               <thead className="bg-slate-100 sticky top-0 z-10">
                                 <tr>
-                                  <th className="px-3 py-3 text-left font-bold text-slate-800 w-[85%]">Book</th>
-                                  <th className="px-2 py-3 text-center font-bold text-slate-800 w-[15%]">Add</th>
+                                  <th className="px-2 py-1 text-left text-xs font-bold text-slate-800 w-[85%]">Book</th>
+                                  <th className="px-2 py-1 text-center text-xs font-bold text-slate-800 w-[15%]">Add</th>
+
                                 </tr>
                               </thead>
 
@@ -1828,25 +1948,27 @@ const BundlesPageClient: React.FC = () => {
                                   const canAdd = !!activeId && !!bookProd?.id && !already;
 
                                   return (
-                                    <tr key={`av:${b.book_id}`} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                                      <td className="px-3 py-3">
-                                        <div className="font-bold text-slate-900 truncate">{b.title}</div>
-                                      </td>
+                                    <tr key={`av:${b.book_id}`} className="h-7 border-b border-slate-100 hover:bg-slate-50 transition">
+                                   <td className="px-2 py-0.5">
+                                      <div className="font-semibold text-[11px] leading-tight text-slate-900 truncate">{b.title}</div>
+                                    </td>
 
-                                      <td className="px-2 py-3 text-center">
+
+                                      <td className="px-2 py-0 text-center">
                                         <button
                                           type="button"
                                           onClick={() => addSchoolBookToKit(Number(b.book_id))}
                                           disabled={!canAdd}
-                                          className={`inline-flex items-center justify-center w-10 h-10 rounded-xl border transition ${
-                                            !activeId
-                                              ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                                              : already
-                                              ? "border-emerald-200 bg-emerald-50 text-emerald-800 cursor-not-allowed"
-                                              : !bookProd?.id
-                                              ? "border-rose-200 bg-rose-50 text-rose-800 cursor-not-allowed"
-                                              : "border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
-                                          }`}
+                                        className={`inline-flex items-center justify-center w-3 h-3 rounded-lg transition ${
+                                          !activeId
+                                            ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                                            : already
+                                            ? "bg-emerald-50 text-emerald-700 cursor-not-allowed"
+                                            : !bookProd?.id
+                                            ? "bg-rose-50 text-rose-700 cursor-not-allowed"
+                                            : "bg-transparent hover:bg-slate-100 text-slate-800"
+                                        }`}
+
                                           title={
                                             !activeId
                                               ? "Select bundle first"
@@ -1857,7 +1979,7 @@ const BundlesPageClient: React.FC = () => {
                                               : "Add"
                                           }
                                         >
-                                          {already ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                                          {already ? <CheckCircle2 className="w-3 h-3" /> : <Plus className="w-4 h-4" />}
                                         </button>
                                       </td>
                                     </tr>
@@ -1891,11 +2013,11 @@ const BundlesPageClient: React.FC = () => {
                       </div>
 
                       <div className="mt-3">
-                        <label className="block text-xs font-bold text-slate-600 mb-1.5">Search</label>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Search</label>
                         <div className="relative">
-                          <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                          <Search className="absolute left-2.5 top-2 w-4 h-4 text-slate-400" />
                           <input
-                            className={`w-full border border-slate-300 rounded-xl pl-10 py-2.5 text-sm bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
+                            className={`w-full border border-slate-300 rounded-xl pl-9 py-1.5 text-[12px] bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition ${
                               pickerQ ? "pr-10" : "pr-4"
                             }`}
                             placeholder="Search direct purchased / manual items…"
@@ -1906,7 +2028,7 @@ const BundlesPageClient: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setPickerQ("")}
-                              className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 transition"
+                              className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 transition"
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -1927,12 +2049,13 @@ const BundlesPageClient: React.FC = () => {
                         </div>
                       ) : (
                         <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
-                          <div className="max-h-[70vh] overflow-y-auto">
-                            <table className="w-full text-sm table-fixed">
+                          <div className="max-h-[78vh] overflow-y-auto">
+                            <table className="w-full text-[12px] leading-none table-fixed">
                               <thead className="bg-slate-100 sticky top-0 z-10">
                                 <tr>
-                                  <th className="px-3 py-3 text-left font-bold text-slate-800 w-[70%]">Item</th>
-                                  <th className="px-3 py-3 text-center font-bold text-slate-800 w-[30%]">Add</th>
+                                 <th className="px-2 py-1 text-left text-xs font-bold text-slate-800 w-[70%]">Item</th>
+                                  <th className="px-2 py-1 text-center text-xs font-bold text-slate-800 w-[30%]">Add</th>
+
                                 </tr>
                               </thead>
                               <tbody>
@@ -1941,18 +2064,22 @@ const BundlesPageClient: React.FC = () => {
                                   const metaLine = [r.class_name, r.subject, r.code].filter(Boolean).join(" • ");
 
                                   return (
-                                    <tr key={r.key} className="border-b border-slate-100 hover:bg-slate-50 transition">
-                                      <td className="px-3 py-3">
-                                        <div className="font-bold text-slate-900 truncate">{r.title}</div>
+                                    <tr key={r.key} className="h-7 border-b border-slate-100 hover:bg-slate-50 transition">
+                                     <td className="px-2 py-0.5">
+                                        <div className="font-semibold text-[11px] leading-snug text-slate-900 truncate">{r.title}</div>
+                                        {r.category && (
+                                          <div className="text-[10px] leading-tight text-slate-500 truncate">{r.category}</div>
+                                        )}
                                       </td>
 
 
-                                      <td className="px-3 py-3 text-center">
+
+                                      <td className="px-2 py-1 text-center">
                                         <button
                                           type="button"
                                           onClick={() => addItemLocal(r.product_id)}
                                           disabled={!activeId || already}
-                                          className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition border w-full ${
+                                          className={`inline-flex items-center justify-center gap-2 rounded-lg px-2 py-0.5 text-[11px] leading-none font-semibold transition border ${
                                             !activeId
                                               ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
                                               : already
@@ -2252,6 +2379,42 @@ const BundlesPageClient: React.FC = () => {
                     />
                   </div>
 
+                  {/* ✅ Category (required) */}
+                    <div className="col-span-12 md:col-span-5">
+                      <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                        Category <span className="text-rose-600">*</span>
+                      </label>
+
+                      <select
+                        className="w-full border border-slate-300 rounded-xl px-4 py-2.5 bg-white text-sm
+                                  focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+                        value={extraCategoryId}
+                        onChange={(e) => setExtraCategoryId(Number(e.target.value) || "")}
+                        disabled={catLoading || catApiStatus !== "ok"}
+                      >
+                        <option value="">
+                          {catLoading
+                            ? "Loading categories…"
+                            : catApiStatus === "ok"
+                            ? "Select Category"
+                            : "Categories API missing"}
+                        </option>
+
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      {catApiStatus !== "ok" && (
+                        <div className="mt-1 text-[11px] text-amber-700">
+                          Categories not available. Check backend route: <b>/api/product-categories</b>
+                        </div>
+                      )}
+                    </div>
+
+
                   <div className="col-span-12 md:col-span-7">
                     <label className="block text-xs font-bold text-slate-600 mb-1.5">UOM (optional)</label>
                     <input
@@ -2290,7 +2453,8 @@ const BundlesPageClient: React.FC = () => {
 
                 <button
                   onClick={createExtraProductNow}
-                  disabled={extraSaving || !safeStr(extraName)}
+                  disabled={extraSaving || !safeStr(extraName) || !extraCategoryId}
+
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
                 >
                   <Plus className={`w-4 h-4 ${extraSaving ? "animate-spin" : ""}`} />
