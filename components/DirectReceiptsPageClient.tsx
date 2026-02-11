@@ -1942,7 +1942,25 @@ const specimenPayload = existingItems
                   </select>
                 </div>
 
-                
+                {/* ✅ Publisher (filters books below) */}
+                <div className="col-span-12 md:col-span-2">
+                  <MiniLabel>Publisher (optional)</MiniLabel>
+
+                  <SearchableSelect
+                    value={String((form as any).publisher_id || "")}
+                    onChange={(val) => {
+                      setForm((p: any) => ({ ...p, publisher_id: val }));
+                      // ✅ reset all rows book selection when publisher changes
+                      setItems((prev) =>
+                        prev.map((r) => ({ ...r, book_id: 0, title: "", meta: "" }))
+                      );
+                    }}
+                    placeholder="Search publisher..."
+                    options={publisherOptions}
+                  />
+                </div>
+
+
                 {/* Doc Type */}
                 <div className="col-span-6 md:col-span-2">
                   <MiniLabel>Receiving As *</MiniLabel>
@@ -2064,7 +2082,7 @@ const specimenPayload = existingItems
                     return (
                       <tr key={`${it.book_id}-${idx}`} className="hover:bg-slate-50">
                         {/* ✅ Book select + New Book (+) */}
-                        <td className="border-b border-slate-200 px-0.5 py-0.5">
+                        <td className="border-b border-slate-200 px-2 py-2">
                           <div className="flex items-start gap-2">
                             <div className="flex-1">
                               <SearchableSelect
