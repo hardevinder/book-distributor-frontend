@@ -35,6 +35,7 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
+  ListChecks,
 } from "lucide-react";
 
 /* ================= Types ================= */
@@ -44,10 +45,15 @@ type ClassItem = { id: number; class_name: string; sort_order?: number; is_activ
 
 type BundleLite = { id: number; status?: string | null; school_id?: number; class_id?: number };
 
+type ProductCategoryLite = { id: number; name?: string | null };
+
 type BundleItemApi = {
   id: number;
   product_id: number;
   qty: number;
+
+  // ✅ NEW: if your backend sends per-student qty too
+  per_student_qty?: number;
 
   product?: {
     id: number;
@@ -57,6 +63,10 @@ type BundleItemApi = {
     rate?: number | string | null;
     selling_price?: number | string | null;
     mrp?: number | string | null;
+
+    // ✅ Category (from Product model)
+    category_id?: number | null;
+    category?: ProductCategoryLite | null;
 
     book?: {
       id: number;
@@ -89,6 +99,11 @@ type CartLine = {
   kind: "BOOK" | "MATERIAL";
   title: string;
   class_name?: string | null;
+
+  // ✅ NEW: category info for filtering
+  category_id?: number | null;
+  category_name?: string | null;
+
   qty: number;
   unit_price: number;
   include: boolean;
@@ -127,6 +142,9 @@ function pickTitle(it: BundleItemApi): {
   class_name?: string | null;
   book_id?: number | null;
   kind: "BOOK" | "MATERIAL";
+  category_id?: number | null;
+  category_name?: string | null;
+  per_student_qty?: number | null;
 } {
   const p = it.product || null;
   const kind = String(p?.type || "BOOK").toUpperCase() === "MATERIAL" ? "MATERIAL" : "BOOK";
@@ -141,7 +159,12 @@ function pickTitle(it: BundleItemApi): {
   const class_name = (book?.class_name || null) ?? null;
   const book_id = book?.id ? num(book.id) : null;
 
-  return { title, class_name, book_id, kind };
+  const category_id = p?.category_id != null ? num(p.category_id) : null;
+  const category_name = String(p?.category?.name || "").trim() || null;
+
+  const per_student_qty = it?.per_student_qty != null ? Math.max(0, num(it.per_student_qty)) : null;
+
+  return { title, class_name, book_id, kind, category_id, category_name, per_student_qty };
 }
 
 function resolveUnitPrice(it: BundleItemApi): number {
@@ -187,7 +210,6 @@ function hasRole(user: any, role: string) {
 /* ================= Component ================= */
 
 export default function SalesPosPageClient() {
-  // ✅ If your AuthContext already has logout(), we will use it. Otherwise we fallback to localStorage clear.
   const auth = useAuth() as any;
   const user = auth?.user;
   const token = auth?.token;
@@ -203,13 +225,13 @@ export default function SalesPosPageClient() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
-  // ✅ NEW: Summary wrap (more space for sale items)
+  // Summary wrap
   const [summaryCollapsed, setSummaryCollapsed] = useState<boolean>(true);
 
-  // ✅ Account menu
+  // Account menu
   const [accountOpen, setAccountOpen] = useState(false);
 
-  // ✅ Change password modal
+  // Change password modal
   const [pwdModalOpen, setPwdModalOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -237,10 +259,14 @@ export default function SalesPosPageClient() {
   const [bundleStatus, setBundleStatus] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
 
+  // ✅ NEW: cart filters
+  const [cartSearch, setCartSearch] = useState("");
+  const [categoryFilterId, setCategoryFilterId] = useState<number | "ALL">("ALL");
+
   // Payment
   const [paymentMode, setPaymentMode] = useState<"CASH" | "UPI" | "CARD" | "CREDIT">("CASH");
 
-  // Student name always (default)
+  // Student name always
   const [billToName, setBillToName] = useState<string>("Student");
 
   // Credit-only fields (popup)
@@ -268,7 +294,6 @@ export default function SalesPosPageClient() {
   const lastAutoKeyRef = useRef<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
-  // close account menu on outside click / ESC
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setAccountOpen(false);
@@ -277,13 +302,14 @@ export default function SalesPosPageClient() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // ✅ more compact sizes (mobile/tablet friendly)
   const compactSelect =
     "w-full rounded-lg border bg-white px-2 py-1.5 text-[12px] font-semibold leading-5 outline-none focus:ring-2 focus:ring-slate-200";
   const compactInput = "w-full rounded-lg border px-2 py-1.5 text-[12px] outline-none focus:ring-2 focus:ring-slate-200";
 
   const compactBtn = "h-7 w-7 rounded-md border bg-white inline-flex items-center justify-center active:scale-[0.98]";
   const compactNumInput =
-    "h-7 w-16 rounded-md border px-1 text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-slate-200";
+    "h-7 w-14 rounded-md border px-1 text-[12px] font-bold text-center outline-none focus:ring-2 focus:ring-slate-200";
   const compactPriceInput =
     "h-7 w-20 rounded-md border px-1 text-[12px] font-bold text-right outline-none focus:ring-2 focus:ring-slate-200";
 
@@ -294,6 +320,10 @@ export default function SalesPosPageClient() {
     setPaidAmount(0);
     setGivenAmount(0);
     lastSaleIdRef.current = null;
+
+    // ✅ reset filters too (so user doesn't think items missing)
+    setCartSearch("");
+    setCategoryFilterId("ALL");
   };
 
   /* ================= Auth actions ================= */
@@ -303,16 +333,13 @@ export default function SalesPosPageClient() {
       setErrMsg(null);
       setOkMsg(null);
 
-      // optional backend logout (does nothing except OK message)
       try {
         await api.post("/api/auth/logout", {}, { headers: authHeaders });
       } catch {}
 
-      // If your AuthContext has logout() use it; else fallback
       if (typeof logoutFromContext === "function") {
         await logoutFromContext();
       } else {
-        // common fallbacks
         try {
           localStorage.removeItem("token");
           localStorage.removeItem("user");
@@ -374,7 +401,6 @@ export default function SalesPosPageClient() {
       setNewPassword("");
       setConfirmPassword("");
 
-      // optional: auto close after success
       setTimeout(() => {
         setPwdModalOpen(false);
         setPwdOk(null);
@@ -458,6 +484,35 @@ export default function SalesPosPageClient() {
     [classes, selectedClassId]
   );
 
+  // ✅ Category options derived from cart (so it works without extra API)
+  const categoryOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const x of cart) {
+      const cid = x.category_id != null ? num(x.category_id) : 0;
+      if (cid > 0) map.set(cid, String(x.category_name || `Category #${cid}`));
+    }
+    const arr = Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    return arr;
+  }, [cart]);
+
+  // ✅ Filtered cart list (category + search)
+  const filteredCart = useMemo(() => {
+    const q = cartSearch.trim().toLowerCase();
+    const catId = categoryFilterId === "ALL" ? 0 : num(categoryFilterId);
+
+    return cart.filter((x) => {
+      if (catId > 0 && num(x.category_id) !== catId) return false;
+
+      if (q) {
+        const hay = `${x.title || ""} ${x.class_name || ""} ${x.category_name || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [cart, cartSearch, categoryFilterId]);
+
   const totals = useMemo(() => {
     const included = cart.filter((x) => x.include);
     const subtotal = included.reduce((s, x) => s + round2(x.qty * x.unit_price), 0);
@@ -472,7 +527,7 @@ export default function SalesPosPageClient() {
     return { subtotal: round2(subtotal), total, paid, balance, itemCount: included.length, returnAmount };
   }, [cart, paidAmount, givenAmount, paymentMode]);
 
-  // When paymentMode changes, handle defaults + credit popup
+  // When paymentMode changes
   useEffect(() => {
     if (paymentMode === "CREDIT") {
       setPaidAmount(0);
@@ -481,7 +536,6 @@ export default function SalesPosPageClient() {
       return;
     }
 
-    // non-credit defaults
     setCreditModalOpen(false);
     setParentName("");
     setPhone("");
@@ -493,7 +547,6 @@ export default function SalesPosPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMode]);
 
-  // When total changes, keep paid/given sane (unless CREDIT)
   useEffect(() => {
     if (paymentMode === "CREDIT") return;
     setPaidAmount((prev) => (prev > 0 ? Math.min(prev, totals.total) : totals.total));
@@ -511,6 +564,23 @@ export default function SalesPosPageClient() {
 
   const decQty = (key: string) =>
     setCart((prev) => prev.map((x) => (x.key === key ? { ...x, qty: Math.max(1, round2(x.qty - 1)) } : x)));
+
+  // ✅ NEW: select all / deselect all (works on filtered list so user can bulk toggle by category/search)
+  const setIncludeForKeys = (keys: string[], include: boolean) => {
+    if (!keys.length) return;
+    const setKeys = new Set(keys);
+    setCart((prev) => prev.map((x) => (setKeys.has(x.key) ? { ...x, include } : x)));
+  };
+
+  const selectAllFiltered = () => setIncludeForKeys(filteredCart.map((x) => x.key), true);
+  const deselectAllFiltered = () => setIncludeForKeys(filteredCart.map((x) => x.key), false);
+
+  const filteredAllSelected = useMemo(() => {
+    if (!filteredCart.length) return false;
+    return filteredCart.every((x) => x.include);
+  }, [filteredCart]);
+
+  const filteredAnySelected = useMemo(() => filteredCart.some((x) => x.include), [filteredCart]);
 
   /* ---------- Load bundle into cart ---------- */
   const loadBundleForSchoolClass = async (opts?: { silent?: boolean }) => {
@@ -580,8 +650,13 @@ export default function SalesPosPageClient() {
 
       const lines: CartLine[] = items
         .map((it) => {
-          const { title, class_name, book_id, kind } = pickTitle(it);
-          const qty = 1;
+          const { title, class_name, book_id, kind, category_id, category_name, per_student_qty } = pickTitle(it);
+
+          // ✅ Quantity rule:
+          // - if per_student_qty comes, use it as default qty (good for per-student bundle templates)
+          // - else keep 1
+          const qty = Math.max(1, num(per_student_qty || 0) || 1);
+
           const unit_price = Math.max(0, round2(resolveUnitPrice(it)));
           const product_id = num(it.product_id || it.product?.id);
           const key = `${product_id}:${book_id || 0}:${title}`;
@@ -596,6 +671,8 @@ export default function SalesPosPageClient() {
             unit_price,
             include: true,
             book_id: book_id || null,
+            category_id: category_id || null,
+            category_name: category_name || null,
           };
         })
         .filter((x) => x.product_id > 0);
@@ -616,6 +693,10 @@ export default function SalesPosPageClient() {
 
       setBillToName((prev) => (prev?.trim() ? prev : "Student"));
 
+      // ✅ reset filters after fresh load
+      setCartSearch("");
+      setCategoryFilterId("ALL");
+
       if (!silent) {
         if (!lines.length) setErrMsg("Bundle loaded but items list is empty.");
         else setOkMsg(`Loaded bundle #${id}`);
@@ -629,7 +710,7 @@ export default function SalesPosPageClient() {
     }
   };
 
-  /* ---------- Auto load (real-time) ---------- */
+  /* ---------- Auto load ---------- */
   useEffect(() => {
     if (autoLoadTimerRef.current) clearTimeout(autoLoadTimerRef.current);
 
@@ -1113,9 +1194,7 @@ export default function SalesPosPageClient() {
                 </div>
               </label>
 
-              <div className="text-[11px] text-slate-500">
-                Tip: keep strong password. New must match Confirm.
-              </div>
+              <div className="text-[11px] text-slate-500">Tip: keep strong password. New must match Confirm.</div>
             </div>
 
             <div className="border-t p-3 flex items-center justify-between gap-2">
@@ -1290,7 +1369,7 @@ export default function SalesPosPageClient() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* ✅ Account dropdown */}
+              {/* Account dropdown */}
               <div className="relative">
                 <button
                   type="button"
@@ -1306,9 +1385,7 @@ export default function SalesPosPageClient() {
                 {accountOpen && (
                   <div className="absolute right-0 mt-2 w-[220px] rounded-2xl border bg-white shadow-xl overflow-hidden z-50">
                     <div className="p-2 border-b">
-                      <div className="text-[12px] font-extrabold text-slate-900 truncate">
-                        {user?.name || "User"}
-                      </div>
+                      <div className="text-[12px] font-extrabold text-slate-900 truncate">{user?.name || "User"}</div>
                       <div className="text-[11px] text-slate-500 truncate">{user?.email || ""}</div>
                     </div>
 
@@ -1334,7 +1411,6 @@ export default function SalesPosPageClient() {
                   </div>
                 )}
 
-                {/* overlay click to close */}
                 {accountOpen && (
                   <button
                     type="button"
@@ -1345,7 +1421,6 @@ export default function SalesPosPageClient() {
                 )}
               </div>
 
-              {/* Summary wrap button */}
               <button
                 type="button"
                 onClick={() => setSummaryCollapsed((v) => !v)}
@@ -1415,7 +1490,11 @@ export default function SalesPosPageClient() {
         <div className="mx-auto h-full max-w-6xl px-2 py-2">
           <div className="h-full grid grid-cols-1 md:grid-cols-12 gap-2">
             {/* Desktop Sidebar */}
-            <div className={`hidden md:block h-full overflow-hidden ${sidebarCollapsed ? "md:col-span-0" : "md:col-span-3"}`}>
+            <div
+              className={`hidden md:block h-full overflow-hidden ${
+                sidebarCollapsed ? "md:col-span-0" : "md:col-span-3"
+              }`}
+            >
               {!sidebarCollapsed ? <div className="h-full">{SidebarContent}</div> : null}
             </div>
 
@@ -1429,11 +1508,92 @@ export default function SalesPosPageClient() {
                 ) : null}
 
                 <div className="flex-1 overflow-hidden rounded-2xl border bg-white shadow-sm flex flex-col">
-                  <div className="shrink-0 flex items-center justify-between border-b px-2 py-1">
-                    <div className="text-sm font-extrabold">Cart</div>
-                    <div className="text-xs text-slate-500">
-                      Included: <span className="font-extrabold">{totals.itemCount}</span>
+                  {/* ✅ Compact cart header with filters + select all */}
+                  <div className="shrink-0 border-b px-2 py-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-extrabold">Cart</div>
+                      <div className="text-[11px] text-slate-500">
+                        Included: <span className="font-extrabold">{totals.itemCount}</span>
+                      </div>
                     </div>
+
+                    <div className="mt-1 grid grid-cols-1 sm:grid-cols-12 gap-2">
+                      <div className="sm:col-span-5">
+                        <div className="flex items-center gap-2 rounded-xl border bg-white px-2 py-1.5">
+                          <Search className="h-4 w-4 text-slate-500" />
+                          <input
+                            value={cartSearch}
+                            onChange={(e) => setCartSearch(e.target.value)}
+                            placeholder="Search item…"
+                            className="w-full text-[12px] font-semibold outline-none"
+                          />
+                          {cartSearch ? (
+                            <button
+                              type="button"
+                              onClick={() => setCartSearch("")}
+                              className="rounded-lg border bg-white p-1"
+                              title="Clear"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="sm:col-span-4">
+                        <select
+                          value={categoryFilterId === "ALL" ? "ALL" : String(categoryFilterId)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setCategoryFilterId(v === "ALL" ? "ALL" : num(v));
+                          }}
+                          className={compactSelect}
+                          disabled={categoryOptions.length === 0}
+                          title="Filter by category"
+                        >
+                          <option value="ALL">All Categories</option>
+                          {categoryOptions.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // quick toggle: if all selected -> deselect, else select
+                            if (filteredAllSelected) deselectAllFiltered();
+                            else selectAllFiltered();
+                          }}
+                          disabled={!filteredCart.length}
+                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border bg-white px-2 py-2 text-xs font-extrabold shadow-sm disabled:opacity-60 active:scale-[0.99]"
+                          title="Select/Deselect all (filtered)"
+                        >
+                          <ListChecks className="h-4 w-4" />
+                          {filteredAllSelected ? "None" : "All"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => deselectAllFiltered()}
+                          disabled={!filteredAnySelected}
+                          className="inline-flex items-center justify-center rounded-xl border bg-white px-3 py-2 text-xs font-extrabold shadow-sm disabled:opacity-60 active:scale-[0.99]"
+                          title="Deselect (filtered)"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {(categoryFilterId !== "ALL" || cartSearch.trim()) && (
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Showing <span className="font-bold">{filteredCart.length}</span> of{" "}
+                        <span className="font-bold">{cart.length}</span> items
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex-1 overflow-auto">
@@ -1448,41 +1608,130 @@ export default function SalesPosPageClient() {
                           <>Walk-in mode: no bundle items.</>
                         )}
                       </div>
+                    ) : filteredCart.length === 0 ? (
+                      <div className="p-6 text-center text-sm text-slate-500">
+                        No items match filter/search.
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            className="rounded-xl border bg-white px-3 py-2 text-xs font-extrabold"
+                            onClick={() => {
+                              setCartSearch("");
+                              setCategoryFilterId("ALL");
+                            }}
+                          >
+                            Clear filters
+                          </button>
+                        </div>
+                      </div>
                     ) : (
                       <div className="h-full">
-                        <div className="min-w-[520px]">
-                          <div className="sticky top-0 z-10 border-b bg-white">
-                            <div className="grid grid-cols-[32px_1fr_160px_120px] items-center gap-1 px-2 py-1 text-[11px] font-extrabold text-slate-600">
-                              <div className="text-center">Sel</div>
-                              <div>Book</div>
-                              <div className="text-center">Qty</div>
-                              <div className="text-right pr-1">Price</div>
+                        {/* ✅ Desktop/tablet table */}
+                        <div className="hidden sm:block">
+                          <div className="min-w-0">
+                            <div className="sticky top-0 z-10 border-b bg-white">
+                              <div className="grid grid-cols-[32px_1fr_160px_120px] items-center gap-1 px-2 py-1 text-[11px] font-extrabold text-slate-600">
+                                <div className="text-center">Sel</div>
+                                <div>Item</div>
+                                <div className="text-center">Qty</div>
+                                <div className="text-right pr-1">Price</div>
+                              </div>
+                            </div>
+
+                            <div className="divide-y">
+                              {filteredCart.map((x) => (
+                                <div
+                                  key={x.key}
+                                  className={`grid grid-cols-[32px_1fr_160px_120px] items-center gap-1 px-2 py-1 ${
+                                    x.include ? "bg-white" : "bg-slate-50"
+                                  }`}
+                                >
+                                  <div className="flex justify-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={x.include}
+                                      onChange={() => setLine(x.key, { include: !x.include })}
+                                      className="h-4 w-4 accent-slate-900"
+                                      title="Select/Unselect"
+                                    />
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <div className="truncate text-[12px] font-extrabold leading-4 text-slate-900">
+                                      {x.title}
+                                    </div>
+                                    {(x.category_name || x.class_name) && (
+                                      <div className="truncate text-[11px] text-slate-500">
+                                        {x.category_name ? <span className="font-bold">{x.category_name}</span> : null}
+                                        {x.category_name && x.class_name ? <span className="mx-1">•</span> : null}
+                                        {x.class_name ? <span>Class {x.class_name}</span> : null}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button type="button" onClick={() => decQty(x.key)} className={compactBtn} title="Minus">
+                                      <Minus className="h-4 w-4" />
+                                    </button>
+
+                                    <input
+                                      inputMode="decimal"
+                                      value={String(x.qty)}
+                                      onChange={(e) => setLine(x.key, { qty: Math.max(1, round2(e.target.value)) })}
+                                      className={compactNumInput}
+                                    />
+
+                                    <button type="button" onClick={() => incQty(x.key)} className={compactBtn} title="Plus">
+                                      <Plus className="h-4 w-4" />
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center justify-end gap-1 pr-1">
+                                    <span className="text-[11px] font-bold text-slate-500">₹</span>
+                                    <input
+                                      inputMode="decimal"
+                                      value={String(x.unit_price)}
+                                      onChange={(e) => setLine(x.key, { unit_price: Math.max(0, round2(e.target.value)) })}
+                                      className={compactPriceInput}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
+                        </div>
 
-                          <div className="divide-y">
-                            {cart.map((x) => (
-                              <div
-                                key={x.key}
-                                className={`grid grid-cols-[32px_1fr_160px_120px] items-center gap-1 px-2 py-1 ${
-                                  x.include ? "bg-white" : "bg-slate-50"
-                                }`}
-                              >
-                                <div className="flex justify-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={x.include}
-                                    onChange={() => setLine(x.key, { include: !x.include })}
-                                    className="h-4 w-4 accent-slate-900"
-                                    title="Select/Unselect"
-                                  />
+                        {/* ✅ Mobile compact card list */}
+                        <div className="sm:hidden p-2 space-y-2">
+                          {filteredCart.map((x) => (
+                            <div
+                              key={x.key}
+                              className={`rounded-2xl border p-2 ${x.include ? "bg-white" : "bg-slate-50"}`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={x.include}
+                                  onChange={() => setLine(x.key, { include: !x.include })}
+                                  className="mt-1 h-4 w-4 accent-slate-900"
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[13px] font-extrabold leading-4 truncate">{x.title}</div>
+                                  {(x.category_name || x.class_name) && (
+                                    <div className="mt-0.5 text-[11px] text-slate-500 truncate">
+                                      {x.category_name ? <span className="font-bold">{x.category_name}</span> : null}
+                                      {x.category_name && x.class_name ? <span className="mx-1">•</span> : null}
+                                      {x.class_name ? <span>Class {x.class_name}</span> : null}
+                                    </div>
+                                  )}
                                 </div>
-
-                                <div className="min-w-0">
-                                  <div className="truncate text-[12px] font-extrabold leading-4 text-slate-900">{x.title}</div>
+                                <div className="text-[12px] font-black text-slate-900 whitespace-nowrap">
+                                  ₹{money(round2(x.qty * x.unit_price))}
                                 </div>
+                              </div>
 
-                                <div className="flex items-center justify-center gap-1">
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1">
                                   <button type="button" onClick={() => decQty(x.key)} className={compactBtn} title="Minus">
                                     <Minus className="h-4 w-4" />
                                   </button>
@@ -1499,7 +1748,7 @@ export default function SalesPosPageClient() {
                                   </button>
                                 </div>
 
-                                <div className="flex items-center justify-end gap-1 pr-1">
+                                <div className="flex items-center gap-1">
                                   <span className="text-[11px] font-bold text-slate-500">₹</span>
                                   <input
                                     inputMode="decimal"
@@ -1509,8 +1758,8 @@ export default function SalesPosPageClient() {
                                   />
                                 </div>
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -1523,11 +1772,15 @@ export default function SalesPosPageClient() {
                         <div className="truncate text-lg font-black">Rs. {money(totals.total)}</div>
 
                         {paymentMode !== "CREDIT" && totals.returnAmount > 0 ? (
-                          <div className="mt-1 text-[12px] font-black text-emerald-700">Return: Rs. {money(totals.returnAmount)}</div>
+                          <div className="mt-1 text-[12px] font-black text-emerald-700">
+                            Return: Rs. {money(totals.returnAmount)}
+                          </div>
                         ) : null}
 
                         {paymentMode === "CREDIT" && totals.balance > 0 ? (
-                          <div className="mt-1 text-[12px] font-black text-rose-700">Udhaar Balance: Rs. {money(totals.balance)}</div>
+                          <div className="mt-1 text-[12px] font-black text-rose-700">
+                            Udhaar Balance: Rs. {money(totals.balance)}
+                          </div>
                         ) : null}
                       </div>
 
@@ -1567,7 +1820,9 @@ export default function SalesPosPageClient() {
                     {bundleId ? (
                       <div className="mt-1 text-[11px] text-slate-500">
                         Using bundle #{bundleId}
-                        {bundleStatus ? <span className="ml-2 rounded-lg bg-slate-100 px-2 py-0.5">{bundleStatus}</span> : null}
+                        {bundleStatus ? (
+                          <span className="ml-2 rounded-lg bg-slate-100 px-2 py-0.5">{bundleStatus}</span>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
