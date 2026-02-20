@@ -469,6 +469,8 @@ const SchoolOrdersPageClient: React.FC = () => {
   const [filterSession, setFilterSession] = useState("");
   const [filterSchoolId, setFilterSchoolId] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  // ✅ Adjust selector
+  const [adjustSupplierId, setAdjustSupplierId] = useState("");
 
   // ✅ for yellow highlight of latest generated
   const [lastGeneratedAt, setLastGeneratedAt] = useState<number | null>(null);
@@ -844,6 +846,62 @@ const [emailCounts, setEmailCounts] = useState<Record<number, number>>({});
       setGenerating(false);
     }
   };
+  const handleAdjustFromRequirements = async () => {
+  setError(null);
+  setInfo(null);
+
+  const ok = await sweetConfirm({
+    title: "Adjust orders from latest requirements?",
+    icon: "question",
+    html: `<div style="text-align:left;font-size:13px;">
+      <div>This will apply <b>only NEW / increased</b> requirement quantities.</div>
+      <div style="margin-top:6px;color:#64748b;font-size:12px;">
+        (No change for reduced qty unless your backend supports it.)
+      </div>
+    </div>`,
+    confirmText: "Adjust",
+    cancelText: "Cancel",
+  });
+  if (!ok) return;
+
+  try {
+    setGenerating(true);
+
+  const session = academicSession.trim();
+const schoolId = String(filterSchoolId || "").trim();
+const supplierId = String(adjustSupplierId || "").trim();
+
+if (!session) {
+  setError("Select session.");
+  return;
+}
+if (!schoolId) {
+  setError("Select School first (for Adjust).");
+  return;
+}
+if (!supplierId) {
+  setError("Select Supplier (for Adjust).");
+  return;
+}
+
+const res = await api.post("/api/school-orders/adjust-from-requirements", {
+  academic_session: session,
+  school_id: Number(schoolId),
+  supplier_id: Number(supplierId),
+});
+
+    setInfo(res?.data?.message || "Adjusted.");
+    await fetchOrders();
+    await sweetToast({ icon: "success", title: "Adjusted from requirements" });
+  } catch (err: any) {
+    console.error(err);
+    const msg = err?.response?.data?.message || "Adjust failed.";
+    setError(msg);
+    await sweetToast({ icon: "error", title: msg });
+  } finally {
+    setGenerating(false);
+  }
+};
   const handleDeleteOrder = async (order: SchoolOrder) => {
   if (!order?.id) return;
 
@@ -1542,10 +1600,13 @@ const refreshGlobalEmailLogs = async () => {
 
             <select
               value={filterSchoolId}
-              onChange={(e) => setFilterSchoolId(e.target.value)}
+              onChange={(e) => {
+                setFilterSchoolId(e.target.value);
+                setAdjustSupplierId("");
+              }}
               className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[220px]"
               title="School"
-            >
+            >              
               <option value="">School</option>
               {schools.map((s) => (
                 <option key={s.id} value={String(s.id)}>
@@ -1554,6 +1615,20 @@ const refreshGlobalEmailLogs = async () => {
                 </option>
               ))}
             </select>
+
+            <select
+                value={adjustSupplierId}
+                onChange={(e) => setAdjustSupplierId(e.target.value)}
+                className="border border-slate-300 rounded-lg px-2 py-1 bg-white text-[11px] w-[220px]"
+                title="Supplier (Adjust)"
+              >
+                <option value="">Supplier (Adjust)</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
 
             <select
               value={filterStatus}
@@ -1626,6 +1701,21 @@ const refreshGlobalEmailLogs = async () => {
               <RefreshCcw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </button>
+            <button
+                type="button"
+                onClick={handleAdjustFromRequirements}
+                disabled={generating}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-semibold
+                          text-white bg-gradient-to-r from-amber-600 to-orange-600
+                          hover:brightness-110 active:brightness-95
+                          shadow-sm hover:shadow
+                          focus:outline-none focus:ring-2 focus:ring-amber-300 focus:ring-offset-2
+                          disabled:opacity-60 disabled:shadow-none"
+                title="Apply new/increased requirements into orders"
+              >
+                <RefreshCcw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />
+                Adjust
+              </button>
 
             {/* ✅ Bulk meta */}
             <button
