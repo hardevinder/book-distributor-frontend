@@ -23,7 +23,8 @@ import {
   Search,
   ClipboardSignature,
   KeyRound,
-  BarChart3, // ✅ Sales Analytics
+  BarChart3,
+  ShoppingCart, // ✅ NEW (School Sales)
 } from "lucide-react";
 
 /* ---------------- Types ---------------- */
@@ -272,7 +273,15 @@ const DashboardContent: React.FC = () => {
         accent: "indigo",
       },
 
-      // ✅ Sales Analytics (NEW)
+      // ✅ NEW: School Sales
+      {
+        title: "School Sales",
+        href: "/school-sales",
+        icon: <ShoppingCart className="h-5 w-5" />,
+        accent: "blue",
+      },
+
+      // ✅ Sales Analytics
       {
         title: "Sales Analytics",
         href: "/sales-analytics",
